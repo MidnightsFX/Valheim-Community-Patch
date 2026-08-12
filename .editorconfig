@@ -1,0 +1,10 @@
+﻿[*.cs]
+
+# IDE0090: Use 'new(...)'
+dotnet_diagnostic.IDE0090.severity = none
+
+# IDE0350: Use implicitly typed lambda
+dotnet_diagnostic.IDE0350.severity = none
+
+# IDE0017: Simplify object initialization
+dotnet_diagnostic.IDE0017.severity = none
