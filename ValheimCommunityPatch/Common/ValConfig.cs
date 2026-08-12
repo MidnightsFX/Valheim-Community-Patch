@@ -10,7 +10,7 @@ using System.IO;
 using System.Linq;
 
 #pragma warning disable IDE0130
-namespace JotunnModStub {
+namespace ValheimCommunityPatch {
 #pragma warning restore IDE0130
     internal class ValConfig {
         public static ConfigFile cfg;
@@ -19,10 +19,14 @@ namespace JotunnModStub {
         public static ConfigEntry<bool> EnableDebugMode;
 
         // Add Server synced config entries under here
-        public static ConfigEntry<int> InMemoryModificationsPerTick;
         public static ConfigEntry<float> ConfigApplyDelay;
 
-        public const string cfgFolder = "JotunnModStub";
+        public const string cfgFolder = "ValheimCommunityPatch";
+
+        // Config sections. Every individual fix gets its own toggle so a single fix can be switched
+        // off without a rebuild; the toggles live next to the patch that reads them.
+        public const string SectionPerformance = "Fixes - Performance";
+        public const string SectionCorrectness = "Fixes - Correctness";
 
         public ValConfig(ConfigFile cf) {
             // ensure all the config values are created
@@ -47,8 +51,21 @@ namespace JotunnModStub {
             Logger.CheckEnableDebugLogging();
 
             // Instantiate server synced config entries here
-            InMemoryModificationsPerTick = BindServerConfig("Config", "Updates Per Tick", 20, "Number of updates per tick that are applied when modifying items or pieces.", true, 1, 150);
             ConfigApplyDelay = BindServerConfig("Config", "Config Apply Delay", 1f, "Delay in seconds before a changed config entry is applied in-game. Coalesces a burst of rapid edits (typing, file reloads, server sync) into a single apply. Set to 0 to apply instantly.", true, 0f, 10f);
+
+            BindFixToggles();
+        }
+
+        // Each fix owns its toggle and its description; they are bound here so every entry exists
+        // before the single save flush in ValheimCommunityPatch.Awake.
+        private static void BindFixToggles() {
+            Patches.Performance.RecipeLookupCachePatch.BindConfig();
+            Patches.Performance.LiquidVolumeLeakPatch.BindConfig();
+            Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
+            Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
+            Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();
+            Patches.Correctness.RunAttackStaminaPatch.BindConfig();
+            Patches.Correctness.UnlitFireCookingPatch.BindConfig();
         }
 
         /// <summary>

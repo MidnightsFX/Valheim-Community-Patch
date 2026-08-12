@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace JotunnModStub.Common {
+namespace ValheimCommunityPatch.Common {
     // Debounces config apply work so a burst of rapid SettingChanged events for one entry
     // (a user typing into a field, a config file reload, or a server config sync) collapses
     // into a single apply once the edits settle, instead of re-doing the heavy work (recipe

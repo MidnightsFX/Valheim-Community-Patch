@@ -3,7 +3,7 @@ using System;
 
 
 #pragma warning disable IDE0130
-namespace JotunnModStub {
+namespace ValheimCommunityPatch {
 #pragma warning restore IDE0130
     internal class Logger {
         public static LogLevel Level = LogLevel.Info;
@@ -30,24 +30,24 @@ namespace JotunnModStub {
 
         public static void LogDebug(string message) {
             if (Level >= LogLevel.Debug) {
-                JotunnModStub.Log.LogInfo("[DEBUG]" + message);
+                ValheimCommunityPatch.Log.LogInfo("[DEBUG]" + message);
             }
         }
         public static void LogInfo(string message) {
             if (Level >= LogLevel.Info) {
-                JotunnModStub.Log.LogInfo(message);
+                ValheimCommunityPatch.Log.LogInfo(message);
             }
         }
 
         public static void LogWarning(string message) {
             if (Level >= LogLevel.Warning) {
-                JotunnModStub.Log.LogWarning(message);
+                ValheimCommunityPatch.Log.LogWarning(message);
             }
         }
 
         public static void LogError(string message) {
             if (Level >= LogLevel.Error) {
-                JotunnModStub.Log.LogError(message);
+                ValheimCommunityPatch.Log.LogError(message);
             }
         }
     }

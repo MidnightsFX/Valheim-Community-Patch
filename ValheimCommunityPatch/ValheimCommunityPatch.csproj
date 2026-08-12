@@ -3,8 +3,8 @@
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <TargetFramework>net48</TargetFramework>
-    <RootNamespace>JotunnModStub</RootNamespace>
-    <AssemblyName>JotunnModStub</AssemblyName>
+    <RootNamespace>ValheimCommunityPatch</RootNamespace>
+    <AssemblyName>ValheimCommunityPatch</AssemblyName>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
     <LangVersion>10</LangVersion>
@@ -39,7 +39,6 @@
 
   <ItemGroup>
     <None Include="app.config" />
-    <None Include="packages.config" />
     <None Include="README.md" />
   </ItemGroup>
 
@@ -47,14 +46,9 @@
     <PackageReference Include="JotunnLib" Version="2.27.1" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Assets\" />
-    <Folder Include="Localizations\" />
-  </ItemGroup>
-
   <PropertyGroup>
     <VALHEIM_MANAGED>$(VALHEIM_INSTALL)/valheim_Data/Managed</VALHEIM_MANAGED>
-    <UNITY_FOLDER>$(SolutionDir)JotunnModStubUnity</UNITY_FOLDER>
+    <UNITY_FOLDER>$(SolutionDir)ValheimCommunityPatchUnity</UNITY_FOLDER>
   </PropertyGroup>
 
   <Target Name="CopyToUnity">
@@ -99,11 +93,18 @@
     <Exec Command="sh &quot;$(SolutionDir)scripts/publish.sh&quot; --target &quot;$(ConfigurationName)&quot; --target-path &quot;$(TargetDir)&quot; --target-assembly &quot;$(TargetFileName)&quot; --valheim-path &quot;$(VALHEIM_INSTALL)&quot; --deploy-path &quot;$(MOD_DEPLOYPATH)&quot; --project-path &quot;$(ProjectDir)&quot;" />
   </Target>
 
+  <!-- Local convenience deploys. Each is conditional so a missing profile is skipped rather than
+       failing the build on a machine that doesn't have that mod manager installed. -->
   <Target Name="CopyToModManagers" AfterTargets="Build">
+    <PropertyGroup>
+      <GaleProfile>$(AppData)\com.kesomannen.gale\valheim\profiles\Modtest\BepInEx\plugins</GaleProfile>
+      <R2ModManProfile>$(AppData)\r2modmanPlus-local\Valheim\profiles\Modtest\BepInEx\plugins</R2ModManProfile>
+      <ThunderstoreProfile>$(AppData)\Thunderstore Mod Manager\DataFolder\Valheim\profiles\Modtesting\BepInEx\plugins</ThunderstoreProfile>
+    </PropertyGroup>
     <Message Text="Copying to mod managers" Importance="high" />
-    <Copy SourceFiles="$(TargetDir)\$(TargetFileName)" DestinationFolder="$(AppData)\com.kesomannen.gale\valheim\profiles\Modtest\BepInEx\plugins\" />
-    <Copy SourceFiles="$(TargetDir)\$(TargetFileName)" DestinationFolder="$(AppData)\r2modmanPlus-local\Valheim\profiles\Modtest\BepInEx\plugins\" />
-    <Copy SourceFiles="$(TargetDir)\$(TargetFileName)" DestinationFolder="$(AppData)\Thunderstore Mod Manager\DataFolder\Valheim\profiles\Modtesting\BepInEx\plugins\" />
+    <Copy Condition="Exists('$(GaleProfile)')" SourceFiles="$(TargetDir)\$(TargetFileName)" DestinationFolder="$(GaleProfile)\" />
+    <Copy Condition="Exists('$(R2ModManProfile)')" SourceFiles="$(TargetDir)\$(TargetFileName)" DestinationFolder="$(R2ModManProfile)\" />
+    <Copy Condition="Exists('$(ThunderstoreProfile)')" SourceFiles="$(TargetDir)\$(TargetFileName)" DestinationFolder="$(ThunderstoreProfile)\" />
     <Copy SourceFiles="$(TargetDir)\$(TargetFileName)" DestinationFolder="$(ProjectDir)\Package\plugins\" />
   </Target>
 </Project>

@@ -1,12 +1,12 @@
 #!/bin/sh
 
 target="Debug"
-targetPath="JotunnModStub/bin/$target/net48"
-targetAssembly="JotunnModStub.dll"
+targetPath="ValheimCommunityPatch/bin/$target/net48"
+targetAssembly="ValheimCommunityPatch.dll"
 valheimPath=""
 bepinexPath=""
 deployPath=""
-projectPath="./JotunnModStub"
+projectPath="./ValheimCommunityPatch"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in

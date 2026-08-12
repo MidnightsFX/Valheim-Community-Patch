@@ -1,0 +1,68 @@
+using System.Collections.Generic;
+using System.Reflection;
+using System.Reflection.Emit;
+using BepInEx.Configuration;
+using HarmonyLib;
+
+namespace ValheimCommunityPatch.Patches.Correctness {
+    // Vanilla defect: Recipe.GetAmount dereferences the result of GetFirstRequiredItem without a null
+    // check, but that method returns null when the player holds none of the accepted ingredients:
+    //
+    //   if (this.m_requireOnlyOneIngredient) {
+    //     singleReqItem = Player.m_localPlayer.GetFirstRequiredItem(...);
+    //     amount += (int)Mathf.Ceil((float)((singleReqItem.m_quality - 1) * this.m_amount) * ...) + extraAmount;
+    //   }
+    //
+    // Player-visible symptom: opening the crafting or upgrade panel for a "requires any one of these"
+    // recipe while holding none of the ingredients throws a NullReferenceException, which leaves the
+    // panel blank or frozen and spams the log.
+    //
+    // Fix: substitute a quality of 1 - the value a nonexistent item would contribute - when the lookup
+    // came back null. The rest of the calculation is untouched, so a recipe that *does* find an
+    // ingredient behaves exactly as before.
+    [HarmonyPatch(typeof(Recipe))]
+    internal static class RecipeGetAmountNrePatch {
+        internal static ConfigEntry<bool> Enabled;
+
+        internal static void BindConfig() {
+            Enabled = ValConfig.BindServerConfig(
+                ValConfig.SectionCorrectness,
+                "Fix Recipe Amount Crash",
+                true,
+                "Guards the null dereference in Recipe.GetAmount that throws when a 'requires any one of " +
+                "these' recipe is displayed while you carry none of the accepted ingredients. Without it " +
+                "the crafting/upgrade panel breaks. Changing this requires a game restart.");
+        }
+
+        private static readonly FieldInfo QualityField = AccessTools.Field(typeof(ItemDrop.ItemData), nameof(ItemDrop.ItemData.m_quality));
+        private static readonly MethodInfo SafeQualityMethod = AccessTools.Method(typeof(RecipeGetAmountNrePatch), nameof(SafeQuality));
+
+        // A missing item contributes nothing: quality 1 makes the (quality - 1) term zero.
+        private static int SafeQuality(ItemDrop.ItemData item) => item?.m_quality ?? 1;
+
+        [HarmonyTranspiler]
+        [HarmonyPatch(nameof(Recipe.GetAmount))]
+        private static IEnumerable<CodeInstruction> GetAmountTranspiler(IEnumerable<CodeInstruction> instructions) {
+            List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
+            if (Enabled == null || !Enabled.Value) { return codes; }
+
+            int patched = 0;
+            for (int i = 0; i < codes.Count; i++) {
+                if (codes[i].opcode != OpCodes.Ldfld || !ReferenceEquals(codes[i].operand, QualityField)) { continue; }
+
+                // The ItemData reference is already on the stack for the field load, so a static call
+                // taking that same reference and returning int is a drop-in replacement.
+                codes[i].opcode = OpCodes.Call;
+                codes[i].operand = SafeQualityMethod;
+                patched++;
+            }
+
+            if (patched == 0) {
+                Logger.LogWarning("Recipe.GetAmount: found no m_quality load to guard; leaving it unpatched.");
+                return instructions;
+            }
+
+            return codes;
+        }
+    }
+}
