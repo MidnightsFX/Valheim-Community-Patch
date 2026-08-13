@@ -19,13 +19,36 @@ Toggles are admin-only and server-synced.
   open at a crafting station, so standing at a workbench cost thousands of string comparisons per
   frame — tens of thousands once other mods add recipes. This is the workbench repair hitch. Now
   indexed by item name.
+- **Fix Portal Connection Scan** *(server)* — the server re-pairs portals every five seconds by
+  rescanning every portal for every unconnected portal. An unpaired portal never resolves, so that
+  scan repeats forever and the cost grows with the square of how many portals the world has ever had.
+  Now indexed by tag, with no per-tick allocation and no network round-trip.
+- **Fix World Load Connection Scan** *(server)* — the two nested loops that pair portals and spawners
+  with their targets during world load are now indexed. On a long-lived world these were a
+  multi-second stall on every server start.
 - **Fix Tar Pit Memory Leak** — tar pits (`LiquidVolume`) allocated their raycast buffers with
   Unity's 4-frame temporary allocator but held them for the object's entire lifetime, leaking native
   memory and spamming `JobTempAlloc has allocations that are more than 4 frames old` on every load.
   Now allocated persistently and disposed safely.
+- **Fix Auto Pickup Allocation** — the auto-pickup check allocated a fresh array every frame for
+  every player.
 
 ### Correctness
 
+- **Fix Object Unload Crash** — `ZNetScene.RemoveObjects` dereferenced every instance's ZDO with no
+  validity check. A single orphaned entry aborted the whole unload pass and then threw again every
+  frame, so nothing despawned and memory climbed.
+- **Tolerate Duplicate ZDOs On Load** — a save containing a duplicate ZDO id made the world refuse to
+  load at all. It now recovers and logs a warning.
+- **Fix Effect Areas** — two fixes. The fixed 128-collider buffer behind fire warmth and wetness
+  checks silently truncated, so in a dense base the area that mattered could be missed entirely. And
+  a character that died inside an effect area stayed in its list forever, throwing every physics step.
+- **Fix Fuel And Ore Loss** — adding fuel or ore removes the item from your inventory and *then* sends
+  a network message that is silently dropped if the owning player is lagging or has disconnected. The
+  item is simply destroyed. Ownership is now taken first.
+- **Share Boss Defeat Keys** — the per-player boss defeat key was recorded only on whichever client
+  happened to own the boss, so in a group everyone else got no credit. Most visible with Hildir's
+  quest bosses.
 - **Fix Recipe Amount Crash** — `Recipe.GetAmount` dereferenced a null item, so opening the crafting
   or upgrade panel for a "requires any one of these" recipe while carrying none of the ingredients
   threw and left the panel broken.

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.2.0
+
+Server performance and data integrity. Each entry names the vanilla method it fixes.
+
+### Performance
+
+- `Game.ConnectPortals` — replaced the quadratic portal-pairing scan the server runs every five
+  seconds. Vanilla calls `FindRandomUnconnectedPortal` per unconnected portal, which allocates a list
+  and rescans every portal doing a ZDO string lookup and comparison each; an unpaired portal never
+  resolves, so it repeats that scan forever. Now three O(n) passes over a tag-keyed index with no
+  steady-state allocation. Ownership is taken directly instead of round-tripping through
+  `RPC_SetConnection`, and force-sends are batched per peer. Pairing is now deterministic rather than
+  random, and all same-tag portals pair in one tick instead of one pair per tick.
+- `ZDOMan.ConnectPortals` / `ZDOMan.ConnectSpawners` — both matched a source list against a target
+  list with nested loops at world load. Now hash-indexed. Pairing decisions are unchanged, including
+  ConnectPortals consuming each target once and ConnectSpawners letting several spawners share one.
+- `Player.AutoPickup` — used the allocating `Physics.OverlapSphere` overload every frame per player.
+  Now `OverlapSphereNonAlloc` against a reused buffer, with the loop bound rewritten to the hit count
+  so it does not read past the live results.
+
+### Correctness
+
+- `ZNetScene.RemoveObjects` — dereferenced every instance's ZDO with no validity check. One orphaned
+  entry threw and aborted the entire unload pass, then threw again every frame, so nothing despawned
+  and memory climbed. Orphans are now dropped from the instance table instead.
+- `ZDOMan.Load` — used `Dictionary.Add` for the ZDO index, so a save containing a duplicate ZDOID
+  threw and made the world unloadable. Now keeps the later entry and logs a warning.
+- `EffectArea.IsPointInsideArea` / `EffectArea.GetBaseValue` — `m_tempColliders` is a fixed
+  128-element buffer that `OverlapSphereNonAlloc` silently truncates, so in dense builds warmth,
+  wetness and burning checks could miss the area that mattered. The buffer now grows.
+- `EffectArea.CustomFixedUpdate` — iterated `m_collidedWithCharacter` with no validity check. Unity
+  never fires `OnTriggerExit` for a collider destroyed inside a trigger, so a character that died in
+  the area stayed in the list and threw every physics step. Dead entries are stripped, and
+  `Character.OnDestroy` now removes the character from every area it was standing in.
+- `Smelter.OnAddFuel` / `Smelter.OnAddOre` / `Fireplace.Interact` / `Fireplace.UseItem` — these remove
+  the item from your inventory and *then* send an RPC the owning peer may never process, destroying
+  the fuel or ore. Ownership is now taken first so the call resolves locally.
+- `Character.OnDeath` — the per-player boss defeat key was only recorded on whichever client owned the
+  boss, because `CheckDeath` runs owner-only. The owner now broadcasts it and every player within
+  range (default 300 m, configurable) is credited. Most visible with Hildir's quest bosses.
+
 ## 0.1.0
 
 First release. Each entry names the vanilla method it fixes.

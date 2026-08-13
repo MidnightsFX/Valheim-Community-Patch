@@ -49,7 +49,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
             int patched = 0;
             for (int i = 0; i < codes.Count; i++) {
-                if (codes[i].opcode != OpCodes.Call || !ReferenceEquals(codes[i].operand, LookRotationMethod)) { continue; }
+                if (!codes[i].Calls(LookRotationMethod)) { continue; }
                 codes[i].operand = SafeLookRotationMethod;
                 patched++;
             }

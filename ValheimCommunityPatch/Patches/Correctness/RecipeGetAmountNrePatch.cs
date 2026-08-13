@@ -48,7 +48,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
             int patched = 0;
             for (int i = 0; i < codes.Count; i++) {
-                if (codes[i].opcode != OpCodes.Ldfld || !ReferenceEquals(codes[i].operand, QualityField)) { continue; }
+                if (!codes[i].LoadsField(QualityField)) { continue; }
 
                 // The ItemData reference is already on the stack for the field load, so a static call
                 // taking that same reference and returning int is a drop-in replacement.

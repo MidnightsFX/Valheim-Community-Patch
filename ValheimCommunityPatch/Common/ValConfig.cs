@@ -61,11 +61,19 @@ namespace ValheimCommunityPatch {
         private static void BindFixToggles() {
             Patches.Performance.RecipeLookupCachePatch.BindConfig();
             Patches.Performance.LiquidVolumeLeakPatch.BindConfig();
+            Patches.Performance.PortalConnectionPatch.BindConfig();
+            Patches.Performance.ZdoConnectionIndexPatch.BindConfig();
+            Patches.Performance.AutoPickupAllocPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();
             Patches.Correctness.RunAttackStaminaPatch.BindConfig();
             Patches.Correctness.UnlitFireCookingPatch.BindConfig();
+            Patches.Correctness.ZdoLoadDuplicatePatch.BindConfig();
+            Patches.Correctness.RemoveObjectsNrePatch.BindConfig();
+            Patches.Correctness.EffectAreaPatch.BindConfig();
+            Patches.Correctness.FuelLossPatch.BindConfig();
+            Patches.Correctness.BossKeySharePatch.BindConfig();
         }
 
         /// <summary>

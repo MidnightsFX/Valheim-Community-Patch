@@ -1,0 +1,162 @@
+using System.Collections.Generic;
+using BepInEx.Configuration;
+using HarmonyLib;
+
+namespace ValheimCommunityPatch.Patches.Performance {
+    // Vanilla defect: both of ZDOMan's world-load connection routines are nested loops that match a
+    // "source" list against a "target" list by comparing ZDOConnectionHashData.m_hash one pair at a
+    // time. On a mature world with thousands of portals, spawners and their targets, that is O(n*m)
+    // work on the critical path of loading the world - a multi-second stall before anyone can join,
+    // repeated on every server start.
+    //
+    // Fix: build a hash-keyed index of the target list once, then resolve each source with a single
+    // dictionary lookup. Both rewrites reproduce vanilla's pairing decisions exactly, including its
+    // ordering, its self-exclusion check and its "mark as done" fallback:
+    //
+    //   * ConnectPortals consumes each target at most once (vanilla re-tests GetConnectionType == None
+    //     on every inner iteration, so an already-linked target is skipped). The index therefore pops
+    //     candidates as they are used.
+    //   * ConnectSpawners does *not* consume - vanilla breaks on the first hash match regardless of
+    //     whether an earlier spawner already claimed it - so several spawners may share one target.
+    //     The index keeps the first match per hash to match that.
+    //
+    // Source and target lists are disjoint (GetAllConnectionZDOIDs filters on exact type equality, and
+    // Portal != Portal|Target), so vanilla's zid != id guard can never fire; it is kept anyway.
+    //
+    // Provenance: same approach as the ZDOMan.ConnectSpawners rewrite in ComfyMods/Atlas (GPL-3.0,
+    // redseiko), extended here to ConnectPortals.
+    [HarmonyPatch(typeof(ZDOMan))]
+    internal static class ZdoConnectionIndexPatch {
+        internal static ConfigEntry<bool> Enabled;
+
+        internal static void BindConfig() {
+            Enabled = ValConfig.BindServerConfig(
+                ValConfig.SectionPerformance,
+                "Fix World Load Connection Scan",
+                true,
+                "Replaces the two quadratic scans that pair portals and spawners with their targets " +
+                "during world load with indexed lookups. On a long-lived world these are a multi-second " +
+                "stall on every server start.");
+        }
+
+        private const ZDOExtraData.ConnectionType PortalType = ZDOExtraData.ConnectionType.Portal;
+        private const ZDOExtraData.ConnectionType PortalTargetType = ZDOExtraData.ConnectionType.Portal | ZDOExtraData.ConnectionType.Target;
+        private const ZDOExtraData.ConnectionType SpawnedType = ZDOExtraData.ConnectionType.Spawned;
+        private const ZDOExtraData.ConnectionType SpawnedTargetType = ZDOExtraData.ConnectionType.Spawned | ZDOExtraData.ConnectionType.Target;
+
+        [HarmonyPrefix]
+        [HarmonyPatch("ConnectPortals")]
+        private static bool ConnectPortalsPrefix(ZDOMan __instance) {
+            if (Enabled == null || !Enabled.Value) { return true; }
+
+            List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(PortalType);
+            List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(PortalTargetType);
+
+            // Only targets with no live connection are eligible, which is what vanilla's
+            // GetConnectionType(id) == None test means on the first pass.
+            Dictionary<int, Queue<ZDOID>> available = new Dictionary<int, Queue<ZDOID>>();
+            for (int i = 0; i < targets.Count; i++) {
+                ZDOID targetId = targets[i];
+                if (ZDOExtraData.GetConnectionType(targetId) != ZDOExtraData.ConnectionType.None) { continue; }
+
+                ZDOConnectionHashData hashData = ZDOExtraData.GetConnectionHashData(targetId, PortalTargetType);
+                if (hashData == null) { continue; }
+
+                if (!available.TryGetValue(hashData.m_hash, out Queue<ZDOID> queue)) {
+                    queue = new Queue<ZDOID>();
+                    available.Add(hashData.m_hash, queue);
+                }
+
+                queue.Enqueue(targetId);
+            }
+
+            long sessionId = ZDOMan.GetSessionID();
+            int connected = 0;
+
+            for (int i = 0; i < sources.Count; i++) {
+                ZDOID sourceId = sources[i];
+
+                ZDO source = __instance.GetZDO(sourceId);
+                if (source == null) { continue; }
+
+                ZDOConnectionHashData hashData = source.GetConnectionHashData(PortalType);
+                if (hashData == null) { continue; }
+
+                if (!available.TryGetValue(hashData.m_hash, out Queue<ZDOID> queue)) { continue; }
+
+                ZDO target = null;
+                ZDOID targetId = ZDOID.None;
+                while (queue.Count > 0) {
+                    ZDOID candidate = queue.Dequeue();
+                    if (candidate == sourceId) { continue; }
+
+                    target = __instance.GetZDO(candidate);
+                    if (target != null) { targetId = candidate; break; }
+                }
+
+                if (target == null) { continue; }
+
+                connected++;
+                source.SetOwner(sessionId);
+                target.SetOwner(sessionId);
+                source.SetConnection(PortalType, targetId);
+                target.SetConnection(PortalType, sourceId);
+            }
+
+            if (connected > 0) {
+                Logger.LogInfo($"ConnectPortals => Connected {connected} portals.");
+            }
+
+            return false;
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch("ConnectSpawners")]
+        private static bool ConnectSpawnersPrefix(ZDOMan __instance) {
+            if (Enabled == null || !Enabled.Value) { return true; }
+
+            List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(SpawnedType);
+            List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(SpawnedTargetType);
+
+            // First match per hash wins and is never consumed, mirroring vanilla's break-on-first-match
+            // with no eligibility re-test.
+            Dictionary<int, ZDOID> firstByHash = new Dictionary<int, ZDOID>();
+            for (int i = 0; i < targets.Count; i++) {
+                ZDOConnectionHashData hashData = ZDOExtraData.GetConnectionHashData(targets[i], SpawnedTargetType);
+                if (hashData == null || firstByHash.ContainsKey(hashData.m_hash)) { continue; }
+
+                firstByHash.Add(hashData.m_hash, targets[i]);
+            }
+
+            long sessionId = ZDOMan.GetSessionID();
+            int connected = 0, done = 0;
+
+            for (int i = 0; i < sources.Count; i++) {
+                ZDOID sourceId = sources[i];
+
+                ZDO source = __instance.GetZDO(sourceId);
+                if (source == null) { continue; }
+
+                source.SetOwner(sessionId);
+
+                ZDOConnectionHashData hashData = source.GetConnectionHashData(SpawnedType);
+                if (hashData != null
+                    && firstByHash.TryGetValue(hashData.m_hash, out ZDOID targetId)
+                    && targetId != sourceId) {
+                    connected++;
+                    source.SetConnection(SpawnedType, targetId);
+                } else {
+                    // Vanilla marks an unmatched spawner as "done" so it is not retried.
+                    done++;
+                    source.SetConnection(SpawnedType, ZDOID.None);
+                }
+            }
+
+            if (connected > 0 || done > 0) {
+                Logger.LogInfo($"ConnectSpawners => Connected {connected} spawners and {done} 'done' spawners.");
+            }
+
+            return false;
+        }
+    }
+}
