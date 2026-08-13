@@ -76,6 +76,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.FuelLossPatch.BindConfig();
             Patches.Correctness.BossKeySharePatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
+            Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.PaintMaskStridePatch.BindConfig();
             Patches.Terrain.TerrainCompNullHmapPatch.BindConfig();
         }

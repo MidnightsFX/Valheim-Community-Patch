@@ -42,6 +42,26 @@ written.
   has all four of its own neighbours yet — what it does do is complete the neighbour set of the zone
   behind it. Skipping the refresh in that case left a permanent band of vanilla-normal terrain
   trailing the player.
+- `Heightmap.ApplyModifiers` — terrain paint could disagree between the two sides of a zone boundary,
+  leaving painted ground (usually dirt, from levelling and raising terrain) stopping dead in a hard
+  straight line along the 64 m grid. Measured on a live world: 556 of 2600 shared vertices disagreed
+  on the dirt channel with a maximum delta of 1.0 — fully painted on one side, unpainted on the other
+  — while cultivated, paved and vegetation matched exactly.
+
+  World generation never writes dirt at all (it only fills the mask's alpha), so every bit of it comes
+  from a terrain operation. Unlike terrain height, which `TerrainComp` stores as a delta, paint is
+  stored as an *absolute colour snapshot* seeded from whatever the heightmap texture held when the
+  operation was recorded. Every distance and rounding calculation involved is symmetric between the
+  two zones, so the divergence is state rather than arithmetic — if the zones' textures differed at
+  that instant, both compilers permanently record different colours for the same ground and replay
+  them on every regeneration.
+
+  Shared boundary texels are now reconciled by taking the per-channel minimum. Minimum specifically:
+  it can only remove paint, never invent it; paint applied legitimately across a boundary reaches both
+  zones symmetrically and so is already equal and unaffected; and both zones compute the same value
+  from the same inputs, so the result is continuous no matter which side is processed first. Alpha is
+  left alone — it is world-generated, drives lava rendering in the Ashlands, and was measured as
+  already consistent.
 - `Heightmap.SetPaintMask` / `Heightmap.UpdateTerrainAlpha` / `TerrainComp.UpdatePaintMask` — all
   three walk the paint mask with the wrong stride or bounds. The paint arrays are `(m_width + 1)²`,
   but two of them index with a stride of `m_width`, which slips a column further left on every row —

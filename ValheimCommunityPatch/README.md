@@ -40,6 +40,10 @@ Toggles are admin-only and server-synced.
   as a hard crease running through flat terrain, most obvious in the Plains and Meadows. Lighting
   normals are now computed across the boundary so both sides agree. Terrain *geometry* was never the
   problem — world generation already lines up exactly at zone borders.
+- **Fix Terrain Paint Seams** — terrain paint could end up applied on only one side of a zone border,
+  drawing a hard straight line of dirt across the ground along the 64 m grid. Boundary paint is now
+  reconciled between neighbouring zones. It only ever removes paint from the boundary itself and
+  never adds it, so ground you painted normally across a border is untouched.
 - **Fix Terrain Paint Mask Indexing** — three places walk the terrain paint data with the wrong
   stride, skewing it diagonally, and refuse to write the row and column each zone shares with its
   neighbour.
