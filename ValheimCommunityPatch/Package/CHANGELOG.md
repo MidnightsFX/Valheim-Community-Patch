@@ -16,8 +16,15 @@ written.
 - **`vcp_terrainscan [radius]`** — read-only. Walks every adjacent pair of loaded heightmaps and
   compares their shared boundary vertices, reporting height, surface-normal and paint-mask deltas
   separately. A non-zero *height* delta means the geometry genuinely diverged; a zero height delta
-  with a non-zero *normal* delta means the seam is purely lighting. Changes nothing — no `Poke`, no
-  `Save`, no `TerrainComp` writes.
+  with a non-zero *normal* delta means the seam is purely lighting. Paint is broken out per channel
+  (dirt / cultivated / paved / vegetation) since the cause differs by channel, and normals are
+  bucketed by whether both zones had all four neighbours loaded — without that split, terrain at the
+  edge of the loaded area drags the numbers down and makes a working fix look broken. Changes
+  nothing — no `Poke`, no `Save`, no `TerrainComp` writes.
+
+  First real-world run confirmed the height delta is **exactly zero** across 2600 shared vertices,
+  which rules out the cross-zone divergence described under "known, documented, not yet fixed" below
+  for that world, and confirms the seam is a shading artifact.
 
 ### Terrain
 
@@ -29,6 +36,12 @@ written.
   samples across the boundary from the neighbouring heightmap. Loaded neighbours are refreshed too,
   since their edge normals depend on this zone's heights. When a neighbour is not loaded, vanilla's
   normals are left alone rather than half-applying the fix.
+
+  The neighbour refresh runs whether or not the newly built zone could be fixed itself, and that
+  ordering matters: zones are always built at the frontier of the loaded area, so a new zone rarely
+  has all four of its own neighbours yet — what it does do is complete the neighbour set of the zone
+  behind it. Skipping the refresh in that case left a permanent band of vanilla-normal terrain
+  trailing the player.
 - `Heightmap.SetPaintMask` / `Heightmap.UpdateTerrainAlpha` / `TerrainComp.UpdatePaintMask` — all
   three walk the paint mask with the wrong stride or bounds. The paint arrays are `(m_width + 1)²`,
   but two of them index with a stride of `m_width`, which slips a column further left on every row —

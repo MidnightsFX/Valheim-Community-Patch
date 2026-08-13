@@ -49,11 +49,20 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             // on vanilla behaviour rather than pretending they tile with the zone heightmaps.
             if (__instance.IsDistantLod) { return; }
 
-            if (!ApplyNormals(__instance)) { return; }
+            ApplyNormals(__instance);
 
-            // Our heights feed the neighbours' edge normals too, so anything already built next to us
-            // is now stale. Recomputing them is pure arithmetic over 1089 vertices - far cheaper than
-            // the mesh rebuild that just happened - so do it eagerly instead of keeping a dirty queue.
+            // Refresh the neighbours whether or not our own zone succeeded, and this is the important
+            // part: zones are always built at the frontier of the loaded area, so a new zone almost
+            // never has all four of its own neighbours yet. What it *does* do is complete the
+            // neighbour set of the zone behind it, which had bailed to vanilla normals for exactly
+            // that reason and would otherwise stay that way forever - nothing else re-pokes it.
+            //
+            // Skipping this when our own zone fails leaves a permanent band of vanilla-normal terrain
+            // trailing the player, which is what vcp_terrainscan measured: 81% of shared vertices
+            // matching near the player against 43% further out.
+            //
+            // Recomputing a neighbour is pure arithmetic over 1089 vertices, far cheaper than the mesh
+            // rebuild that just happened, so do it eagerly rather than keeping a dirty queue.
             float zoneSize = __instance.m_width * __instance.m_scale;
             RefreshNeighbour(__instance, -zoneSize, 0f);
             RefreshNeighbour(__instance, zoneSize, 0f);

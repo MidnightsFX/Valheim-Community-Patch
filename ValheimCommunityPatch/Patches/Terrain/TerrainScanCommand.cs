@@ -10,8 +10,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // the same world position as the east neighbour's vertex 0. Anything the two sides disagree about
     // at those vertices shows up in game as a seam.
     //
-    // This walks every adjacent pair of loaded heightmaps and reports three separate deltas, because
-    // they point at three different causes:
+    // Three deltas are reported separately because they point at three different causes:
     //
     //   height  - non-zero means the terrain geometry genuinely does not line up, which would mean
     //             player terrain edits diverged across the zone boundary (TerrainComp stores deltas
@@ -19,7 +18,14 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     //             zone, so two owners can resolve the same shared vertex against different snapshots)
     //   normal  - non-zero with a zero height delta means the geometry is fine and the seam is purely
     //             a lighting artifact, which is what SeamlessNormalsPatch addresses
-    //   paint   - non-zero means the paint mask is out of step, which PaintMaskStridePatch addresses
+    //   paint   - reported per channel. RGB is dirt / cultivated / paved; alpha is the cleared
+    //             vegetation mask, which also drives lava rendering in the Ashlands. Knowing which
+    //             channel disagrees says whether the cause is player painting or the vegetation mask.
+    //
+    // Normals are bucketed by whether *both* zones of a pair had all four of their own neighbours
+    // loaded, since that is the precondition for SeamlessNormalsPatch doing anything. Without that
+    // split, terrain at the edge of the loaded area drags the numbers down and makes a working fix
+    // look broken.
     //
     // It never calls Poke, Save or touches TerrainComp data. Running it changes nothing.
     [HarmonyPatch(typeof(Terminal))]
@@ -82,22 +88,35 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 return;
             }
 
-            // mesh.normals allocates a fresh array per call, so fetch each heightmap's once.
+            // mesh.normals allocates a fresh array per call, so fetch each heightmap's once. Same for
+            // the eligibility test, which walks the loaded heightmap list four times per zone.
             Dictionary<Heightmap, Vector3[]> normals = new Dictionary<Heightmap, Vector3[]>();
+            Dictionary<Heightmap, bool> eligible = new Dictionary<Heightmap, bool>();
+            int eligibleCount = 0;
+
             foreach (Heightmap hmap in nearby) {
                 Mesh mesh = hmap.m_renderMesh;
                 normals[hmap] = mesh != null ? mesh.normals : null;
+
+                bool canBeSeamless = HasAllNeighbours(hmap);
+                eligible[hmap] = canBeSeamless;
+                if (canBeSeamless) { eligibleCount++; }
             }
 
-            Stats height = new Stats(), normal = new Stats(), paint = new Stats();
+            Stats height = new Stats();
+            Stats normalBothEligible = new Stats();
+            Stats normalFellBack = new Stats();
+            Stats[] paint = { new Stats(), new Stats(), new Stats(), new Stats() };
             int pairs = 0;
 
             foreach (Heightmap hmap in nearby) {
                 float zoneSize = hmap.m_width * hmap.m_scale;
 
                 // Only look east and north so each pair is visited once.
-                if (ComparePair(hmap, Neighbour(hmap, zoneSize, 0f), true, normals, height, normal, paint)) { pairs++; }
-                if (ComparePair(hmap, Neighbour(hmap, 0f, zoneSize), false, normals, height, normal, paint)) { pairs++; }
+                if (ComparePair(hmap, Neighbour(hmap, zoneSize, 0f), true,
+                        normals, eligible, height, normalBothEligible, normalFellBack, paint)) { pairs++; }
+                if (ComparePair(hmap, Neighbour(hmap, 0f, zoneSize), false,
+                        normals, eligible, height, normalBothEligible, normalFellBack, paint)) { pairs++; }
             }
 
             args.Context.AddString($"--- {CommandName}: {nearby.Count} heightmap(s), {pairs} shared edge(s), radius {radius:0} ---");
@@ -107,17 +126,33 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 return;
             }
 
+            args.Context.AddString($"seamless-eligible: {eligibleCount}/{nearby.Count} zones have all 4 neighbours loaded");
             args.Context.AddString(height.Describe("height", "m", HeightEpsilon));
-            args.Context.AddString(normal.Describe("normal", "", NormalEpsilon));
-            args.Context.AddString(paint.Describe("paint ", "", PaintEpsilon));
+            args.Context.AddString(normalBothEligible.Describe("normal (both eligible)", "", NormalEpsilon));
+            args.Context.AddString(normalFellBack.Describe("normal (edge of loaded area)", "", NormalEpsilon));
+            args.Context.AddString(
+                $"paint r/g/b/a max: {paint[0].Worst:0.###} / {paint[1].Worst:0.###} / " +
+                $"{paint[2].Worst:0.###} / {paint[3].Worst:0.###}");
+            args.Context.AddString(paint[0].Describe("paint dirt (r)", "", PaintEpsilon));
+            args.Context.AddString(paint[1].Describe("paint cultivated (g)", "", PaintEpsilon));
+            args.Context.AddString(paint[2].Describe("paint paved (b)", "", PaintEpsilon));
+            args.Context.AddString(paint[3].Describe("paint vegetation (a)", "", PaintEpsilon));
 
             if (height.Worst > HeightEpsilon) {
                 args.Context.AddString($"Worst height mismatch at {height.WorstAt} ({height.Worst:0.####} m) - geometry, not shading.");
-            } else if (normal.Worst > NormalEpsilon) {
-                args.Context.AddString("Geometry lines up; the seam is a lighting discontinuity.");
             } else {
-                args.Context.AddString("No mismatches found at shared vertices.");
+                args.Context.AddString("Geometry lines up exactly; any seam here is shading or paint, not terrain height.");
             }
+        }
+
+        // The exact precondition SeamlessNormalsPatch checks before it will touch a heightmap.
+        private static bool HasAllNeighbours(Heightmap hmap) {
+            float zoneSize = hmap.m_width * hmap.m_scale;
+
+            return Neighbour(hmap, -zoneSize, 0f) != null
+                && Neighbour(hmap, zoneSize, 0f) != null
+                && Neighbour(hmap, 0f, -zoneSize) != null
+                && Neighbour(hmap, 0f, zoneSize) != null;
         }
 
         private static Heightmap Neighbour(Heightmap hmap, float dx, float dz) {
@@ -134,11 +169,18 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         private static bool ComparePair(
             Heightmap a, Heightmap b, bool eastward,
             Dictionary<Heightmap, Vector3[]> normals,
-            Stats height, Stats normal, Stats paint) {
+            Dictionary<Heightmap, bool> eligible,
+            Stats height, Stats normalBothEligible, Stats normalFellBack, Stats[] paint) {
             if (b == null) { return false; }
 
             normals.TryGetValue(a, out Vector3[] normalsA);
-            if (!normals.TryGetValue(b, out Vector3[] normalsB)) { normalsB = b.m_renderMesh != null ? b.m_renderMesh.normals : null; }
+            if (!normals.TryGetValue(b, out Vector3[] normalsB)) {
+                normalsB = b.m_renderMesh != null ? b.m_renderMesh.normals : null;
+            }
+
+            eligible.TryGetValue(a, out bool eligibleA);
+            if (!eligible.TryGetValue(b, out bool eligibleB)) { eligibleB = HasAllNeighbours(b); }
+            Stats normalBucket = eligibleA && eligibleB ? normalBothEligible : normalFellBack;
 
             int width = a.m_width;
             int stride = width + 1;
@@ -162,15 +204,16 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                     int ia = ay * stride + ax;
                     int ib = by * stride + bx;
                     if (ia < normalsA.Length && ib < normalsB.Length) {
-                        normal.Add((normalsA[ia] - normalsB[ib]).magnitude, worldPos);
+                        normalBucket.Add((normalsA[ia] - normalsB[ib]).magnitude, worldPos);
                     }
                 }
 
                 Color pa = a.GetPaintMask(ax, ay);
                 Color pb = b.GetPaintMask(bx, by);
-                float paintDelta = Mathf.Abs(pa.r - pb.r) + Mathf.Abs(pa.g - pb.g)
-                                 + Mathf.Abs(pa.b - pb.b) + Mathf.Abs(pa.a - pb.a);
-                paint.Add(paintDelta, worldPos);
+                paint[0].Add(Mathf.Abs(pa.r - pb.r), worldPos);
+                paint[1].Add(Mathf.Abs(pa.g - pb.g), worldPos);
+                paint[2].Add(Mathf.Abs(pa.b - pb.b), worldPos);
+                paint[3].Add(Mathf.Abs(pa.a - pb.a), worldPos);
             }
 
             return true;
@@ -204,7 +247,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 double mean = _sum / _deltas.Count;
                 string verdict = over > 0 ? "MISMATCH" : "ok";
                 return $"{label}: max {Worst:0.#####}{unit}  mean {mean:0.#####}{unit}  " +
-                       $"{over}/{_deltas.Count} vertices differ  [{verdict}]";
+                       $"{over}/{_deltas.Count} differ  [{verdict}]";
             }
         }
     }
