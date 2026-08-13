@@ -27,6 +27,7 @@ namespace ValheimCommunityPatch {
         // off without a rebuild; the toggles live next to the patch that reads them.
         public const string SectionPerformance = "Fixes - Performance";
         public const string SectionCorrectness = "Fixes - Correctness";
+        public const string SectionTerrain = "Fixes - Terrain";
 
         public ValConfig(ConfigFile cf) {
             // ensure all the config values are created
@@ -74,6 +75,9 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.EffectAreaPatch.BindConfig();
             Patches.Correctness.FuelLossPatch.BindConfig();
             Patches.Correctness.BossKeySharePatch.BindConfig();
+            Patches.Terrain.SeamlessNormalsPatch.BindConfig();
+            Patches.Terrain.PaintMaskStridePatch.BindConfig();
+            Patches.Terrain.TerrainCompNullHmapPatch.BindConfig();
         }
 
         /// <summary>

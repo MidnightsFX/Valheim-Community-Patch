@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.3.0
+
+Terrain seams. Each entry names the vanilla method it fixes.
+
+Note on what is *not* here: the base heightfield is seam-consistent by construction.
+`HeightmapBuilder.Build` blends the four corner-biome heights with `SmoothStep`-warped coordinates,
+and since `SmoothStep(0,1,0)==0`, `SmoothStep(0,1,1)==1`, and adjacent zones sample
+`WorldGenerator.GetBiome` at the same world positions for their shared corners, both zones compute an
+identical height at every shared vertex. World generation was ruled out before any of this was
+written.
+
+### New diagnostic
+
+- **`vcp_terrainscan [radius]`** — read-only. Walks every adjacent pair of loaded heightmaps and
+  compares their shared boundary vertices, reporting height, surface-normal and paint-mask deltas
+  separately. A non-zero *height* delta means the geometry genuinely diverged; a zero height delta
+  with a non-zero *normal* delta means the seam is purely lighting. Changes nothing — no `Poke`, no
+  `Save`, no `TerrainComp` writes.
+
+### Terrain
+
+- `Heightmap.RebuildRenderMesh` — vanilla calls `RecalculateNormals()` on a mesh containing only one
+  zone's 33×33 vertices, so a vertex on a zone boundary is shaded from the triangles on one side only
+  while the neighbouring zone shades the same world position from the other. The result is a hard
+  lighting crease along every 64 m zone border, most visible on flat bright terrain — Plains and
+  Meadows. Normals are now computed analytically from the height field by central difference, taking
+  samples across the boundary from the neighbouring heightmap. Loaded neighbours are refreshed too,
+  since their edge normals depend on this zone's heights. When a neighbour is not loaded, vanilla's
+  normals are left alone rather than half-applying the fix.
+- `Heightmap.SetPaintMask` / `Heightmap.UpdateTerrainAlpha` / `TerrainComp.UpdatePaintMask` — all
+  three walk the paint mask with the wrong stride or bounds. The paint arrays are `(m_width + 1)²`,
+  but two of them index with a stride of `m_width`, which slips a column further left on every row —
+  a diagonal skew, not a uniform offset — and both stop one short of the last row and column.
+  `SetPaintMask` separately rejects index `m_width`, which is exactly the row and column a zone shares
+  with its neighbour, so paint could never be written to the seam at all.
+- `TerrainComp.Update` — `Awake` gives up without initialising when it cannot find its zone's
+  heightmap, but `Update` still calls `CheckLoad` every frame, which dereferences the null
+  `m_modifiedHeight` and then the null `m_hmap`. Besides the exception spam, that zone stops accepting
+  terrain edits permanently, because the compiler was never added to `s_instances` and nothing can
+  find it. The frame is now skipped, and initialisation is retried once the heightmap appears.
+
+### Known, documented, not yet fixed
+
+`TerrainComp` stores terrain edits as deltas *relative to the current height* and routes them to
+whichever peer owns each zone (`TerrainComp.ApplyOperation` → RPC → `m_levelDelta[i] += targetY -
+GetHeight(x,y)`). When an edit straddles a zone boundary and the two zones are owned by different
+players, each half resolves the same shared vertex against a differently-stale snapshot, which would
+produce a real geometric step on the 64 m line. Whether this actually happens in practice is what
+`vcp_terrainscan`'s height delta is there to answer. No fix is shipped for it yet, deliberately — the
+candidate fix changes ownership behaviour and should not be written on a hunch.
+
 ## 0.2.0
 
 Server performance and data integrity. Each entry names the vanilla method it fixes.

@@ -33,6 +33,27 @@ Toggles are admin-only and server-synced.
 - **Fix Auto Pickup Allocation** — the auto-pickup check allocated a fresh array every frame for
   every player.
 
+### Terrain
+
+- **Fix Terrain Seams** — Valheim shades each 64 m zone's terrain using only that zone's own
+  triangles, so the ground on either side of a zone border is lit slightly differently. That shows up
+  as a hard crease running through flat terrain, most obvious in the Plains and Meadows. Lighting
+  normals are now computed across the boundary so both sides agree. Terrain *geometry* was never the
+  problem — world generation already lines up exactly at zone borders.
+- **Fix Terrain Paint Mask Indexing** — three places walk the terrain paint data with the wrong
+  stride, skewing it diagonally, and refuse to write the row and column each zone shares with its
+  neighbour.
+- **Fix Terrain Compiler Init Race** — if a zone's terrain compiler loads before its heightmap
+  exists, vanilla throws a `NullReferenceException` every frame from then on *and* that zone silently
+  stops accepting terrain edits. It now recovers once the heightmap appears.
+
+### Diagnostics
+
+- **`vcp_terrainscan [radius]`** — read-only console command. Compares the shared boundary vertices
+  of every adjacent loaded zone and reports height, lighting-normal and paint deltas separately, so a
+  visible seam can be attributed to geometry, lighting or paint rather than guessed at. Changes
+  nothing.
+
 ### Correctness
 
 - **Fix Object Unload Crash** — `ZNetScene.RemoveObjects` dereferenced every instance's ZDO with no
