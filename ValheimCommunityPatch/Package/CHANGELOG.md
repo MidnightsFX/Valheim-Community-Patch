@@ -1,5 +1,104 @@
 # Changelog
 
+## 0.4.0
+
+Crafting UI performance. Each entry names the vanilla method it fixes.
+
+### Performance
+
+- `InventoryGui.UpdateRecipeList` — destroys every row `GameObject` and re-`Instantiate`s the whole
+  list on each call, and each row costs four `transform.Find` lookups, a `Localization.Localize`, two
+  TMP text assignments and a fresh closure for its `onClick` listener. It is not an on-open cost:
+  `UpdateCraftingPanel` is reached from seven call sites, including `OnSelectedItem` — every
+  successful item drag-drop in the inventory or a container — and `DoCrafting` after every craft. With
+  `nocost` set (which makes `GetAvailableRecipes` return every recipe in `ObjectDB`) or a large
+  content modpack, that is a full teardown and rebuild of thousands of UI objects every time you move
+  an item.
+
+  Rows are now pooled and reused, with each row's child component references cached at creation. The
+  row *data* is sorted before it is bound to a row, so `anchoredPosition` is written once when a row
+  is created and vanilla's O(n) reposition pass after the sort disappears. Surplus rows are
+  deactivated rather than destroyed, since destroying them is the cost being removed.
+
+  Vanilla's `HaveRequirements(recipe, false, 1) | globalKey` uses the non-short-circuiting `|`, so the
+  requirement scan runs even when `NoCraftCost` already decided the answer; that is now `||`. The
+  upgrade-tab expression at the equivalent site is left semantically exact: `|` binds tighter than
+  `&&` there, so a max-quality item is *not* upgradeable even under `NoCraftCost`, and hoisting the
+  global key would have changed behaviour.
+
+- `Inventory.CountItems` — a full linear scan of the inventory with a string comparison per slot,
+  called by `HaveRequirementItems` once per requirement per quality tier per recipe with no
+  memoization, even though the inventory cannot change during a rebuild. A scoped memo is now armed
+  only around the craftability pass of a rebuild, guarded by a `try/finally`, a frame stamp, a world
+  level stamp and an `Inventory.Changed` postfix. It is a prefix/postfix pair rather than a
+  reimplementation, so the `matchWorldLevel`, null-name and negative-quality semantics are preserved
+  by construction and other mods' patches still run and get memoized.
+
+- `InventoryGui.UpdateRecipeList` sort comparators — `byName` called `Localization.Localize` *inside*
+  the comparison, so a rebuild made `2 × O(n log n)` calls against `Localization`'s
+  `LRUCache<string>(100)`. Past a hundred recipes that cache thrashes to a roughly 0% hit rate and
+  every call re-runs the full translate path. Names are now translated once each and cached across
+  rebuilds, invalidated when the selected language changes. The comparison stays culture-sensitive
+  `string.CompareTo`, matching vanilla — an ordinal comparison would reorder non-ASCII names in every
+  non-English locale.
+
+- `InventoryGui.SetRecipe` — walked every row calling `transform.Find("selected")` on each, plus a
+  `ZLog.Log` with a string concatenation, on every click, every gamepad D-pad tick, and at the tail of
+  every rebuild. The one highlighted row is now tracked directly, so two `SetActive` calls replace the
+  full scan, and the log line is gone.
+
+- `InventoryGui.UpdateRecipeList` (canvas cost) — every row stayed active regardless of scroll
+  position, so any canvas dirty re-batched the entire list. Rows outside the viewport are now
+  deactivated, applied as a delta against the previous window so a scroll event touches only the rows
+  that crossed the boundary. Behind its own toggle, since an inactive row is invisible to a
+  `GetComponentInChildren` call that does not pass `includeInactive`.
+
+- Row pre-warming — pooling only helps from the *second* rebuild onward, so the pool is now built by a
+  time-budgeted coroutine during world load, where the cost is hidden by the loading screen. Capped by
+  `Prewarm Recipe Rows` (default 1024) and by the actual recipe count. The row prefab is inactive, so
+  pre-built rows are born inactive and cost memory only — roughly 5-15 KB each — until they are bound.
+
+### New diagnostic
+
+- **`vcp_recipebench [iterations] [vanilla]`** — read-only. Times `InventoryGui.UpdateCraftingPanel`,
+  reporting the first (cold) build separately from the steady-state rebuild, and breaking the rebuild
+  into requirement checks, sorting and row binding, with `CountItems` memo hit rate and created /
+  reused / idle row counts. Passing `vanilla` suppresses the fast path for the duration of the run, so
+  both arms are measured in one session against the same world, inventory and `ObjectDB` — a
+  before/after taken across two restarts compares none of those. Also reports whether the scroll
+  viewport uses a stencil `Mask` or a `RectMask2D`, which decides how much the culling is worth.
+  `UpdateCraftingPanel` is idempotent, so repeating it changes nothing.
+
+### Compatibility
+
+Replacing `UpdateRecipeList` means `AddRecipeToList` is never called, and it has no other caller — so
+a mod that patches it would silently lose its feature with no exception and no log. Both, plus
+`SetRecipe`, are probed with `Harmony.GetPatchInfo` on every `InventoryGui.Awake`; if any carries a
+foreign patch the affected part falls back to vanilla and the owning plugin GUID is logged.
+`SetRecipe` is probed independently so a mod patching it does not cost the pooling win.
+
+A structural probe additionally requires the vanilla row prefab shape (`icon`, `name`, `Durability`,
+`QualityLevel`, `selected`, a `Button`) and no `LayoutGroup` or `ContentSizeFitter` on the list root,
+which is a hard requirement for sorting before binding. Anything else disables the fast path with a
+logged reason rather than guessing. Vanilla would throw a `NullReferenceException` on a missing child,
+so bailing out is strictly safer than vanilla rather than a divergence from it.
+
+### Not done, deliberately
+
+- **Skipping `HaveRequirements` under `NoCostCheat`.** `nocost` sets `Player.m_noPlacementCost`, which
+  `GetAvailableRecipes` reads — that is *why* every recipe appears — but which `UpdateRecipeList` never
+  consults. And `canCraft` drives the icon alpha, the name colour and `byCraftable`, the primary sort
+  key, so skipping it would turn every row white and reorder the list. The `CountItems` memo is what
+  makes `nocost` fast while keeping `canCraft` exact.
+- **Indexing `Player.GetAvailableRecipes`.** It looks like an O(n) offender, but `m_knownRecipes` is
+  already a `HashSet<string>` and `m_currentSeason` is null outside events, leaving it a rounding error
+  next to the rebuild it feeds. Its one real defect — `ToLower()` allocations and a `Localize` per
+  recipe per term in the `s_FilterCraft` path — only triggers when a filter is typed, and belongs in
+  its own fix.
+- **Full virtualization.** Recycling a small fixed pool would remove the first-open cost entirely, but
+  `m_availableRecipes[i].InterfaceElement` would be null for off-screen rows, which can throw in any
+  mod that walks that list. Every row keeps a real `GameObject`.
+
 ## 0.3.0
 
 Terrain seams. Each entry names the vanilla method it fixes.

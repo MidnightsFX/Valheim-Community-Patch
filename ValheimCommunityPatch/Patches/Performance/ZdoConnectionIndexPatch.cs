@@ -3,15 +3,16 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: both of ZDOMan's world-load connection routines are nested loops that match a
-    // "source" list against a "target" list by comparing ZDOConnectionHashData.m_hash one pair at a
-    // time. On a mature world with thousands of portals, spawners and their targets, that is O(n*m)
-    // work on the critical path of loading the world - a multi-second stall before anyone can join,
-    // repeated on every server start.
+    // Vanilla defect: all three of ZDOMan's world-load connection routines are nested loops that match
+    // a "source" list against a "target" list by comparing ZDOConnectionHashData.m_hash one pair at a
+    // time. On a mature world with thousands of portals, spawners, ships and their targets, that is
+    // O(n*m) work on the critical path of loading the world - a multi-second stall before anyone can
+    // join, repeated on every server start.
     //
     // Fix: build a hash-keyed index of the target list once, then resolve each source with a single
-    // dictionary lookup. Both rewrites reproduce vanilla's pairing decisions exactly, including its
-    // ordering, its self-exclusion check and its "mark as done" fallback:
+    // dictionary lookup. All three rewrites reproduce vanilla's pairing decisions exactly, including
+    // its ordering, its self-exclusion check and its "mark as done" fallback. The three differ more
+    // than they look, so each prefix follows its own original rather than a shared helper:
     //
     //   * ConnectPortals consumes each target at most once (vanilla re-tests GetConnectionType == None
     //     on every inner iteration, so an already-linked target is skipped). The index therefore pops
@@ -19,12 +20,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //   * ConnectSpawners does *not* consume - vanilla breaks on the first hash match regardless of
     //     whether an earlier spawner already claimed it - so several spawners may share one target.
     //     The index keeps the first match per hash to match that.
+    //   * ConnectSyncTransforms also does not consume, so it indexes the same way as ConnectSpawners.
+    //     But it skips every other step the other two take: no GetZDO lookup or null check on either
+    //     side, no SetOwner, and no "done" marking for an unmatched source. It works purely through
+    //     the static ZDOExtraData maps keyed by ZDOID and never touches a ZDO object, so a connection
+    //     entry whose ZDO is gone is still paired. Adding a null check here would change behaviour.
     //
     // Source and target lists are disjoint (GetAllConnectionZDOIDs filters on exact type equality, and
     // Portal != Portal|Target), so vanilla's zid != id guard can never fire; it is kept anyway.
     //
     // Provenance: same approach as the ZDOMan.ConnectSpawners rewrite in ComfyMods/Atlas (GPL-3.0,
-    // redseiko), extended here to ConnectPortals.
+    // redseiko), extended here to ConnectPortals and ConnectSyncTransforms.
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoConnectionIndexPatch {
         internal static ConfigEntry<bool> Enabled;
@@ -34,15 +40,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Fix World Load Connection Scan",
                 true,
-                "Replaces the two quadratic scans that pair portals and spawners with their targets " +
-                "during world load with indexed lookups. On a long-lived world these are a multi-second " +
-                "stall on every server start.");
+                "Replaces the three quadratic scans that pair portals, spawners and sync transforms " +
+                "(ships and carts) with their targets during world load with indexed lookups. On a " +
+                "long-lived world these are a multi-second stall on every server start.");
         }
 
         private const ZDOExtraData.ConnectionType PortalType = ZDOExtraData.ConnectionType.Portal;
         private const ZDOExtraData.ConnectionType PortalTargetType = ZDOExtraData.ConnectionType.Portal | ZDOExtraData.ConnectionType.Target;
         private const ZDOExtraData.ConnectionType SpawnedType = ZDOExtraData.ConnectionType.Spawned;
         private const ZDOExtraData.ConnectionType SpawnedTargetType = ZDOExtraData.ConnectionType.Spawned | ZDOExtraData.ConnectionType.Target;
+        private const ZDOExtraData.ConnectionType SyncTransformType = ZDOExtraData.ConnectionType.SyncTransform;
+        private const ZDOExtraData.ConnectionType SyncTransformTargetType = ZDOExtraData.ConnectionType.SyncTransform | ZDOExtraData.ConnectionType.Target;
 
         [HarmonyPrefix]
         [HarmonyPatch("ConnectPortals")]
@@ -154,6 +162,46 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             if (connected > 0 || done > 0) {
                 Logger.LogInfo($"ConnectSpawners => Connected {connected} spawners and {done} 'done' spawners.");
+            }
+
+            return false;
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPatch("ConnectSyncTransforms")]
+        private static bool ConnectSyncTransformsPrefix() {
+            if (Enabled == null || !Enabled.Value) { return true; }
+
+            List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(SyncTransformType);
+            List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(SyncTransformTargetType);
+
+            // First match per hash wins and is never consumed, mirroring vanilla's break-on-first-match
+            // with no eligibility re-test - so several sources may legitimately share one target.
+            Dictionary<int, ZDOID> firstByHash = new Dictionary<int, ZDOID>();
+            for (int i = 0; i < targets.Count; i++) {
+                ZDOConnectionHashData hashData = ZDOExtraData.GetConnectionHashData(targets[i], SyncTransformTargetType);
+                if (hashData == null || firstByHash.ContainsKey(hashData.m_hash)) { continue; }
+
+                firstByHash.Add(hashData.m_hash, targets[i]);
+            }
+
+            int connected = 0;
+
+            for (int i = 0; i < sources.Count; i++) {
+                ZDOID sourceId = sources[i];
+
+                ZDOConnectionHashData hashData = ZDOExtraData.GetConnectionHashData(sourceId, SyncTransformType);
+                if (hashData == null) { continue; }
+
+                if (!firstByHash.TryGetValue(hashData.m_hash, out ZDOID targetId)) { continue; }
+
+                connected++;
+                ZDOExtraData.SetConnection(sourceId, SyncTransformType, targetId);
+            }
+
+            // Vanilla stays silent when nothing matched; it does not mark unmatched sources 'done'.
+            if (connected > 0) {
+                Logger.LogInfo($"ConnectSyncTransforms => Connected {connected} SyncTransforms.");
             }
 
             return false;

@@ -60,10 +60,10 @@ namespace ValheimCommunityPatch {
         // Each fix owns its toggle and its description; they are bound here so every entry exists
         // before the single save flush in ValheimCommunityPatch.Awake.
         private static void BindFixToggles() {
-            Patches.Performance.RecipeLookupCachePatch.BindConfig();
             Patches.Performance.LiquidVolumeLeakPatch.BindConfig();
             Patches.Performance.PortalConnectionPatch.BindConfig();
             Patches.Performance.ZdoConnectionIndexPatch.BindConfig();
+            Patches.Performance.OrphanZdoIndexPatch.BindConfig();
             Patches.Performance.AutoPickupAllocPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();

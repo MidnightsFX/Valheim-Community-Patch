@@ -23,15 +23,33 @@ Toggles are admin-only and server-synced.
   rescanning every portal for every unconnected portal. An unpaired portal never resolves, so that
   scan repeats forever and the cost grows with the square of how many portals the world has ever had.
   Now indexed by tag, with no per-tick allocation and no network round-trip.
-- **Fix World Load Connection Scan** *(server)* — the two nested loops that pair portals and spawners
-  with their targets during world load are now indexed. On a long-lived world these were a
-  multi-second stall on every server start.
+- **Fix World Load Connection Scan** *(server)* — the three nested loops that pair portals, spawners
+  and sync transforms (every ship and cart) with their targets during world load are now indexed. Each
+  compared a hash one pair at a time, so the cost grew with the square of how many of each the world
+  holds. On a long-lived world these were a multi-second stall on every server start, before anyone
+  could join.
+- **Fix Disconnect ZDO Sweep** *(server)* — every time a player disconnects, the server walks *every
+  ZDO in the world* to find the handful of temporary objects that player left ownerless. On a large
+  world that is millions of scattered heap reads to find a few dozen objects, so each logout is a
+  main-thread freeze whose length grows with the size of the world. Non-persistent objects are now
+  indexed by owner, so the sweep only looks at the departing player's own. An admin-only "Verify
+  Orphan Index" toggle runs both the index and the old scan and reports any disagreement.
 - **Fix Tar Pit Memory Leak** — tar pits (`LiquidVolume`) allocated their raycast buffers with
   Unity's 4-frame temporary allocator but held them for the object's entire lifetime, leaking native
   memory and spamming `JobTempAlloc has allocations that are more than 4 frames old` on every load.
   Now allocated persistently and disposed safely.
 - **Fix Auto Pickup Allocation** — the auto-pickup check allocated a fresh array every frame for
   every player.
+- **Speed Up Crafting Recipe List** — the crafting list throws away and re-creates every row in the
+  list from scratch on each refresh, and a refresh happens every time you move an item in your
+  inventory and after every craft — not just when the panel opens. With a lot of recipes available
+  (a large content modpack, or `nocost`) that is a hard hitch every single time. Rows are now reused
+  instead of destroyed, the per-row lookups and inventory counts are cached for the rebuild, and item
+  names are translated once rather than once per sort comparison. Rows are also built quietly in the
+  background during world load, so the first time you open the panel is fast too.
+- **Cull Offscreen Recipe Rows** — every row in the crafting list stayed active in the UI canvas even
+  when scrolled far out of view, so the whole list was re-batched whenever anything else on the
+  screen changed. Rows outside the visible area are now deactivated.
 
 ### Terrain
 
@@ -57,6 +75,11 @@ Toggles are admin-only and server-synced.
   of every adjacent loaded zone and reports height, lighting-normal and paint deltas separately, so a
   visible seam can be attributed to geometry, lighting or paint rather than guessed at. Changes
   nothing.
+- **`vcp_recipebench [iterations] [vanilla]`** — read-only console command. Times the crafting list
+  rebuild with the inventory open, broken out into requirement checks, sorting and row building, and
+  reports how many rows were reused rather than created. Passing `vanilla` measures the unpatched
+  path in the same session, so a before/after is compared against the same world, inventory and mod
+  list rather than across two restarts. Changes nothing.
 
 ### Correctness
 
