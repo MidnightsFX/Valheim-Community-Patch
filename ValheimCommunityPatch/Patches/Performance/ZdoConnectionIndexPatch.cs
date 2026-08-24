@@ -31,12 +31,18 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Provenance: same approach as the ZDOMan.ConnectSpawners rewrite in ComfyMods/Atlas (GPL-3.0,
     // redseiko), extended here to ConnectPortals and ConnectSyncTransforms.
+    //
+    // Server: all three targets are private and called only from ZDOMan.Load, which is reached via
+    // ZNet.LoadWorld from ZNet.Start's if (m_isServer) branch (ZNet.cs:183). World load only ever
+    // happens on the host, so vanilla's call site is already the gate.
+    [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoConnectionIndexPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(ZdoConnectionIndexPatch),
                 ValConfig.SectionPerformance,
                 "Fix World Load Connection Scan",
                 true,

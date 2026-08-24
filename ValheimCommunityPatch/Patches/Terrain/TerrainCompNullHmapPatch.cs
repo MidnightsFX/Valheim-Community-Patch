@@ -27,12 +27,18 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // Fix: skip the frame when we are not in a usable state, and retry the initialisation Awake
     // skipped once the heightmap does show up. Recovering the zone is the point; silencing the
     // exception alone would leave the terrain data just as dead.
+    //
+    // Both: TerrainComp.Update runs wherever the component exists, and the recovery re-registers the
+    // ApplyOperation RPC, without which that zone can never accept or save an edit. Reachable on a
+    // dedicated server for its own zones, and the race is more likely on a loaded one.
+    [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(TerrainComp))]
     internal static class TerrainCompNullHmapPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(TerrainCompNullHmapPatch),
                 ValConfig.SectionTerrain,
                 "Fix Terrain Compiler Init Race",
                 true,

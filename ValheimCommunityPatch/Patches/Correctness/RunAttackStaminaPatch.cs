@@ -19,12 +19,18 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Scope note: Character.CheckRun is the virtual base for every character, so an unconditional
     // postfix would also stop creatures running mid-attack - a creature-AI change, not a bug fix.
     // This deliberately narrows to players.
+    //
+    // Client: already narrowed to Player, and a Player is only ever owned by its own client -
+    // CheckRun is reached from UpdateMotion inside CustomFixedUpdate's zdo.IsOwner() block. Skipping
+    // it headless also takes a trampoline off a method that runs per creature per frame there.
+    [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Character))]
     internal static class RunAttackStaminaPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(RunAttackStaminaPatch),
                 ValConfig.SectionCorrectness,
                 "Fix Run Attack Stamina Drain",
                 true,

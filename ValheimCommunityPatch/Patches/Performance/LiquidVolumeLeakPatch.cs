@@ -20,7 +20,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //   1. Unity logs "Internal: JobTempAlloc has allocations that are more than 4 frames old" every
     //      time a tar pit streams in.
     //   2. The temp-allocator block is never returned to the pool, so native (non-GC) memory climbs
-    //      steadily across a long session or a busy dedicated server.
+    //      steadily across a long session.
     //
     // OnDestroy then calls Dispose() unguarded, which throws if Awake never completed or the temp
     // allocator already reclaimed the block.
@@ -36,12 +36,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Provenance: same root cause as Azumatt's MyPitsDontLeak (MIT), which replaces both methods
     // wholesale. Reimplemented here as targeted IL edits.
+    // Client: LiquidVolume is a MonoBehaviour, so Awake only runs where ZNetScene actually
+    // instantiates the tar pit. A dedicated server only instantiates objects in its own active area,
+    // which never leaves world origin, and tar pits are Plains-only - so one can never wake there.
+    [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(LiquidVolume))]
     internal static class LiquidVolumeLeakPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(LiquidVolumeLeakPatch),
                 ValConfig.SectionPerformance,
                 "Fix Tar Pit Memory Leak",
                 true,
@@ -64,7 +69,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // Rewrites every `new NativeArray<T>(n, Allocator.TempJob, ...)` in Awake to use
         // Allocator.Persistent. Anchored on the constructor, then walking back for the allocator
         // constant, so the surrounding code is free to change.
+        //
+        // Priority.Last on both transpilers here, for the reason in ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("Awake")]
         private static IEnumerable<CodeInstruction> AwakeTranspiler(IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
@@ -107,6 +115,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // Replaces `nativeArray.Dispose()` with a null-safe equivalent. The managed pointer to the
         // field is already on the stack from the ldflda, so the signatures line up.
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("OnDestroy")]
         private static IEnumerable<CodeInstruction> OnDestroyTranspiler(IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
@@ -125,7 +134,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (patched == 0) {
-                Logger.LogWarning("LiquidVolume.OnDestroy: found no NativeArray.Dispose calls to guard.");
+                Logger.LogWarning(
+                    "LiquidVolume.OnDestroy: found no NativeArray.Dispose calls to guard, so this fix is " +
+                    "inactive. Another mod has most likely already rewritten the method - if so, nothing " +
+                    "is wrong.");
                 return instructions;
             }
 

@@ -20,12 +20,18 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // logging anyway.
     //
     // Provenance: same fix as ComfyMods/BetterZeeLog (GPL-3.0, redseiko).
+    //
+    // Both: the LookRotation call sits behind FixedUpdate's m_nview.IsOwner() check, so it runs on
+    // whoever owns the projectile - normally the shooting client, but also a server-owned creature
+    // firing inside the server's own active area.
+    [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(Projectile))]
     internal static class ProjectileZeroVelocityPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(ProjectileZeroVelocityPatch),
                 ValConfig.SectionCorrectness,
                 "Fix Projectile Rotation Spam",
                 true,
@@ -41,7 +47,12 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static Quaternion SafeLookRotation(Vector3 forward) =>
             forward == Vector3.zero ? Quaternion.identity : Quaternion.LookRotation(forward);
 
+        // Priority.Last for the reason in ValheimCommunityPatch.ApplyPatches: BetterZeeLog shares this
+        // method and matches on the LookRotation operand we rewrite, throwing rather than backing off.
+        // Where both are installed its guard lands first and this one finds nothing left to do, which
+        // is the intended outcome - the two fixes are equivalent.
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("FixedUpdate")]
         private static IEnumerable<CodeInstruction> FixedUpdateTranspiler(IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
@@ -55,7 +66,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
 
             if (patched == 0) {
-                Logger.LogWarning("Projectile.FixedUpdate: found no LookRotation call to guard; leaving it unpatched.");
+                Logger.LogWarning(
+                    "Projectile.FixedUpdate: found no LookRotation call to guard, so this fix is inactive. " +
+                    "Another mod has most likely already rewritten the method - if so, nothing is wrong.");
                 return instructions;
             }
 

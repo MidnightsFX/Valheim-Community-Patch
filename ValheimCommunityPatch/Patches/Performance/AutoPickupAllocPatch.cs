@@ -21,12 +21,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // vanilla, so the transpiler backs out entirely unless it can make both.
     //
     // Provenance: same technique as Zen.ModLib's FixAutoPickupMemAlloc.
+    //
+    // Client: Player.FixedUpdate only reaches AutoPickup inside the branch where this Player is
+    // m_localPlayer, and a dedicated server has none.
+    [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Player))]
     internal static class AutoPickupAllocPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(AutoPickupAllocPatch),
                 ValConfig.SectionPerformance,
                 "Fix Auto Pickup Allocation",
                 true,
@@ -56,7 +61,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // identity check keeps this correct if another transpiler ever routes a different array here.
         private static int ResultCount(Array array) => ReferenceEquals(array, Buffer) ? _hitCount : array.Length;
 
+        // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("AutoPickup")]
         private static IEnumerable<CodeInstruction> AutoPickupTranspiler(IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
@@ -88,7 +95,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (replacedCalls != 1 || replacedLengths != 1) {
                 Logger.LogWarning(
                     $"Player.AutoPickup: expected 1 OverlapSphere call and 1 array length read, found " +
-                    $"{replacedCalls} and {replacedLengths}. Leaving the method unpatched.");
+                    $"{replacedCalls} and {replacedLengths}, so this fix is inactive. Another mod has most " +
+                    "likely already rewritten the method - if so, nothing is wrong.");
                 return instructions;
             }
 

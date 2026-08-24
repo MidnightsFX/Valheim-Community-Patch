@@ -26,6 +26,13 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Provenance: same defect and approach as Zen.ModLib's FixAddPlayerKeyOnBossDeath; reimplemented
     // here against a single globally-registered routed RPC rather than one registered per Character,
     // which avoids adding a handler to every creature ZNetView in the world.
+    //
+    // Client on both ends, which is why this works against a vanilla server. The sender side needs
+    // the boss GameObject, which only exists on the clients fighting it; the receiver side needs a
+    // local player. And a server without this mod still relays the message: an unrecognised RPC hash
+    // makes ZRoutedRpc.HandleRoutedRPC return silently, after which RouteRPC forwards it to every
+    // peer as normal. So the server genuinely does not need it.
+    [PatchSide(Side.Client)]
     [HarmonyPatch]
     internal static class BossKeySharePatch {
         internal static ConfigEntry<bool> Enabled;
@@ -34,7 +41,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private const string RpcName = "VCP_ShareDefeatKey";
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(BossKeySharePatch),
                 ValConfig.SectionCorrectness,
                 "Share Boss Defeat Keys",
                 true,

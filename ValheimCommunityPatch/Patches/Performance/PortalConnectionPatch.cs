@@ -24,14 +24,21 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // list order instead, so pairing is deterministic. It also pairs every same-tag portal in one tick
     // rather than one pair per tick.
     //
-    // Provenance: algorithm follows ComfyMods/BetterServerPortals (GPL-3.0, redseiko), with its
-    // "random portal" gameplay feature deliberately omitted - this project ships fixes, not features.
+    // Algorithm follows ComfyMods/BetterServerPortals (GPL-3.0, redseiko), with its
+    // "random portal" gameplay feature deliberately omitted.
+    //
+    // Server: Game.Start only starts ConnectPortalsCoroutine inside if (ZNet.instance.IsServer())
+    // (Game.cs:157), and the only other caller is ZDOMan.Load, itself server-only. No runtime gate
+    // needed - vanilla's own call site is the gate. Declared here so the config and README can say
+    // so, and so a client install reports it honestly as inert-unless-you-host.
+    [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(Game))]
     internal static class PortalConnectionPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(PortalConnectionPatch),
                 ValConfig.SectionPerformance,
                 "Fix Portal Connection Scan",
                 true,

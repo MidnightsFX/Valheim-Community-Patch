@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
     // Vanilla defect: Heightmap.RebuildRenderMesh computes vertex normals with
-    // m_renderMesh.RecalculateNormals(). Each zone's mesh contains only its own 33x33 vertices, so a
+    // m_renderMesh.RecalculateNormals(). Each zone's mesh contains only its own 65x65 vertices, so a
     // vertex sitting on a zone boundary gets its normal averaged from *only the triangles on that
     // zone's side*. The neighbouring zone owns a vertex at the identical world position and averages
     // it from the other side, producing a different normal.
@@ -23,12 +23,19 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // difference, taking out-of-range samples from the neighbouring heightmap instead of vanilla's
     // GetHeight returning 0 past the edge. That makes the normal at a shared vertex a function of the
     // surrounding terrain rather than of which zone happens to own it, so both sides agree.
+    //
+    // Client: normals are shading only, and collision does not use them. This is one of the two
+    // fixes whose target method genuinely runs and does real work on a dedicated server - the render
+    // mesh is built there for the MeshCollider - so it keeps a runtime IsDedicated guard as well as
+    // the patch-time gate. See the note on RunMode about why both exist.
+    [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class SeamlessNormalsPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(SeamlessNormalsPatch),
                 ValConfig.SectionTerrain,
                 "Fix Terrain Seams",
                 true,
@@ -37,13 +44,18 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 "a hard crease running through flat terrain - most noticeable in the Plains and Meadows.");
         }
 
-        // Reused between rebuilds; a heightmap is 33x33 = 1089 vertices.
+        // Reused between rebuilds; a zone heightmap is m_width+1 squared = 65x65 = 4225 vertices.
         private static readonly List<Vector3> NormalBuffer = new List<Vector3>();
 
         [HarmonyPostfix]
         [HarmonyPatch("RebuildRenderMesh")]
         private static void RebuildRenderMeshPostfix(Heightmap __instance) {
             if (Enabled == null || !Enabled.Value) { return; }
+
+            // Nothing on a dedicated server ever looks at these normals - it builds the render mesh
+            // only because the MeshCollider needs the vertices, and collision does not use normals.
+            // IsDedicated rather than IsServer: a listen host draws its own terrain and needs the fix.
+            if (RunMode.IsDedicated) { return; }
 
             // The distant LOD meshes are a separate 3x3 grid at a different vertex spacing; leave them
             // on vanilla behaviour rather than pretending they tile with the zone heightmaps.
@@ -58,10 +70,10 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             // that reason and would otherwise stay that way forever - nothing else re-pokes it.
             //
             // Skipping this when our own zone fails leaves a permanent band of vanilla-normal terrain
-            // trailing the player, which is what vcp_terrainscan measured: 81% of shared vertices
+            // trailing the player, which is what the measurements showed: 81% of shared vertices
             // matching near the player against 43% further out.
             //
-            // Recomputing a neighbour is pure arithmetic over 1089 vertices, far cheaper than the mesh
+            // Recomputing a neighbour is pure arithmetic over 4225 vertices, far cheaper than the mesh
             // rebuild that just happened, so do it eagerly rather than keeping a dirty queue.
             float zoneSize = __instance.m_width * __instance.m_scale;
             RefreshNeighbour(__instance, -zoneSize, 0f);

@@ -22,12 +22,18 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // copy of vanilla plus guards, and should be re-checked against the game source on each update.
     //
     // Provenance: same approach as ComfyMods/Scenic (GPL-3.0, redseiko).
+    //
+    // Both: ZNetScene.Update drives CreateDestroyObjects on every peer including a dedicated server,
+    // just over a smaller instance set. The failure mode - nothing despawns and memory climbs -
+    // applies there too.
+    [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class RemoveObjectsNrePatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(RemoveObjectsNrePatch),
                 ValConfig.SectionCorrectness,
                 "Fix Object Unload Crash",
                 true,

@@ -31,12 +31,18 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //    which throws a NullReferenceException every FixedUpdate from then on.
     //
     // Provenance: same two defects as ComfyMods/Effectual (GPL-3.0, redseiko).
+    //
+    // Both: CustomFixedUpdate has no owner gate and does tick on a dedicated server for areas in its
+    // own active area, where the dangling-Character NRE becomes a permanent per-physics-step loop.
+    // The two statics are called from both sides too - BaseAI and SpawnSystem as well as Player.
+    [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class EffectAreaPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(EffectAreaPatch),
                 ValConfig.SectionCorrectness,
                 "Fix Effect Areas",
                 true,
@@ -83,19 +89,24 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
 
             if (patched == 0) {
-                Logger.LogWarning($"EffectArea.{method}: found no OverlapSphereNonAlloc call; leaving it unpatched.");
+                Logger.LogWarning(
+                    $"EffectArea.{method}: found no OverlapSphereNonAlloc call, so this fix is inactive here. " +
+                    "Another mod has most likely already rewritten the method - if so, nothing is wrong.");
                 return instructions;
             }
 
             return codes;
         }
 
+        // Priority.Last on both, for the reason in ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(EffectArea), nameof(EffectArea.IsPointInsideArea))]
         private static IEnumerable<CodeInstruction> IsPointInsideAreaTranspiler(IEnumerable<CodeInstruction> instructions) =>
             ReplaceOverlapCall(instructions, nameof(EffectArea.IsPointInsideArea));
 
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(EffectArea), nameof(EffectArea.GetBaseValue))]
         private static IEnumerable<CodeInstruction> GetBaseValueTranspiler(IEnumerable<CodeInstruction> instructions) =>
             ReplaceOverlapCall(instructions, nameof(EffectArea.GetBaseValue));

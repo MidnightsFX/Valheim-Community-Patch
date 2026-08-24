@@ -17,6 +17,7 @@ namespace ValheimCommunityPatch {
         
         // Add Client sided config entries under here
         public static ConfigEntry<bool> EnableDebugMode;
+        public static ConfigEntry<bool> PatchEverySide;
 
         // Add Server synced config entries under here
         public static ConfigEntry<float> ConfigApplyDelay;
@@ -51,6 +52,18 @@ namespace ValheimCommunityPatch {
             EnableDebugMode.SettingChanged += Logger.EnableDebugLogging;
             Logger.CheckEnableDebugLogging();
 
+            // Deliberately a plain client-side bind and not BindServerConfig: this is read while
+            // patches are being applied, long before Jotunn could sync anything down, and it is a
+            // property of this machine rather than of the world.
+            PatchEverySide = Config.Bind("Client config", "Patch Every Side", false,
+                new ConfigDescription(
+                    "Applies every fix regardless of which side it is for. Normally the client-only " +
+                    "fixes are not applied on a dedicated server, because nothing there could ever " +
+                    "reach them. Turn this on only if this machine has a display but was detected as " +
+                    "headless. Requires a game restart.",
+                    null,
+                    new ConfigurationManagerAttributes { IsAdvanced = true }));
+
             // Instantiate server synced config entries here
             ConfigApplyDelay = BindServerConfig("Config", "Config Apply Delay", 1f, "Delay in seconds before a changed config entry is applied in-game. Coalesces a burst of rapid edits (typing, file reloads, server sync) into a single apply. Set to 0 to apply instantly.", true, 0f, 10f);
 
@@ -65,6 +78,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.ZdoConnectionIndexPatch.BindConfig();
             Patches.Performance.OrphanZdoIndexPatch.BindConfig();
             Patches.Performance.AutoPickupAllocPatch.BindConfig();
+            Patches.Performance.ZPackageWriteAllocPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();
@@ -75,10 +89,34 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.EffectAreaPatch.BindConfig();
             Patches.Correctness.FuelLossPatch.BindConfig();
             Patches.Correctness.BossKeySharePatch.BindConfig();
+            Patches.Correctness.ItemIconVariantPatch.BindConfig();
+            Patches.Correctness.SendFailureLogSpamPatch.BindConfig();
+            Patches.Correctness.ContainerLogSpamPatch.BindConfig();
+            Patches.Correctness.NegativeStaminaPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
+            Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
             Patches.Terrain.PaintMaskStridePatch.BindConfig();
             Patches.Terrain.TerrainCompNullHmapPatch.BindConfig();
+        }
+
+        /// <summary>
+        /// Binds a fix's on/off toggle, prefixing its description with the side the fix runs on.
+        /// </summary>
+        /// <remarks>
+        /// The tag is read from the [PatchSide] attribute on the patch class itself, so the side
+        /// shown in the config and the decision ApplyPatches makes come from the same declaration
+        /// and cannot drift. The generated .cfg then doubles as a machine-produced list of every
+        /// fix's side, which is what the README can be checked against.
+        ///
+        /// The side goes in the description and not the section name on purpose: renaming sections
+        /// would change the config keys and orphan every existing .cfg.
+        /// </remarks>
+        public static ConfigEntry<bool> BindFixToggle(Type patchClass, string category, string key, bool value, string description, bool advanced = false) {
+            return BindServerConfig(
+                category, key, value,
+                PatchSideAttribute.Tag(PatchSideAttribute.Of(patchClass)) + " " + description,
+                null, advanced);
         }
 
         /// <summary>

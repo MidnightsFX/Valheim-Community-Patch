@@ -20,12 +20,16 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Fix: substitute a quality of 1 - the value a nonexistent item would contribute - when the lookup
     // came back null. The rest of the calculation is untouched, so a recipe that *does* find an
     // ingredient behaves exactly as before.
+    //
+    // Client: Recipe.GetAmount dereferences Player.m_localPlayer directly, so it cannot run headless.
+    [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Recipe))]
     internal static class RecipeGetAmountNrePatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(RecipeGetAmountNrePatch),
                 ValConfig.SectionCorrectness,
                 "Fix Recipe Amount Crash",
                 true,
@@ -40,7 +44,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         // A missing item contributes nothing: quality 1 makes the (quality - 1) term zero.
         private static int SafeQuality(ItemDrop.ItemData item) => item?.m_quality ?? 1;
 
+        // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(Recipe.GetAmount))]
         private static IEnumerable<CodeInstruction> GetAmountTranspiler(IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
@@ -58,7 +64,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
 
             if (patched == 0) {
-                Logger.LogWarning("Recipe.GetAmount: found no m_quality load to guard; leaving it unpatched.");
+                Logger.LogWarning(
+                    "Recipe.GetAmount: found no m_quality load to guard, so this fix is inactive. Another " +
+                    "mod has most likely already rewritten the method - if so, nothing is wrong.");
                 return instructions;
             }
 

@@ -12,12 +12,18 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // with the entries that are still valid instead of dying outright.
     //
     // Provenance: same fix as ComfyMods/LetMePlay (GPL-3.0, redseiko).
+    //
+    // Both: Awake runs wherever the spawner prefab is instantiated, and the throwing paths are behind
+    // UpdateSpawn's owner check. Meadows spawners near world origin are inside a dedicated server's
+    // own active area, so it can own them.
+    [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(SpawnArea))]
     internal static class SpawnAreaNullPrefabPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(SpawnAreaNullPrefabPatch),
                 ValConfig.SectionCorrectness,
                 "Fix Spawner Null Prefabs",
                 true,

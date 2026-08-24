@@ -20,12 +20,17 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Fix: keep the last occurrence and log, rather than aborting. A duplicated ZDOID means one of the
     // two is already unreachable in vanilla's own index; recovering the world is strictly better than
     // refusing to open it.
+    //
+    // Server: ZDOMan.Load only runs on the host, via ZNet.Start's if (m_isServer) branch. A runtime
+    // gate would be impossible here anyway - this is a transpiler.
+    [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoLoadDuplicatePatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(ZdoLoadDuplicatePatch),
                 ValConfig.SectionCorrectness,
                 "Tolerate Duplicate ZDOs On Load",
                 true,
@@ -48,7 +53,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             objectsById[uid] = zdo;
         }
 
+        // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(ZDOMan.Load))]
         private static IEnumerable<CodeInstruction> LoadTranspiler(IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
@@ -67,7 +74,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
             if (patched != 1) {
                 Logger.LogWarning(
-                    $"ZDOMan.Load: expected 1 ZDO dictionary insert, found {patched}. Leaving it unpatched.");
+                    $"ZDOMan.Load: expected 1 ZDO dictionary insert, found {patched}, so this fix is " +
+                    "inactive. Another mod has most likely already rewritten the method - if so, nothing " +
+                    "is wrong.");
                 return instructions;
             }
 

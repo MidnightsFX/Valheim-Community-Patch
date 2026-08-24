@@ -24,15 +24,23 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // rejects index m_width, which is precisely the row and column a zone *shares with its
     // neighbour* - so terrain paint can never be written to the seam between two zones.
     //
-    // Fix: correct the stride and the bounds in all three. These are only reachable from the
-    // `updateterrainalpha` console path and TerrainComp.UpdatePaintMask, so the blast radius is small,
-    // and each method is short enough that replacing it outright is clearer than an IL edit.
+    // Fix: correct the stride and the bounds in all three. All three sit on the `optterrain` console
+    // path, so the blast radius is small, and each method is short enough that replacing it outright
+    // is clearer than an IL edit.
+    //
+    // Client: the effect is persistent, but the code path is not reachable without a local player.
+    // Heightmap.SetPaintMask is private with exactly one caller (Heightmap.cs:924), reached only
+    // from static Heightmap.UpdateTerrainAlpha, which returns immediately when m_localPlayer is
+    // null (Heightmap.cs:894) and is itself only called by the optterrain console command
+    // (Terminal.cs:196).
+    [PatchSide(Side.Client)]
     [HarmonyPatch]
     internal static class PaintMaskStridePatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(PaintMaskStridePatch),
                 ValConfig.SectionTerrain,
                 "Fix Terrain Paint Mask Indexing",
                 true,

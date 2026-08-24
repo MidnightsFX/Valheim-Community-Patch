@@ -22,10 +22,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // ownership changes, so the sweep visits only the buckets whose owner is gone. O(orphans)
     // instead of O(world).
     //
-    // The index is maintained unconditionally, even when this fix is switched off. If maintenance
-    // were behind the toggle, switching it on mid-session would consult an index that had missed
-    // every change before the switch, and orphans would leak forever. Only the sweep reads the
+    // The index is maintained regardless of the config toggle, even when this fix is switched off. If
+    // maintenance were behind the toggle, switching it on mid-session would consult an index that had
+    // missed every change before the switch, and orphans would leak forever. Only the sweep reads the
     // toggle; maintenance is a few hash operations per ownership change.
+    //
+    // It is gated on the network role, which is a different thing: the sweep is only ever reached on
+    // a server (ZNet.Disconnect -> ClearPlayerData -> ZDOMan.RemovePeer, itself behind IsServer), so
+    // on a joined client these hooks would feed an index nothing ever reads. Unlike the toggle, the
+    // role is fixed for the whole session, so there is no mid-session switch to miss.
     //
     // Correctness is the whole risk here: a stale index either leaks non-persistent ZDOs or destroys
     // live ones. Two things guard it. The hooks are checked at first use and the whole fix stands
@@ -33,13 +38,19 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // so a partial failure is possible and would otherwise be silent. And "Verify Orphan Index"
     // runs both the index and vanilla's full scan, acts on vanilla's answer, and logs any
     // divergence, so the index can be proven on a live server before it is trusted.
+    //
+    // Server. Unlike the other server-side fixes this one does need a runtime role check as well:
+    // the sweep is behind vanilla's own IsServer gate, but the index *maintenance* hooks below sit
+    // on ZDO.SetOwnerInternal and ZDO.Persistent, which fire on a joined client too and are hot.
+    [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class OrphanZdoIndexPatch {
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(OrphanZdoIndexPatch),
                 ValConfig.SectionPerformance,
                 "Fix Disconnect ZDO Sweep",
                 true,
@@ -79,7 +90,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- index maintenance -------------------------------------------------------------
 
+        // RunMode.IsServer is the shared helper: it caches the role against the ZNet instance that
+        // answered, so hosting a world and then joining someone else's in the same process
+        // re-resolves on its own without this patch having to reset anything on shutdown.
         private static void Track(ZDOID uid, long owner) {
+            if (!RunMode.IsServer) { return; }
+
             // Every load path sets m_uid before Persistent (ZDO.Load:911, ZDOMan.Load:232) and
             // Deserialize only ever runs on a ZDO that already has one, so this should not fire.
             // It is here because the cost is one comparison and the failure it prevents - a
@@ -107,6 +123,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         private static void Untrack(ZDOID uid) {
+            if (!RunMode.IsServer) { return; }
             if (!OwnerOf.TryGetValue(uid, out long owner)) { return; }
 
             OwnerOf.Remove(uid);
@@ -201,6 +218,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         [HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.ShutDown))]
         internal static class ZdoManShutDownHook {
+            // Only the index needs clearing here. The cached network role used to be reset alongside
+            // it, but RunMode keys its cache on the ZNet instance itself, so the next session
+            // re-resolves whether or not this hook runs - which matters, because ZNet.StopAll skips
+            // ZDOMan.ShutDown entirely when it is suspending rather than quitting (ZNet.cs:397).
             [HarmonyPostfix]
             static void Postfix() => ClearIndex();
         }

@@ -21,12 +21,17 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // Fix: postfix both lookups and require the matched area to be active. The extra walk only runs
     // when vanilla already reported a hit, so the common negative case costs nothing.
+    //
+    // Client: the callers are CookingStation.IsFireLit and CraftingStation.CheckFire, component
+    // behaviours on player-built pieces owned by whichever player is standing near them.
+    [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(EffectArea))]
     internal static class UnlitFireCookingPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(UnlitFireCookingPatch),
                 ValConfig.SectionCorrectness,
                 "Require Lit Fire",
                 true,

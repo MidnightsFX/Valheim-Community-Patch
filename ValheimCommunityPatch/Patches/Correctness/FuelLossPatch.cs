@@ -23,12 +23,18 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // Provenance: same root cause as Zen.ModLib's FixFuelLeak; reimplemented as prefixes rather than
     // that mod's backwards IL match, which is fragile and harder to verify.
+    //
+    // Client: all four targets are interaction entry points - the Smelter pair are Switch.m_onUse
+    // callbacks, the Fireplace pair are Interactable/ItemUse - reached from Player.Interact. A
+    // dedicated server never interacts with anything, so this protects whoever does the feeding.
+    [PatchSide(Side.Client)]
     [HarmonyPatch]
     internal static class FuelLossPatch {
         internal static ConfigEntry<bool> Enabled;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindServerConfig(
+            Enabled = ValConfig.BindFixToggle(
+                typeof(FuelLossPatch),
                 ValConfig.SectionCorrectness,
                 "Fix Fuel And Ore Loss",
                 true,
