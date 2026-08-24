@@ -1,0 +1,32 @@
+# Release configuration for mod-tools.
+# Shared settings come from the preset, which ships inside the gem.
+#
+# Inspect what this actually resolves to:
+#   mod-tools print-config
+
+extends:  jotunn
+assembly: ValheimCommunityPatch
+
+# The Thunderstore/Hexium team these publish under.
+author_name: MidnightMods
+
+# Copy the build into this machine's mod manager profiles after every
+# build. Destinations live in /mnt/c/Users/carls/Documents/projects/Valheim_Stuff/mod-tools/.config/config.yml,
+# because they differ per machine.
+deploy:
+  enabled: true
+
+publish:
+  thunderstore:
+    enabled: true
+  nexus:
+    # Both ids come from the mod page, which has to exist first: this
+    # uploads a new file version, it cannot create a page. Fill them in
+    # and set enabled: true.
+    enabled: false
+    # mod_id: 0000     # the number in the mod page URL
+    # file_id: 000000  # the EXISTING file this replaces
+  github:
+    enabled: true
+  discord:
+    enabled: true

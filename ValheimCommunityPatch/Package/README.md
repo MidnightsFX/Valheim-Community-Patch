@@ -177,9 +177,9 @@ The mods involved:
   Effectual and Atlas — account for eleven of the entries below.
 - **[MyPitsDontLeak](https://github.com/AzumattDev/MyPitsDontLeak)** — Azumatt (MIT).
 - **Zen.ModLib** — ZenDragon. Used only as a *catalogue* of which vanilla bugs exist; no code was
-  copied, because the copy available to us is decompiler output with no licence attached. Every fix
-  in that group was rewritten from the decompiled game source.
-- **Iron Gate Studio** — Valheim itself, you guys might include a lot of bugs- but we still love this game.
+  copied.
+- **Iron Gate Studio** — Valheim itself. The decompiled game source is the reference used to locate
+  defects; no game code is redistributed.
 
 *Original* below means the defect was found and fixed here, with no other mod's implementation
 involved.
@@ -190,8 +190,8 @@ involved.
 | --- | --- | --- |
 | Fix Portal Connection Scan | ComfyMods — BetterServerPortals | The indexing algorithm |
 | Fix World Load Connection Scan | ComfyMods — Atlas | Its `ConnectSpawners` approach, extended here to portals and sync transforms |
-| Fix Disconnect ZDO Sweep | MidngightsFX | Inspired by server networking performance improvements. |
-| Fix Tar Pit Memory Leak | MyPitsDontLeak — Azumatt | Fix is inspired by; this implementation is transpiler based |
+| Fix Disconnect ZDO Sweep | Original | — |
+| Fix Tar Pit Memory Leak | MyPitsDontLeak — Azumatt | The root cause; our implementation is transpilers rather than wholesale method replacement |
 | Fix Auto Pickup Allocation | Zen.ModLib (catalogue) | The technique, rewritten |
 | Fix ZDO Packet Allocation | ComfyMods — Compress | The technique, taken on its own without that mod's GZip protocol change |
 
@@ -199,7 +199,11 @@ involved.
 
 | Fix | Sourced from | What came from there |
 | --- | --- | --- |
-| Fix Terrain Seams | MidnightsFX | Irongate, why is this STILL an issue? |
+| Fix Terrain Seams | Original | — |
+| Fix Terrain Paint Seams | Original | — |
+| Fix Terrain Paint Zone Fanout | Original | — |
+| Fix Terrain Paint Mask Indexing | Original | — |
+| Fix Terrain Compiler Init Race | Original | — |
 
 ### Correctness
 
@@ -207,18 +211,18 @@ involved.
 | --- | --- | --- |
 | Fix Object Unload Crash | ComfyMods — Scenic | The approach |
 | Tolerate Duplicate ZDOs On Load | ComfyMods — Atlas | The duplicate-id tolerance |
-| Fix Effect Areas | ComfyMods — Effectual | Both defects; fix for the dangling reference differs |
+| Fix Effect Areas | ComfyMods — Effectual | Both defects; our fix for the dangling reference differs |
 | Fix Fuel And Ore Loss | Zen.ModLib (catalogue) | The root cause; rewritten as prefixes |
 | Share Boss Defeat Keys | Zen.ModLib (catalogue) | The defect and approach; rewritten with one globally registered RPC |
 | Fix Recipe Amount Crash | Zen.ModLib (catalogue) | The defect, rewritten |
 | Fix Spawner Null Prefabs | ComfyMods — LetMePlay | The same fix |
 | Require Lit Fire | Zen.ModLib (catalogue) | The defect, rewritten |
-| Fix Run Attack Stamina Drain | Zen.ModLib (catalogue) | Narrowed here to players only |
+| Fix Run Attack Stamina Drain | Zen.ModLib (catalogue) | The defect; narrowed here to players only |
 | Fix Projectile Rotation Spam | ComfyMods — BetterZeeLog | The same fix |
-| Fix Send Failure Log Spam | ComfyMods — BetterZeeLog | Redirects log spam |
-| Fix Container Log Spam | ComfyMods — BetterZeeLog | Redirects container spam |
-| Fix Item Icon Crash | ComfyMods — LetMePlay | Smaller fix, still inspired by the original |
-| Fix Negative Stamina | MidnightsFX | Simple catchall & fix for invalid stamina |
+| Fix Send Failure Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the call, this one redirects it |
+| Fix Container Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the calls, this one redirects them |
+| Fix Item Icon Crash | ComfyMods — LetMePlay | The defect; deliberately a smaller fix here, see CREDITS.md |
+| Fix Negative Stamina | Original | — |
 | Fix Dungeon Load Stall | Original | — |
 
 ## Installation
