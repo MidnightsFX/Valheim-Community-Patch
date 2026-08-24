@@ -66,7 +66,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("AutoPickup")]
         private static IEnumerable<CodeInstruction> AutoPickupTranspiler(IEnumerable<CodeInstruction> instructions) {
-            List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
+            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
             if (Enabled == null || !Enabled.Value) { return codes; }
 
             int replacedCalls = 0, replacedLengths = 0;

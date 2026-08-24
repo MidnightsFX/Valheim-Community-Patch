@@ -151,6 +151,13 @@ gets recorded, so it runs everywhere.
   dropped rather than applied, since the network handler screens nothing on the way in and the public
   wrapper's own `NaN` check runs one line before it multiplies by a world-key scalar that can itself
   be `NaN`.
+- **Fix Dungeon Load Stall** *(both)* — a dungeon loads its rooms asynchronously and flags its zone as
+  "loading" until every one of them arrives. A room whose asset fails to load never reports back, so
+  the count never completes: the dungeon interior never appears, and the zone stays flagged forever.
+  A flagged zone stops spawning objects, and anyone who spawns or teleports into it sits on the
+  loading screen indefinitely. Failed rooms are now accounted for and dropped, so the rest of the
+  dungeon still spawns and the zone finishes loading. This is *not* the same as a room prefab going
+  missing after a mod is removed — vanilla already handles that one.
 
 The two log fixes redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
 
@@ -212,6 +219,7 @@ involved.
 | Fix Container Log Spam | ComfyMods — BetterZeeLog | Redirects container spam |
 | Fix Item Icon Crash | ComfyMods — LetMePlay | Smaller fix, still inspired by the original |
 | Fix Negative Stamina | MidnightsFX | Simple catchall & fix for invalid stamina |
+| Fix Dungeon Load Stall | Original | — |
 
 ## Installation
 
@@ -227,10 +235,10 @@ one network message it sends is ignored by anyone who does not have it.
 
 What a one-sided install gets you:
 
-- **Server only** — the 4 *(server)* fixes and the 9 *(both)* fixes. The 12 *(client)* fixes are not
+- **Server only** — the 4 *(server)* fixes and the 10 *(both)* fixes. The 12 *(client)* fixes are not
   applied at all: a dedicated server has no local player, so nothing there could ever reach them. The
   startup log says exactly which counts you got.
-- **Client only** — every *(client)* and *(both)* fix, for you specifically — 21 of the 25. The
+- **Client only** — every *(client)* and *(both)* fix, for you specifically — 22 of the 26. The
   *(server)* fixes are installed but inert unless you are the one hosting.
 
 Three caveats for mixed groups:

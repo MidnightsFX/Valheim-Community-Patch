@@ -75,7 +75,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("Awake")]
         private static IEnumerable<CodeInstruction> AwakeTranspiler(IEnumerable<CodeInstruction> instructions) {
-            List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
+            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
             if (Enabled == null || !Enabled.Value) { return codes; }
 
             int patched = 0;
@@ -118,7 +118,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("OnDestroy")]
         private static IEnumerable<CodeInstruction> OnDestroyTranspiler(IEnumerable<CodeInstruction> instructions) {
-            List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
+            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
             if (Enabled == null || !Enabled.Value) { return codes; }
 
             int patched = 0;

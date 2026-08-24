@@ -93,6 +93,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.SendFailureLogSpamPatch.BindConfig();
             Patches.Correctness.ContainerLogSpamPatch.BindConfig();
             Patches.Correctness.NegativeStaminaPatch.BindConfig();
+            Patches.Correctness.DungeonZoneLoadPinPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();

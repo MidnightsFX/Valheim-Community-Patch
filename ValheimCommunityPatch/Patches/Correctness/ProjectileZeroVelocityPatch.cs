@@ -55,7 +55,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("FixedUpdate")]
         private static IEnumerable<CodeInstruction> FixedUpdateTranspiler(IEnumerable<CodeInstruction> instructions) {
-            List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
+            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
             if (Enabled == null || !Enabled.Value) { return codes; }
 
             int patched = 0;

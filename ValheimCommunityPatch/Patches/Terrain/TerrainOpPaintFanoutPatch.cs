@@ -54,6 +54,22 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // This only helps operations placed from now on. PaintSeamReconcilePatch is what repairs
     // boundaries in terrain that was already recorded the broken way.
     //
+    // One assumption here is load bearing and invisible: zone lookup is horizontal only. Both
+    // Heightmap.IsPointInside overloads compare x and z and ignore y entirely (Heightmap.cs:846),
+    // so FindHeightmap resolves a point to the zone column it sits above or below, however far away
+    // that is vertically. Location interiors are built at the location's y plus 5000 (Location.cs:47),
+    // which means a TerrainOp created inside a dungeon resolves to the *surface* heightmaps five
+    // kilometres beneath it - and this fix, which deliberately reaches further than vanilla's
+    // fan-out, would spread that across more zones than vanilla touches.
+    //
+    // It is unreachable today, and only for a reason outside this file: the two places a TerrainOp
+    // is created (Attack.cs:1256 and Player's build placement) both refuse when
+    // Location.IsInsideNoBuildLocation says so, that test is horizontal too (Location.cs:88), and
+    // dungeon locations have m_noBuild set. So no operation is ever created inside a dungeon in the
+    // first place. If that gate ever loosens - a location with m_noBuild off, or a new caller that
+    // does not consult it - this fix turns into a way to paint surface terrain from underground, and
+    // the fix would be to compare the operation's y against the heightmap's before extending to it.
+    //
     // Both, and deliberately ungated: this changes what is *recorded*, not what is drawn, so it has
     // to run wherever the operation is created. TerrainOp has no ZNetView, so Awake only fires on
     // the peer that instantiated it - a player placing or attacking, but also a server-owned

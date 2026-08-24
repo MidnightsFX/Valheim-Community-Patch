@@ -69,7 +69,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         private static IEnumerable<CodeInstruction> RedirectLogCalls(IEnumerable<CodeInstruction> instructions, string method) {
-            List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
+            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
             if (Enabled == null || !Enabled.Value) { return codes; }
 
             int patched = 0;

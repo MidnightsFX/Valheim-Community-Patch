@@ -58,7 +58,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(ZDOMan.Load))]
         private static IEnumerable<CodeInstruction> LoadTranspiler(IEnumerable<CodeInstruction> instructions) {
-            List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
+            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
             if (Enabled == null || !Enabled.Value) { return codes; }
 
             int patched = 0;

@@ -62,10 +62,18 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             foreach (KeyValuePair<ZDO, ZNetView> instance in __instance.m_instances) {
                 ZNetView view = instance.Value;
 
-                // Unity-null view, or a view whose ZDO was already released: nothing left to unload,
-                // but the dictionary entry has to go or we revisit it every frame.
+                // Unity-null view, or a view whose ZDO was already released: nothing left to unload
+                // through the normal path, but the dictionary entry has to go or we revisit it every
+                // frame.
+                //
+                // A view that is still alive but has lost its ZDO has to be destroyed here as well,
+                // not merely dropped. m_instances is the only handle anything has on it, so once the
+                // key is gone nothing can ever reach the GameObject again and it is stranded in the
+                // scene for the rest of the session - a slow leak in exactly the situation this fix
+                // exists to survive.
                 if (view == null || view.GetZDO() == null) {
                     OrphanedKeys.Add(instance.Key);
+                    if (view != null) { Object.Destroy(view.gameObject); }
                     continue;
                 }
 

@@ -12,7 +12,7 @@ Install-side gating, ZDO and socket work, log spam, and the terrain paint seam.
 
 - Every fix now declares which side it runs on, and the client-only ones are **no longer applied at
   all on a dedicated server** — a headless process has no local player, so nothing there could ever
-  reach them. Of the 25 fixes, 12 are client, 4 are server and 9 are both; the startup log prints
+  reach them. Of the 26 fixes, 12 are client, 4 are server and 10 are both; the startup log prints
   that breakdown, so a one-sided install is self-describing. Each toggle's description in the config
   carries the same tag, generated from the same declaration, so the two cannot drift apart.
 
@@ -119,6 +119,46 @@ Install-side gating, ZDO and socket work, log spam, and the terrain paint seam.
 
   Both log fixes redirect rather than delete: turning on `EnableDebugMode` brings the messages back.
 
+- `DungeonGenerator.OnRoomLoaded` / `ZoneSystem.UnsetLoadingInZone` *(both)* — a dungeon claims its
+  zone with `SetLoadingInZone` before it starts loading its rooms asynchronously, and only gives the
+  claim back once `m_roomsToLoad` reaches zero. `OnRoomLoaded` returns early on any result other than
+  `Succeeded` — *before* the decrement — so a single room whose asset fails to load means the counter
+  never completes. `Spawn` never runs, so the dungeon interior never appears, and the only call to
+  `UnsetLoadingInZone` never runs either, so the zone stays claimed until the generator itself
+  unloads. Which it will not do while a player is standing in it.
+
+  A zone stuck that way is not cosmetic. `IsZoneReadyForType` returns false, so `ZNetScene` stops
+  creating that zone's objects; `IsAreaReady` returns false, so respawn completion and teleport
+  completion never finish — anyone who spawns into or teleports to that zone sits on the loading
+  screen indefinitely.
+
+  Failed rooms are now accounted for like successful ones and dropped before `Spawn` walks them,
+  since `PlaceRoom` opens with `roomData.m_prefab.Asset.GetComponent<Room>()` and would throw on an
+  unloaded asset — landing back at a claimed zone by another route. A dungeon missing a room is a bad
+  outcome; a zone the server can never finish loading is a worse one.
+
+  `UnsetLoadingInZone` is guarded at the same time. It indexes `m_loadingObjectsInZones[sector]`
+  directly, and the ZDO handed to it on `OnDestroy` is one the generator cached at claim time. If
+  that ZDO was destroyed in between it has already been pooled and reset — `ZDOPool.Release` runs
+  synchronously inside `HandleDestroyedZDO`, while `Object.Destroy` defers `OnDestroy` to end of
+  frame — so its sector reads as `(0,0)` and the lookup either throws or edits an unrelated zone's
+  list, leaving the real claim in place. It now falls back to finding the entry where it actually is.
+
+  Note this is *not* the case of a room prefab going missing after a mod is removed: `Load` already
+  trims those, and that path was never broken.
+
+- Transpiler bail-outs *(both)* — every transpiler here counts what it rewrote and returns the
+  original instructions when the count is wrong, which is what lets this mod share a patched method
+  with mods that hard-match IL. That bail-out did not work. `new List<CodeInstruction>(instructions)`
+  copies the list but not the instructions, and Harmony hands the same instruction objects to every
+  transpiler in the chain, so rewriting an operand through the copy edited the original stream too —
+  and returning it "untouched" handed back the rewrite. Six of the nine bail-outs happened to be safe
+  because they only trigger on a count of zero, with nothing yet rewritten. Three could not:
+  `ZDOMan.Load`, `Player.AutoPickup` and `LiquidVolume.Awake` all bail on a *non-zero* wrong count,
+  so they applied a partial rewrite while logging that they had not. `LiquidVolume.Awake` was the
+  one that mattered — its comment promises it will not half-apply the `Allocator.Persistent` switch,
+  which is exactly what it was doing. All nine now copy the instructions themselves.
+
 ### Terrain
 
 - `Heightmap.ApplyModifiers` boundary paint reconcile *(client)* — **supersedes the 0.3.0 entry
@@ -178,6 +218,22 @@ Install-side gating, ZDO and socket work, log spam, and the terrain paint seam.
   result was a permanent band of vanilla-normal terrain trailing the player, measured as 81% of
   shared vertices matching near the player against 43% further out. Neighbours are now refreshed
   unconditionally.
+
+- `TerrainComp.Update` recovery *(both)*, follow-up to this release's own fix — recovering a terrain
+  compiler that lost the startup race put it into `s_instances` without the deduplication
+  `TerrainComp.Awake` does first. Vanilla's only guard against two compilers owning one zone is
+  `GetAndCreateTerrainCompiler`, which searches that same list, so the compiler that lost the race is
+  invisible to it and a second one gets created — and `Awake` destroys the incumbent when that
+  happens. Recovering the first one without repeating that step left both live for one zone.
+
+  `Heightmap.ApplyModifiers` resolves through `FindTerrainCompiler`, which returns the first list
+  match, so one compiler's saved terrain and paint would be silently discarded and the other's
+  applied — with list order following object creation order, not stably. That is the terrain
+  flip-flopping the other fixes in this section exist to remove, reintroduced by the recovery.
+  Recovery now performs the same deduplication `Awake` does, in the same order.
+
+  A failed recovery is also no longer retried. It ran again on the next frame and every frame after,
+  writing a full stack trace each time.
 
 ### Compatibility
 
