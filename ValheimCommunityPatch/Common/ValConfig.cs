@@ -79,6 +79,12 @@ namespace ValheimCommunityPatch {
             Patches.Performance.OrphanZdoIndexPatch.BindConfig();
             Patches.Performance.AutoPickupAllocPatch.BindConfig();
             Patches.Performance.ZPackageWriteAllocPatch.BindConfig();
+            Patches.Performance.MisterCachePatch.BindConfig();
+            Patches.Performance.HeightmapLookupPatch.BindConfig();
+            Patches.Performance.StaticPhysicsCachePatch.BindConfig();
+            Patches.Performance.ClutterRebuildCapPatch.BindConfig();
+            Patches.Performance.HeightmapBuilderThroughputPatch.BindConfig();
+            Patches.Performance.AsyncColliderBakePatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();

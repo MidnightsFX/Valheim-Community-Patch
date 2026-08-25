@@ -4,6 +4,113 @@ Each entry names the vanilla method it fixes, and is tagged with the side that f
 installing on — *(server)*, *(client)* or *(both)*. See the README for what a one-sided install gets
 you.
 
+## 0.5.0
+
+Zone loading and generation performance, measured first. This release came out of profiling real
+play sessions with a sampling profiler: freshly generating areas micro-stutter because
+`ZoneSystem.Update` builds one whole zone per 100 ms tick in a single unbudgeted frame, and the
+biggest measurable costs around that burst turned out to be mist emission, static-object ground
+checks, terrain tile lookups, grass rebuilds, the terrain build thread's own pacing — and two of
+this mod's existing fixes, which are reworked below. Fix totals are now 32 — 15 client, 4 server,
+13 both.
+
+### Performance
+
+- `Mister.InsideMister` and the mist emission loops *(client)* — mist emission asks "is this point
+  inside a mist volume" for every particle candidate, ten times a second, and each ask loops over
+  every `Mister` reading `transform.position` — a native interop call — once or twice per volume,
+  plus a matching per-particle loop over every `Demister` reading a native force-field range. In the
+  Mistlands that multiplies to thousands of interop calls per frame; profiling attributed ~42% of
+  all time in stutter-heavy seconds of a Mistlands session to these loops. Positions and ranges are
+  now snapshotted into plain arrays once per frame, lazily on first query, and every query
+  (`InsideMister`, `IsInsideOtherMister`, `IsCompletelyInsideOtherMister`, the demister checks, and
+  through them the AI mist-sight checks) runs the same arithmetic over the snapshot. Staleness is
+  bounded by one frame, which is inside vanilla's own tolerance — it already treats these positions
+  as constant across each 100 ms tick. ComfyMods' Dramamist was reviewed and is complementary: it
+  changes what the mist looks like, not what the queries cost, and the two touch no common method.
+
+- `Heightmap.FindHeightmap(point)` and `Heightmap.HaveQueuedRebuild(point, radius)` *(both)* —
+  "which terrain tile is this point on" is a linear scan of every loaded heightmap, with a native
+  `transform.position` read per candidate, re-answered thousands of times a second — including once
+  per grass update tick — for tiles that are instantiated at their zone centre and never move. The
+  registry is now mirrored with cached centres and a zone-keyed dictionary: the common case is one
+  `GetZone` and a dictionary hit, the fallback scan runs on cached floats in vanilla's own order,
+  and the radius overload of `FindHeightmap` is deliberately left vanilla because terrain-op fanout
+  writes terrain data through it. For a point exactly on a shared zone edge the fast path returns
+  the `GetZone`-owning tile where vanilla returned whichever qualifying tile registered first — both
+  contain the point and share identical edge vertices, so no caller can tell. An admin-only
+  `Verify Heightmap Registry` runs both paths, acts on vanilla's answer and logs any real
+  disagreement, and the maintenance hooks are checked at first use with the whole fix standing down
+  to vanilla if any failed to attach.
+
+- `StaticPhysics.SUpdate` *(both)* — the component on every tree, rock and placed prop that checks
+  whether the ground under it disappeared re-reads `transform` and `transform.position` around six
+  times per check across its helpers, and `SlowUpdater` drives a hundred of these checks per frame
+  continuously. Every freshly generated object also schedules its first check 20 seconds after
+  spawn, so a generation burst turns into a delayed wave. The check now fetches the transform once
+  and reads the position once, with identical order, thresholds and side effects. An advanced,
+  default-off `Static Ground Checks Use Heightmap Data` additionally answers the no-solids terrain
+  height question from heightmap data — evaluating the same triangle surface the 10 km raycast
+  would hit, split along the same diagonal the collision mesh indexes — instead of going through
+  the physics engine; `m_checkSolids` objects keep the raycast, which genuinely needs to see rocks
+  and buildings.
+
+- `ClutterSystem.GeneratePatches` *(client)* — grass generation is normally budgeted to one patch
+  per frame, but the `rebuildAll` path skips the limiter, and `TerrainComp.CheckLoad` fires it with
+  a whole-zone radius whenever a zone with saved terrain edits loads: up to ~64 patches regenerated
+  in one frame at hundreds of raycasts each — a reliable spike entering any built-up area. The
+  rebuild is now budgeted (default 8 patches per frame, configurable): it re-runs vanilla's own
+  one-patch ring walk N times, which regenerates the N nearest stale patches in vanilla's own
+  centre-out order, then re-arms itself for the next frame until done. No placement logic is
+  copied, so what gets generated cannot drift from vanilla.
+
+- `HeightmapBuilder.BuildThread` *(both)* — the terrain build thread sleeps 10 ms after **every**
+  loop iteration, including one that just finished a build with more work queued, capping terrain
+  generation well below what the thread could do — and every such sleep directly extends
+  `SpawnZone`'s is-terrain-ready wait and `RequestTerrainSync`'s main-thread busy spin. Its ready
+  queue also silently discards the oldest finished result beyond 16 held, and the distant-terrain
+  ring alone keeps 9 in flight, so finished terrain could be evicted and rebuilt from scratch. The
+  same loop now sleeps only when idle and the cap is raised and configurable (default 32, roughly
+  100 KB per held result). Mutex discipline is copied exactly. The build thread starts once, so the
+  patched body only takes effect when patched before the singleton exists — which plugin load order
+  guarantees, and a startup check logs if that assumption is ever violated.
+
+- `Heightmap.RebuildCollisionMesh` *(client)* — **off by default this release.** Assigning a
+  MeshCollider's `sharedMesh` cooks the PhysX mesh synchronously on the main thread, and every zone
+  heightmap rebuild pays it. For an already-generated zone entering the active ring — the common
+  case while travelling — that cook is most of the remaining boundary-crossing stutter. For exactly
+  that case (`SpawnZone` with `SpawnMode.Client`, a local player present, and not the zone the
+  reference position is in) the cook is now skipped, the mesh is baked on a worker thread with
+  `Physics.BakeMesh`, and the collider is assigned at the end of a following frame's LateUpdate,
+  where Unity finds the bake cached. Fresh generation, terraforming, and load-time terrain rebuilds
+  keep the synchronous cook — their callers raycast the collider in the same frame. The deferral
+  window extends the zone's no-collider state by a frame or two rather than introducing a new one:
+  the frame before, the zone did not exist. Rebuild-while-baking and destroy-while-baking both
+  settle the bake first. Enable `Fix Zone Collider Stall` to help soak it; it ships default-on once
+  it has.
+
+### Own overhead removed
+
+Profiling the game also profiled this mod, and two of its fixes showed up. Both keep their config
+keys and their behaviour; only their cost changed.
+
+- **Fix Object Unload Crash** (`ZNetScene.RemoveObjects`) *(both)* — the guarded replacement ran a
+  Unity-null alive check — a native interop call — on every instance, every unload pass, at 30 Hz,
+  to defend against an orphan that appears roughly never. The steady state now runs vanilla's exact
+  loops, with no guards and vanilla's exact cost, inside a try/catch; only a throw drops it into
+  the guarded sweep, which cleans the orphan up and is safe to restart from scratch after a partial
+  fast pass. The recovery path is also hardened against modded components whose teardown throws.
+
+- **Fix Terrain Seams** (`Heightmap.RebuildRenderMesh`) *(client)* — three costs removed. The
+  per-sample `transform.position.y` reads (four per vertex, 4225 vertices per map) are hoisted to
+  one read per map. The eager neighbour refresh — which recomputed up to five maps per rebuild, and
+  the same map repeatedly during generation bursts — is now a dirty set processed once per frame
+  after all of the frame's rebuilds, each affected map exactly once. And Unity's generic
+  `RecalculateTangents` pass is replaced by analytic tangents computed in the same loop as the
+  normals — for this mesh's planar UV layout the tangent is a closed-form function of the normal.
+  An advanced `Verify Terrain Tangents` diagnostic runs Unity's version instead, compares, and
+  reports, in case terrain lighting ever looks suspect.
+
 ## 0.4.0
 
 Install-side gating, ZDO and socket work, log spam, and the terrain paint seam.

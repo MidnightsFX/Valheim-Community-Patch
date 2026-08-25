@@ -58,6 +58,31 @@ fix under [Credit and sources](#credit-and-sources).
   thing onto the heap first. That is the innermost step of ZDO synchronisation, so the entire payload
   was duplicated once per peer per send tick, and again on every routed RPC and every receive. The
   bytes on the wire are unchanged; only the copy is gone.
+- **Fix Mist Query Overhead** *(client)* — Mistlands fog asks "is this point inside a mist volume"
+  for every particle it considers, and each ask reads every mist volume's position from the engine
+  again — thousands of native reads per frame in the mist, a large share of the biome's frame cost.
+  Positions are now snapshotted once per frame and the checks run as plain math. Same fog, same
+  monster sightlines.
+- **Fix Heightmap Lookup Scan** *(both)* — "which terrain tile is this point on" was answered by
+  scanning every loaded tile with a native position read per candidate, thousands of times a second,
+  for tiles that never move. Now a zone-keyed lookup, with an admin-only "Verify Heightmap Registry"
+  diagnostic that runs both and reports any disagreement.
+- **Fix Static Object Ground Checks** *(both)* — every tree and rock continuously re-checks the
+  ground under itself, reading its own position from the engine about six times per check. Now once.
+  An advanced, default-off toggle can further answer the terrain height from heightmap data instead
+  of a physics raycast.
+- **Fix Grass Rebuild Burst** *(client)* — loading a zone with saved terrain edits regenerates every
+  grass patch around you in a single frame, at hundreds of raycasts per patch — a reliable stutter
+  entering built-up areas. The rebuild is now spread over a few frames, nearest patches first.
+- **Fix Terrain Builder Throughput** *(both)* — the terrain build thread sleeps 10 ms after every
+  single build even with work queued, and throws away finished results beyond 16 held. Zones near a
+  moving player wait extra ticks for terrain that is already computed. It now sleeps only when idle
+  and holds more results.
+- **Fix Zone Collider Stall** *(client)* — **off by default this release.** Crossing into an
+  already-explored zone cooks its terrain collision on the main thread, which is most of the stutter
+  at zone boundaries in generated terrain. This bakes it on a background thread instead, for exactly
+  that case — freshly generating zones and terraforming keep the immediate behaviour. Turn it on if
+  you want to help prove it out.
 
 ### Terrain
 
@@ -194,6 +219,12 @@ involved.
 | Fix Tar Pit Memory Leak | MyPitsDontLeak — Azumatt | The root cause; our implementation is transpilers rather than wholesale method replacement |
 | Fix Auto Pickup Allocation | Zen.ModLib (catalogue) | The technique, rewritten |
 | Fix ZDO Packet Allocation | ComfyMods — Compress | The technique, taken on its own without that mod's GZip protocol change |
+| Fix Mist Query Overhead | Original | — (ComfyMods' Dramamist reviewed: complementary, no overlapping methods) |
+| Fix Heightmap Lookup Scan | Original | — |
+| Fix Static Object Ground Checks | Original | — |
+| Fix Grass Rebuild Burst | Original | — |
+| Fix Terrain Builder Throughput | Original | — |
+| Fix Zone Collider Stall | Original | — |
 
 ### Terrain
 
