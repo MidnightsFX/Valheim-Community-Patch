@@ -275,12 +275,9 @@ The mods involved:
   Effectual and Atlas — account for eleven of the entries below.
 - **[MyPitsDontLeak](https://github.com/AzumattDev/MyPitsDontLeak)** — Azumatt (MIT).
 - **Zen.ModLib** — ZenDragon. Used only as a *catalogue* of which vanilla bugs exist; no code was
-  copied, because the copy available to us is decompiler output with no licence attached. Every fix
-  in that group was rewritten from the decompiled game source.
-- **Iron Gate Studio** — Valheim itself, you guys might include a lot of bugs- but we still love this game.
-
-*Original* below means the defect was found and fixed here, with no other mod's implementation
-involved.
+  copied.
+- **Iron Gate Studio** — Valheim itself. The decompiled game source is the reference used to locate
+  defects; no game code is redistributed.
 
 ### Performance
 
@@ -288,37 +285,41 @@ involved.
 | --- | --- | --- |
 | Fix Portal Connection Scan | ComfyMods — BetterServerPortals | The indexing algorithm |
 | Fix World Load Connection Scan | ComfyMods — Atlas | Its `ConnectSpawners` approach, extended here to portals and sync transforms |
-| Fix Disconnect ZDO Sweep | MidngightsFX | Inspired by server networking performance improvements. |
-| Fix Tar Pit Memory Leak | MyPitsDontLeak — Azumatt | Fix is inspired by; this implementation is transpiler based |
+| Fix Disconnect ZDO Sweep | MidnightsFX | — |
+| Fix Tar Pit Memory Leak | MyPitsDontLeak — Azumatt | The root cause; our implementation is transpilers rather than wholesale method replacement |
 | Fix Auto Pickup Allocation | Zen.ModLib (catalogue) | The technique, rewritten |
 | Fix ZDO Packet Allocation | ComfyMods — Compress | The technique, taken on its own without that mod's GZip protocol change |
-| Fix Mist Query Overhead | Original | — (ComfyMods' Dramamist reviewed: complementary, no overlapping methods) |
-| Fix Heightmap Lookup Scan | Original | — |
-| Fix Static Object Ground Checks | Original | — |
-| Fix Grass Rebuild Burst | Original | — |
-| Fix Terrain Builder Throughput | Original | — |
-| Fix Zone Collider Stall | Original | — |
-| Fix Prefab Query Scan | Original | — |
-| Fix Grass Ground Raycasts | Original | — |
-| Fix Background Zone Pacing | Original | — |
-| Fix Water Material Lookup | Original | — |
-| Fix Distant Terrain Hitch | Original | — |
-| Fix Idle Scene Sweep | Original | — |
-| Fix Support Lookup Cost | Original | — |
-| Fix Light Flicker Overhead | Original | — (Point Light Limit exposes a dormant vanilla mechanism) |
-| Fix Piece Event Stall | Original | — |
-| Fix Unload Sweep Cost | Original | — |
-| Fix Spawn Queue Churn | Original | — |
-| Fix Zone Occupancy Scan | Original | — |
-| Fix Piece Material Polling | Original | — |
-| Fix Idle Support Checks | Original | — |
-| Fix Smoke Overhead | Original | — |
+| Fix Mist Query Overhead | MidnightsFX | — |
+| Fix Heightmap Lookup Scan | MidnightsFX | — |
+| Fix Static Object Ground Checks | MidnightsFX | — |
+| Fix Grass Rebuild Burst | MidnightsFX | — |
+| Fix Terrain Builder Throughput | MidnightsFX | — |
+| Fix Zone Collider Stall | MidnightsFX | — |
+| Fix Prefab Query Scan | MidnightsFX | — |
+| Fix Grass Ground Raycasts | MidnightsFX | — |
+| Fix Background Zone Pacing | MidnightsFX | — |
+| Fix Water Material Lookup | MidnightsFX | — |
+| Fix Distant Terrain Hitch | MidnightsFX | — |
+| Fix Idle Scene Sweep | MidnightsFX | — |
+| Fix Support Lookup Cost | MidnightsFX | — |
+| Fix Light Flicker Overhead | MidnightsFX | — (Point Light Limit exposes a dormant vanilla mechanism) |
+| Fix Piece Event Stall | MidnightsFX | — |
+| Fix Unload Sweep Cost | MidnightsFX | — |
+| Fix Spawn Queue Churn | MidnightsFX | — |
+| Fix Zone Occupancy Scan | MidnightsFX | — |
+| Fix Piece Material Polling | MidnightsFX | — |
+| Fix Idle Support Checks | MidnightsFX | — |
+| Fix Smoke Overhead | MidnightsFX | — |
 
 ### Terrain
 
 | Fix | Sourced from | What came from there |
 | --- | --- | --- |
-| Fix Terrain Seams | MidnightsFX | Irongate, why is this STILL an issue? |
+| Fix Terrain Seams | MidnightsFX | — |
+| Fix Terrain Paint Seams | MidnightsFX | — |
+| Fix Terrain Paint Zone Fanout | MidnightsFX | — |
+| Fix Terrain Paint Mask Indexing | MidnightsFX | — |
+| Fix Terrain Compiler Init Race | MidnightsFX | — |
 
 ### Correctness
 
@@ -326,19 +327,19 @@ involved.
 | --- | --- | --- |
 | Fix Object Unload Crash | ComfyMods — Scenic | The approach |
 | Tolerate Duplicate ZDOs On Load | ComfyMods — Atlas | The duplicate-id tolerance |
-| Fix Effect Areas | ComfyMods — Effectual | Both defects; fix for the dangling reference differs |
+| Fix Effect Areas | ComfyMods — Effectual | Both defects; our fix for the dangling reference differs |
 | Fix Fuel And Ore Loss | Zen.ModLib (catalogue) | The root cause; rewritten as prefixes |
 | Share Boss Defeat Keys | Zen.ModLib (catalogue) | The defect and approach; rewritten with one globally registered RPC |
 | Fix Recipe Amount Crash | Zen.ModLib (catalogue) | The defect, rewritten |
 | Fix Spawner Null Prefabs | ComfyMods — LetMePlay | The same fix |
 | Require Lit Fire | Zen.ModLib (catalogue) | The defect, rewritten |
-| Fix Run Attack Stamina Drain | Zen.ModLib (catalogue) | Narrowed here to players only |
+| Fix Run Attack Stamina Drain | Zen.ModLib (catalogue) | The defect; narrowed here to players only |
 | Fix Projectile Rotation Spam | ComfyMods — BetterZeeLog | The same fix |
-| Fix Send Failure Log Spam | ComfyMods — BetterZeeLog | Redirects log spam |
-| Fix Container Log Spam | ComfyMods — BetterZeeLog | Redirects container spam |
-| Fix Item Icon Crash | ComfyMods — LetMePlay | Smaller fix, still inspired by the original |
-| Fix Negative Stamina | MidnightsFX | Simple catchall & fix for invalid stamina |
-| Fix Dungeon Load Stall | Original | — |
+| Fix Send Failure Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the call, this one redirects it |
+| Fix Container Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the calls, this one redirects them |
+| Fix Item Icon Crash | ComfyMods — LetMePlay | The defect; deliberately a smaller fix here, see CREDITS.md |
+| Fix Negative Stamina | MidnightsFX | — |
+| Fix Dungeon Load Stall | MidnightsFX | — |
 
 ## Installation
 
