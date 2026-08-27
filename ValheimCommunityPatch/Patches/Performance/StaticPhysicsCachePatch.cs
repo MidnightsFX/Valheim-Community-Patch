@@ -116,7 +116,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return ZoneSystem.instance.GetGroundHeight(position, out height);
             }
 
-            Heightmap hmap = Heightmap.FindHeightmap(position);
+            // Registry path first: cached origin, no native reads. Fallback when it cannot serve.
+            Heightmap hmap;
+            Vector3 origin;
+            if (!HeightmapLookupPatch.TryGetCached(position, out hmap, out origin)) {
+                hmap = Heightmap.FindHeightmap(position);
+                origin = hmap != null ? hmap.transform.position : Vector3.zero;
+            }
+
             if (hmap == null) {
                 // No loaded heightmap is also where the raycast would have found no terrain
                 // collider; mirror vanilla's miss result.
@@ -124,40 +131,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return false;
             }
 
-            return InterpolatedHeight(hmap, position, out height);
-        }
-
-        // The exact height of the collision mesh at (x,z): bilinear per triangle with the same
-        // B-D anti-diagonal split RebuildCollisionMesh indexes (A=(x,y) D=(x,y+1) B=(x+1,y) then
-        // B D C=(x+1,y+1)), so this evaluates the surface the raycast would hit.
-        private static bool InterpolatedHeight(Heightmap hmap, Vector3 position, out float height) {
-            Vector3 origin = hmap.transform.position;
-            int width = hmap.m_width;
-            float scale = hmap.m_scale;
-
-            float fx = (position.x - origin.x) / scale + width * 0.5f;
-            float fz = (position.z - origin.z) / scale + width * 0.5f;
-            if (fx < 0f || fx > width || fz < 0f || fz > width) {
-                height = 0f;
-                return false;
-            }
-
-            int x0 = Mathf.Min((int)fx, width - 1);
-            int z0 = Mathf.Min((int)fz, width - 1);
-            float rx = fx - x0;
-            float rz = fz - z0;
-
-            float h00 = hmap.GetHeight(x0, z0);
-            float h10 = hmap.GetHeight(x0 + 1, z0);
-            float h01 = hmap.GetHeight(x0, z0 + 1);
-            float h11 = hmap.GetHeight(x0 + 1, z0 + 1);
-
-            float local = rx + rz <= 1f
-                ? h00 + (h10 - h00) * rx + (h01 - h00) * rz
-                : h11 + (h01 - h11) * (1f - rx) + (h10 - h11) * (1f - rz);
-
-            height = local + origin.y;
-            return true;
+            // Same surface the raycast would hit - see HeightmapSampling for the triangulation.
+            return HeightmapSampling.TryGetHeight(hmap, origin, position, out height);
         }
     }
 }

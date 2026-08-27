@@ -16,10 +16,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // sharedMesh at the end of a following frame's LateUpdate - Unity finds the bake already cached
     // for the unmodified mesh, so the assignment is cheap.
     //
-    // The deferral window is deliberately narrow. Only zone spawns with SpawnMode.Client defer -
-    // zones whose content already exists as ZDOs, spawning because they entered the active ring.
-    // Everything else keeps vanilla's synchronous cook, because callers rely on the collider in the
-    // same frame:
+    // Two deferral windows, both narrow. Zone spawns with SpawnMode.Client - zones whose content
+    // already exists as ZDOs, spawning because they entered the active ring. And delayed-poke
+    // rebuilds: TerrainModifier.Awake/OnDestroy call PokeHeightmaps with the delayed flag
+    // (TerrainModifier.cs:58,69), which defers the Regenerate to Heightmap.CustomLateUpdate -
+    // work that by definition tolerated waiting a frame already, and where, unlike the spawn
+    // case, the collider keeps its *previous* mesh during the deferral: stale by centimetres for
+    // a frame or two, never absent. Anything urgent (terraforming RPCs, TerrainComp.CheckLoad)
+    // uses Poke(false) and never enters that path. Everything else keeps vanilla's synchronous
+    // cook, because callers rely on the collider in the same frame:
     //
     //  - Full/Ghost generation raycasts the new terrain for vegetation and location placement in
     //    the same call stack as the Instantiate that triggered the rebuild.
@@ -70,12 +75,19 @@ namespace ValheimCommunityPatch.Patches.Performance {
             public MeshCollider m_collider;
             public Mesh m_mesh;
             public int m_meshId;
+            // The collider's own cooking options, captured on the main thread. The sharedMesh
+            // assignment only reuses a bake made with *matching* options - the parameterless
+            // BakeMesh bakes with Unity's defaults, and the zone collider's options differ, so
+            // without this the assignment silently re-cooked on the main thread and the whole
+            // deferral bought nothing (measured: the cook simply moved into the assignment hook).
+            public MeshColliderCookingOptions m_options;
             public volatile bool m_done;
         }
 
         // Touched only on the main thread; the worker writes m_done and nothing else.
         private static readonly List<PendingBake> Pending = new List<PendingBake>();
         private static bool _deferContext;
+        private static bool _lateUpdateContext;
 
         private static PendingBake FindPending(Heightmap hmap) {
             for (int i = 0; i < Pending.Count; i++) {
@@ -110,6 +122,20 @@ namespace ValheimCommunityPatch.Patches.Performance {
             private static void Finalizer() => _deferContext = false;
         }
 
+        // The delayed-poke window: a Regenerate reached from CustomLateUpdate is a rebuild that
+        // TerrainModifier explicitly deferred a frame already. No local player means loading -
+        // the initial area builds synchronously, same as the spawn context.
+        [HarmonyPatch(typeof(Heightmap), nameof(Heightmap.CustomLateUpdate))]
+        internal static class LateUpdateContextHook {
+            [HarmonyPrefix]
+            private static void Prefix() {
+                _lateUpdateContext = Enabled != null && Enabled.Value && Player.m_localPlayer != null;
+            }
+
+            [HarmonyFinalizer]
+            private static void Finalizer() => _lateUpdateContext = false;
+        }
+
         [HarmonyPrefix]
         [HarmonyPatch("RebuildCollisionMesh")]
         private static void RebuildCollisionMeshPrefix(Heightmap __instance, out MeshCollider __state) {
@@ -124,7 +150,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 Pending.Remove(inflight);
             }
 
-            if (!_deferContext) { return; }
+            if (!_deferContext && !_lateUpdateContext) { return; }
             if (__instance.m_collider == null) { return; }
 
             // Vanilla's own `if ((bool) this.m_collider)` around the assignment does the actual
@@ -149,11 +175,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 m_collider = __state,
                 m_mesh = mesh,
                 m_meshId = mesh.GetInstanceID(),
+                m_options = __state.cookingOptions,
             };
             Pending.Add(bake);
 
             ThreadPool.QueueUserWorkItem(_ => {
-                try { Physics.BakeMesh(bake.m_meshId, false); } finally { bake.m_done = true; }
+                try { Physics.BakeMesh(bake.m_meshId, false, bake.m_options); } finally { bake.m_done = true; }
             });
         }
 

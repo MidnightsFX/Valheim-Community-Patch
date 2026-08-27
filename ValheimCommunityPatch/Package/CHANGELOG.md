@@ -4,6 +4,379 @@ Each entry names the vanilla method it fixes, and is tagged with the side that f
 installing on — *(server)*, *(client)* or *(both)*. See the README for what a one-sided install gets
 you.
 
+## 0.15.1
+
+- **Fix Idle Support Checks** — three wake holes closed, found through live "Verify Support
+  Sleep" divergences (five in 575k visits, all at the streaming ring's edge). Root cause: a
+  piece's colliders join the support world at Awake, but the wake grid only learned it at
+  its lazy SetupColliders, so streaming-edge pieces could arrive, change and die without
+  waking the sleepers they support. Now: every piece Awake wakes envelope-overlapping
+  sleepers around it (vanilla's fast path re-detects arriving support within a sweep, so
+  this is parity); deaths and changes of never-registered pieces wake through a
+  conservative box around their position; and the outside-active-area path — which stamps
+  max support directly, bypassing UpdateSupport — is caught by a before/after compare
+  around UpdateWear and treated as the value change it is. Re-run the verify to confirm
+  zero divergences before trusting a long soak.
+- **Fix Spawn Queue Churn** — new advanced setting "Spawn Burst Divisor" (default 100 =
+  exactly vanilla): the per-frame spawn budget is the backlog divided by this value, so
+  raising it spawns fewer objects per frame when entering built-up areas — smaller frame
+  hits, slower pop-in.
+
+## 0.15.0
+
+- **Fix Idle Support Checks** — the wake fan-out is now exact. Waking a changed piece's
+  neighbourhood used to dirty every piece sharing an 8 m grid cell — hundreds in a dense
+  base instead of the handful whose support regions actually touch — and an hour of live
+  profiling attributed ~31 ms of every second to that spray plus the spurious recomputes it
+  caused. Grid entries now carry each piece's support envelope, and an exact overlap test
+  picks the true neighbours before anything is woken. Same safety story (the verify covers
+  it), far less work per wake. The hygiene revalidation cap also rose from 5 to 9
+  consecutive skips.
+- **Fix Smoke Overhead** *(client)* — at fire-heavy bases the smoke system measured ~29 ms
+  of every second, almost all per-smoke-per-frame engine calls: a physics mass write per
+  smoke per frame (the value is a smooth curve of the smoke's age), the 10 m render-chunk
+  recheck reading every smoke's position every frame (smoke crosses a chunk every several
+  seconds), and a second position read per smoke when building the particle batches. The
+  mass now writes on 2% lifetime steps (drift from vanilla bounded at 0.04 on a 0..1
+  curve), the chunk recheck runs at 4 Hz (particle positions are world-space, so stale
+  membership renders identically), and each smoke's position is read once. The render loop
+  also clamps to the 100-entry chunk arrays vanilla indexes unguarded.
+
+## 0.14.0
+
+- **Fix Idle Support Checks** *(both)* — the largest steady cost while standing in a large
+  base: every building piece re-validates its cached structural support on every updater
+  visit, re-resolving each cached neighbour with native calls just to confirm nothing
+  changed (~100 ms of every second at 60-90k pieces, where the updater runs saturated).
+  Pieces now sleep between the events that can actually change support: a piece placed or
+  destroyed nearby (tracked through a coarse world grid of support envelopes), a
+  neighbour's support value changing (recomputes still cascade as far as vanilla's
+  relaxation waves would), terrain edits and every other vanilla invalidation signal (all
+  funnel through `ClearCachedSupport`). Unsupported, about-to-collapse pieces never sleep,
+  a piece revalidates through vanilla after at most 5 consecutive skips as a safety net,
+  and the sleep decision stands down entirely if any wake hook failed to attach. A new
+  admin-only "Verify Support Sleep" diagnostic runs vanilla on every visit while checking
+  the predictions and logs engagement plus any missed wake.
+- **Verify Zone Occupancy** now reports its summary every 250 comparisons instead of 2000 —
+  the check runs a few times per second at most, so the old threshold could pass a whole
+  session in silence (the first verify session's ~1,300 comparisons and 0 divergences were
+  only recoverable from the absence of DIVERGED lines).
+
+## 0.13.0
+
+The streaming release. With the crossing stalls fixed, profiling a large base *streaming in*
+showed the cost was no longer any single stall but repeated bookkeeping around the object
+stream: re-sorting the spawn backlog 30 times a second, walking every loaded instance to ask
+if a zone is empty, and five string-based engine invokes per spawned piece.
+
+- **Fix Spawn Queue Churn** *(both)* — while a spawn backlog exists, every 30 Hz pass
+  rebuilds the pending list (a Created check and a distance computation per near ZDO) and
+  sorts the entire backlog, only to consume its head. Streaming a large base held the
+  backlog in the tens of thousands for minutes: the re-sort alone measured ~56 ms/s and the
+  refilter ~18 ms/s. The filtered, sorted queue now persists across passes with a cursor and
+  is rebuilt — vanilla's exact filter and sort — every third pass or when the player changes
+  zone. Spawn rate, order and budget are untouched; stale entries (created meanwhile,
+  recycled by the ZDO pool, zone not ready) are guarded per-slot and re-examined within
+  ~100 ms.
+- **Fix Zone Occupancy Scan** *(both)* — deciding whether a zone can unload asks "does
+  anything stand in it" by iterating all ~90k loaded instances with an alive-check and a
+  transform read each (~29 ms/s while streaming). A per-zone tally of non-distant instances
+  — maintained at the instance dictionary's single write site, the view's OnDestroy, and the
+  ZDO sector-move path — answers in O(1). A new admin-only "Verify Zone Occupancy"
+  diagnostic compares the tally against vanilla's walk.
+- **Fix Piece Material Polling** *(both)* — every spawned piece with material variation
+  schedules five polls through Unity's string-based invoke machinery just to wait for its
+  random seed, then re-derives and re-writes identical values on every poll after the first
+  success, allocating a System.Random per property and re-hashing shader property names each
+  time (~35 ms/s while pieces stream). One shared ticker replaces the per-piece scheduling,
+  property-name hashes are cached, and polling stops once the values are applied — they are
+  pure functions of a write-once seed, so the repeats were state-level no-ops. Same retry
+  schedule for unseeded pieces, same owner-side seed write, same visuals.
+
+## 0.12.1
+
+- **Fix Unload Sweep Cost** *(both)* — every 30 Hz object pass that is not provably idle runs
+  `ZNetScene.RemoveObjects`: earmark every near and distant ZDO, then walk all loaded
+  instances, to find the few objects that left the loaded area in the last 33 ms. The sweep
+  is O(all instances) regardless of how many it removes — ~77 ms per moving second in a
+  60-90k-instance base, ~8% of frame time, most of it millions of trivial getter calls. The
+  sweep now runs on a wall-clock interval ("Object Unload Sweep Interval", default 100 ms,
+  0 = vanilla) and whole passes are skipped in between: departing objects linger up to a
+  tenth of a second longer at the far edge of the loaded distance, and nothing else changes.
+  Unlike the withdrawn spawn-burst budget this throttles *checking* for work, not doing it,
+  so nothing accumulates and each sweep costs the same as before — there are just ~3x fewer.
+  Alongside it, the unload fast-pass reads the two fields its hot loop needs directly
+  instead of through their trivial accessors.
+
+## 0.12.0
+
+The chunk-crossing release. With the mega-base steady state fixed (ZNetScene's object pass
+is down from ~17% of frame time to ~1%), the remaining complaint was crossing a zone
+boundary into a built-up area: a ~27-second episode of 12-19 fps with individual frames of
+100-600 ms — the worst of it a delegate pile-up:
+
+- **Fix Piece Event Stall** *(both)* — every building piece subscribes a C# event on its
+  heightmap (`Heightmap.m_clearConnectedWearNTearCache`, whose only purpose is flushing
+  cached support after terrain edits) in `Start` and unsubscribes in `OnDestroy`. A
+  multicast delegate is an immutable array, so with 10-20k pieces on one heightmap each
+  subscribe copies the whole list and each unsubscribe scans it — O(n²) for the batches a
+  zone crossing loads and unloads, plus an n-element allocation per operation feeding GC
+  pauses. The crossing's single worst frame (600 ms) was mostly this. Pieces now register
+  in a per-heightmap lookup table — O(1), allocation-free — and a `Regenerate` hook
+  delivers the same cache clears. The event stays intact for any other subscriber, and the
+  toggle is safe to flip at runtime in both directions.
+
+## 0.11.3
+
+- **Fix Idle Scene Sweep** — the after-pass bookkeeping no longer counts pending candidates
+  when the pass provably was not quiet: during world streaming the candidate list holds tens
+  of thousands of entries and counting them 30 times a second just to conclude "not idle"
+  was measured at whole seconds of login time. The count now runs only when its answer can
+  matter. No behavior change.
+
+## 0.11.2
+
+- **Fix Idle Scene Sweep** — the change detector is now a ring-membership hash instead of a
+  raw counter. Verify telemetry showed the counter engaging on only ~15% of passes in a
+  lively multiplayer base: every incoming ZDO-data packet bounces its listed objects' sector
+  out to a sentinel and back within one handler, and animals crossing sector lines inside
+  the streamed ring bumped it too — all changes that net to nothing the object pass could
+  see. The hooks now XOR the object's id into a running hash only when the touched sector is
+  inside the streamed ring, so bounces and in-ring crossings cancel algebraically while real
+  arrivals, departures, spawns and despawns register. Sectorless created/destroyed events
+  keep their own counter, the 1-second safety pass still bounds everything else, and the
+  filter ring is re-aligned at the start of every full pass so it can never be stale for a
+  pass that could go on to skip. Verify results to date: 0 divergences (2,700 passes idle
+  skip, 175,000 comparisons support lookup).
+
+## 0.11.1
+
+No behavior changes. The two new Verify diagnostics now report engagement — "would have
+skipped X of Y passes" / comparison counts — every ~30 seconds and once when turned off,
+because zero divergences is only evidence if the predicate actually armed during the
+session. And the light-flicker distance gate caches its decision with the anchor, so
+between refreshes it is one dictionary hit instead of per-frame distance math.
+
+## 0.11.0
+
+The mega-base release, from profiling a 60-90k-instance build at 42 fps: the per-frame
+systems that scale with loaded object count. Fix totals are now 40 — 21 client, 5 server,
+14 both.
+
+### Performance
+
+- `ZNetScene.CreateDestroyObjects` *(both)* — the streamed-object pass runs 30 times a
+  second and is O(every loaded object) end to end: rebuild the near and distant lists from
+  the sector stores, enumerate every near ZDO's Created flag (and sort the candidates),
+  earmark every ZDO and sweep every live instance for removals. None of it depends on
+  anything having changed, and in the profiled base the pass was 17% of ALL frame time
+  (~97 s of a 10-minute window). Three always-on hooks now maintain a scene version at the
+  choke points every relevant change crosses — `ZDOMan.AddToSector`/`RemoveFromSector`
+  (verified the only mutators of the sector stores; `ZDO.SetSector` early-outs on
+  same-sector so the hooks stay cold) and `ZDO.set_Created` (the one removal path with no
+  sector signal) — and a pass is skipped outright when the reference zone, the version, and
+  the active-area sizes are unchanged and the previous full pass ended with nothing pending
+  (uncreated candidates are counted with a resolvable-prefab filter, so worlds carrying
+  orphaned modded ZDOs still reach idle). One full vanilla-shape pass per second runs
+  regardless as a safety sweep, bounding every exotic untracked path at ~1 second of
+  staleness. On a busy server, peer exploration keeps the version moving and the pass
+  simply stays vanilla. An admin-only `Verify Scene Idle Skip` predicts skips, always runs
+  vanilla, and logs if a predicted-skippable pass did real work; the hooks are checked at
+  first use and the whole fix stands down if any failed to attach.
+
+- `WearNTear.UpdateSupport` *(both)* — resolves "which piece owns this collider" with a
+  native hierarchy walk (`GetComponentInParent`) at three call sites, including once per
+  cached support collider on every invocation even when the cache holds. Sliced over every
+  piece of a large base continuously, the walks alone measured ~11.5 s of a 10-minute
+  window. A collider-to-piece table now answers it: registered when a piece builds its
+  collider list, learned on miss (so a cold table costs exactly vanilla), cleaned through a
+  reverse map on destroy, cleared at scene shutdown. The three call sites are rewritten by
+  a transpiler that requires exactly three replacements or backs out untouched. Every call
+  site already null-checks the result, so a stale entry behaves as vanilla's "no ancestor";
+  an admin-only `Verify Support Lookup` compares table and walk and acts on the walk. The
+  overlap-box physics queries themselves are untouched — they are the algorithm.
+
+- `LightFlicker` and the dormant point-light cap *(client)* — two halves. Torch flicker
+  updates every flickering light every frame with per-light engine calls, invisible past a
+  few dozen metres; flicker now stops updating beyond a configurable distance (default
+  45 m — the game's own light LOD fades the light itself at 40), with each light's cached
+  position refreshed every few frames so carried torches stay correct, and TTL-driven
+  flash lights always updating since they destroy themselves from inside the update. And
+  the game ships a complete priority-ranked point-light cap it never wires up:
+  `LightLod.m_lightLimit` ranks all point lights by distance once a second and keeps the
+  nearest N enabled with a smooth fade — the graphics menu only ever drives the shadow
+  half. A client-local `Point Light Limit` (default -1 = exactly vanilla) now exposes it
+  for torch-heavy bases.
+
+## 0.10.0
+
+One rework, driven by profiling the Mistlands on the previous build. It also fixed a
+regression risk the collider work exposed: the collider assignment cook was measured moving
+into this mod's own assignment hook in 0.9.0 and was fixed there by baking with the
+collider's actual cooking options — 0.10.0's measurements confirm assignment cooks at ~2% of
+their former cost.
+
+### Performance
+
+- **Fix Mist Query Overhead** (`Mister` / `ParticleMist`) *(client, rework)* — the 0.5.0
+  version snapshotted mist volume positions once per frame and ran vanilla's loops as pure
+  math. Mistlands profiling on the fixed build showed what remained: the loops are
+  O(particle candidates × all loaded misters) — hundreds of misters at dozens of candidates
+  per tick — and the per-frame snapshot rebuild itself re-read every mister position at
+  several hundred fps. Three changes: the mister snapshot is now event-driven (misters never
+  move — nothing in the vanilla assembly writes their transforms — so it rebuilds only on
+  spawn/despawn, with a slow safety refresh as a hedge for hypothetical modded movers);
+  misters are bucketed by 64 m zone so a query reads only its own zone's bucket — a handful
+  of volumes instead of hundreds (queries with out-of-range radii, which vanilla never
+  issues, fall back to the full snapshot); and `FindMaxMistAlltitude`'s 20 ground-probe
+  raycasts per tick are answered from heightmap data via the shared registry and sampler,
+  with the Random draws replicated exactly so particle randomness downstream is unchanged.
+  Demisters keep the per-frame refresh — they are few and genuinely move.
+
+## 0.9.0
+
+Two new fixes and two reworks, from the next profiling pass. The prefab index also passed its
+formal verification this cycle: 66 verify runs against a 1,039,827-ZDO world, zero
+divergences. Fix totals are now 37 — 18 client, 5 server, 14 both.
+
+### Config
+
+- The four `Verify …` diagnostics moved from the Fixes sections into a new **Debug** section,
+  so a new user browsing the config does not mistake them for fixes: each deliberately runs
+  both the indexed path and vanilla's for comparison, costing exactly the work its fix exists
+  to avoid. Moving a config entry changes its key, so a previously saved value for one of
+  these is orphaned in the .cfg — harmless, since they all default to off and are only ever
+  turned on deliberately.
+
+### Performance
+
+- `WaterVolume.UpdateMaterials` *(client)* — runs for every loaded water tile every frame and
+  is a single line: fetch the surface material from the engine, set the advancing water time
+  on it. The fetch (`Renderer.get_material`) answers the same reference for the volume's whole
+  life yet cost ~1.4 s of a 10-minute coastal session in native calls. The material is now
+  cached per volume, dropped when the volume disables; the per-frame water-time write itself
+  is unchanged, as is every other `.material` user.
+
+- `TerrainLod.RebuildAllHeightmaps` *(client)* — every 256 m of travel, the distant-terrain
+  ring rebuilds all nine 81×81-vertex heightmaps in a single frame, each with a per-vertex
+  live biome lookup on the main thread. A fixed-cadence hitch, most noticeable sailing. At
+  most N tiles (default 3, configurable, 9 = vanilla) now rebuild per frame; the state
+  machine re-enters until the ring completes, and a companion hook stops vanilla from
+  re-asking the build thread about tiles already rebuilt this cycle, which would otherwise
+  queue redundant builds. During the short spread the ring is positionally torn between old
+  and new centres — at 800+ m under distance fog, far less visible than the hitch.
+
+- **Fix Background Zone Pacing** (`ZoneSystem.CreateGhostZones`) *(server, rework)* — the
+  first version deferred a generation tick when the previous frame ran long, which at high
+  framerates almost never engages: the frame after a burst recovers well before the next
+  100 ms tick, so the ten-bursts-a-second cadence survived, and measurement showed it. Each
+  ghost generation is now also timed, and one that itself exceeded the frame budget arms a
+  cooldown (default 2 ticks, configurable, 0 restores the old behaviour) before the next —
+  identical bursts, further apart. The starvation guard and the untouched player-zone path
+  carry over.
+
+- **Fix Zone Collider Stall** (`Heightmap.RebuildCollisionMesh`) *(client, rework)* — the
+  deferral now also covers delayed-poke rebuilds: `TerrainModifier` spawns and removals defer
+  their terrain rebuild to LateUpdate by design, and that path turned out to carry most of
+  the remaining main-thread collider cooking (~5 s of a 10-minute generation-heavy window).
+  Safer than the original case, even: the collider keeps its previous mesh during the
+  deferral — stale by centimetres for a frame or two, never absent. Urgent rebuilds
+  (terraforming, load-time terrain) still cook synchronously, and rebuilds while no local
+  player exists (loading) are unchanged.
+
+## 0.8.0
+
+No new fixes — two existing ones got cheaper, driven by another profiling pass.
+
+- **Fix Terrain Seams** (`Heightmap.RebuildRenderMesh`) *(client)* — vanilla's rebuild computed
+  normals and tangents that this fix then overwrote the same frame; the tangent half of that
+  (Unity's generic `RecalculateTangents` pass) was pure waste, measured at ~2 s of a 10-minute
+  generation-heavy window on top of the fix's own passes. The rebuild's tangent call is now
+  transpiled into a runtime decision: it defers whenever this fix will supply tangents later in
+  the frame, and those are computed analytically in the same loop as the normals — for this
+  mesh's planar UV layout the tangent is a closed-form function of the normal (one shared
+  formula, also used by the verify comparison). A rebuilt map whose cross-boundary pass bails
+  (missing neighbours) gets analytic tangents from the vanilla normals it kept, since the
+  rebuild's `mesh.Clear()` wiped the old ones; a rebuild with no processing hook alive (the
+  menu scene) keeps Unity's pass. Normalization in the vertex loop is also done with one
+  inverse square root instead of `Vector3.normalized`, which profiling showed as real cost at
+  4225 vertices × 5 maps per burst.
+
+- **Fix Grass Ground Raycasts** and **Fix Static Object Ground Checks** *(client / both)* —
+  their data paths read `transform.position` once per query and went through the patched
+  `FindHeightmap`'s full toggle-and-trampoline overhead. The heightmap lookup registry now also
+  caches each tile's transform origin and serves in-mod callers directly, so a grass or ground
+  query on the hot path does no native reads and no Harmony round-trip at all; both fall back
+  to the public lookup when the registry cannot serve.
+
+## 0.7.0
+
+The two next-biggest measured items after 0.6.0: grass placement's raycast habit, and the
+timing of background zone generation. Fix totals are now 35 — 16 client, 5 server, 14 both.
+
+### Performance
+
+- `ClutterSystem.GetGroundInfo` *(client)* — grass placement answers "where is the ground, and
+  which way does it face" with a 1 km `Physics.Raycast` per clutter candidate: up to 80
+  candidates per clutter type per 8 m patch, one patch per frame while moving, and a
+  multi-patch burst when zones load — hundreds of raycasts per frame in the steady state, and
+  after 0.6.0 the largest steady per-frame cost measured (~4.2 s of a 5-minute window in patch
+  generation). The ray's mask is exactly the "terrain" layer and its handler dereferences the
+  hit collider's `Heightmap` unconditionally, so the only thing it can ever hit is a zone
+  heightmap's collision mesh — whose shape is already known. The query is now answered from
+  heightmap data: same triangle split as the collision mesh (the shared `HeightmapSampling`
+  helper), same interpolated height, same geometric normal, same biome call, with vanilla's
+  ±500 m ray window replicated. A raycast sees the last baked collider while this reads current
+  data, which is never staler. Clutter is cosmetic, client-local, never saved, and regenerated
+  on a 2-second timeout — the lowest-risk place in the game for this substitution.
+
+- `ZoneSystem.CreateGhostZones` *(server)* — the game generates one complete zone per 100 ms
+  tick entirely in one frame, blind to how the frame is doing; walking into virgin terrain is
+  one full generation burst every 100 ms, the dominant remaining spike source measured after
+  0.6.0 (~6 s of the stutter-heavy seconds in 5 minutes). Most bursts are *ghost* zones —
+  background pre-generation of the ring around the host and each peer, with no same-frame
+  consumer. When the previous frame already exceeded a configurable budget (default 30 ms), the
+  tick's ghost generation is now deferred to the next 100 ms tick. The same zones generate
+  identically from the same seeds — only the timing spreads out. A starvation guard generates
+  regardless after 4 consecutive skips, bounding the added latency to ~half a second under
+  sustained load, and zones the player actually enters (`CreateLocalZones`) are never touched.
+  On a dedicated server the ~20 ms simulation tick sits under the default budget, so pacing
+  only engages when the server is genuinely struggling.
+
+## 0.6.0
+
+One fix, and it was the biggest item left on the profile: the prefab query scan. Fix totals are
+now 33 — 15 client, 4 server, 14 both.
+
+### Performance
+
+- `ZDOMan.GetAllZDOsWithPrefabIterative` *(both)* — answers "every ZDO of this prefab" by
+  scanning the whole world: every sector list plus the outside-sector map, dereferencing every
+  ZDO to compare its prefab hash. Vanilla only reaches it from a console command, but it is the
+  public API mods use, and several popular ones call it every `ZoneSystem.Update` tick from
+  postfixes. Profiling a live modded session attributed ~8.6 seconds of a 10-minute window to
+  these scans — the single largest item inside `ZoneSystem.Update` during stutter-heavy seconds,
+  and after 0.5.0 the largest remaining cost in the whole profile.
+
+  ZDOs are now bucketed by prefab hash as the prefab is assigned — on `ZDO.SetPrefab`, on the
+  network deserialize path, with a full rebuild at world load — so the query returns O(matches)
+  instead of O(world). The iterative contract is preserved exactly: an iteration already in
+  flight (`index != 0`) finishes under vanilla so mods that spread the drain across frames keep
+  their cursor semantics, a fresh iteration completes in one call (a legal fast completion —
+  the return value means "iteration complete" and every caller loops until it), and the final
+  `RemoveAll` over the caller's whole accumulated list is replicated verbatim, pre-existing
+  entries included. Result ordering changes from sector-grouped to bucket order; callers treat
+  the list as a set.
+
+  Index maintenance runs even when the fix is toggled off (an index that missed changes before
+  a mid-session switch-on would answer wrongly forever; only the read path checks the toggle),
+  and unlike the disconnect-sweep index it is not gated on the network role — this method runs
+  on clients, listen hosts and dedicated servers alike. An admin-only `Verify Prefab Index`
+  runs both the index and vanilla's full scan on every query, acts on vanilla's answer, and
+  logs any divergence. The maintenance hooks are checked at first use — against the specific
+  hook class, since this mod patches two of the same methods for the disconnect-sweep index —
+  and the whole fix stands down to vanilla if any failed to attach.
+
 ## 0.5.0
 
 Zone loading and generation performance, measured first. This release came out of profiling real

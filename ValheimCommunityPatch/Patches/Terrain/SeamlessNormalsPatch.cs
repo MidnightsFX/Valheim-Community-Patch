@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Reflection;
+using System.Reflection.Emit;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -24,27 +26,28 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // GetHeight returning 0 past the edge. That makes the normal at a shared vertex a function of the
     // surrounding terrain rather than of which zone happens to own it, so both sides agree.
     //
-    // Two costs of the original version of this fix were measured and removed:
+    // Costs of earlier versions of this fix, measured and removed:
     //
-    //  - It refreshed all four neighbours eagerly inside every RebuildRenderMesh postfix. During a
-    //    generation burst - a frontier sprint, a TerrainComp double-rebuild - the same zone was
-    //    recomputed up to five times in one frame. Rebuilds now only mark a dirty set, and one hook
-    //    at the end of MonoUpdaters.LateUpdate (which is where every Heightmap.CustomLateUpdate
-    //    rebuild runs, so it is downstream of all of them) processes each affected map exactly once
-    //    per frame. A rebuild triggered by another script's LateUpdate after that point slips to the
-    //    next frame - one frame of vanilla normals, self-correcting.
+    //  - Eager neighbour refresh recomputed the same zone up to five times per rebuild during
+    //    generation bursts. Rebuilds now mark a dirty set, and one hook at the end of
+    //    MonoUpdaters.LateUpdate (downstream of every Heightmap.CustomLateUpdate rebuild) processes
+    //    each affected map exactly once per frame. A rebuild after that point in the frame slips to
+    //    the next frame's pass - one frame of vanilla shading, self-correcting.
     //
-    //  - WorldHeight read hmap.transform.position.y per height sample: 4225 vertices x 4 samples of
-    //    native interop per map. The five offsets are now hoisted to one read per map per pass.
+    //  - Per-sample transform.position.y interop: hoisted to one read per map per pass.
     //
-    // Tangents: vanilla derives them from the normals it just computed, so replacing the normals
-    // means the tangents have to follow. Unity's generic RecalculateTangents was itself a measured
-    // cost, and for this mesh it is overkill: RebuildRenderMesh maps UVs planarly - u along +X, v
-    // along +Z, everywhere (Heightmap.cs:533) - so the tangent is just the Gram-Schmidt projection
-    // of +X against the vertex normal, T = normalize((1,0,0) - N.x*N) with w = -1 (bitangent
-    // cross(N, T) * w must point along +Z). Computed in the same loop as the normals. The advanced
-    // verify toggle runs Unity's version instead, compares a sample, and reports - flip it on if a
-    // lighting artifact is ever suspected here.
+    //  - Unity's RecalculateTangents ran once in vanilla's rebuild and again per ApplyNormals. Both
+    //    are gone: the rebuild's call is transpiled into TangentsOrDefer, which skips the pass
+    //    whenever this fix will supply tangents later the same frame, and the dirty pass computes
+    //    them analytically in the same loop as the normals. For this mesh's planar UV layout
+    //    (u along +X, v along +Z everywhere, Heightmap.cs:533) the tangent is the Gram-Schmidt
+    //    projection of +X against the vertex normal with w = -1 (bitangent cross(N,T)*w along +Z).
+    //    mesh.Clear() in the rebuild wipes tangents, so every deferred map MUST receive tangents
+    //    from the pass - a map whose ApplyNormals bails (missing neighbours) gets analytic tangents
+    //    computed from the vanilla normals it kept, and TangentsOrDefer only defers at all when the
+    //    processing hook is guaranteed to exist (MonoUpdaters alive), so a menu-scene rebuild keeps
+    //    Unity's pass. The advanced verify toggle restores Unity's tangents everywhere, compares
+    //    them against the analytic formula on a vertex sample, and reports.
     //
     // Client: normals are shading only, and collision does not use them. This is one of the two
     // fixes whose target method genuinely runs and does real work on a dedicated server - the render
@@ -67,7 +70,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 "a hard crease running through flat terrain - most noticeable in the Plains and Meadows.");
 
             VerifyTangents = ValConfig.BindServerConfig(
-                ValConfig.SectionTerrain,
+                ValConfig.SectionDebug,
                 "Verify Terrain Tangents",
                 false,
                 "Diagnostic. Uses Unity's tangent recalculation instead of the analytic tangents the " +
@@ -86,22 +89,68 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         // hook below; a map destroyed while marked is removed by the OnDestroy hook rather than
         // waiting to be skipped as Unity-null.
         private static readonly HashSet<Heightmap> Dirty = new HashSet<Heightmap>();
-        private static readonly List<Heightmap> ProcessScratch = new List<Heightmap>();
+        private static readonly HashSet<Heightmap> RebuiltScratch = new HashSet<Heightmap>();
         private static readonly HashSet<Heightmap> AffectedScratch = new HashSet<Heightmap>();
+
+        private static readonly MethodInfo RecalculateTangentsMethod =
+            AccessTools.Method(typeof(Mesh), nameof(Mesh.RecalculateTangents), new System.Type[0]);
+        private static readonly MethodInfo TangentsOrDeferMethod =
+            AccessTools.Method(typeof(SeamlessNormalsPatch), nameof(TangentsOrDefer));
+
+        // Replaces `this.m_renderMesh.RecalculateTangents()` in Heightmap.RebuildRenderMesh with
+        // `TangentsOrDefer(this.m_renderMesh, this)`, so the decision to skip Unity's tangent pass
+        // is made at runtime - the toggle stays live, unlike a transpiler that bakes it in.
+        // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
+        [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
+        [HarmonyPatch("RebuildRenderMesh")]
+        private static IEnumerable<CodeInstruction> RebuildRenderMeshTranspiler(IEnumerable<CodeInstruction> instructions) {
+            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
+
+            int replaced = 0;
+            for (int i = 0; i < codes.Count; i++) {
+                if (!codes[i].Calls(RecalculateTangentsMethod)) { continue; }
+
+                // The callvirt becomes `ldarg.0` (keeping any labels that target it) and the static
+                // call follows: stack [mesh] -> [mesh, this] -> TangentsOrDefer(mesh, heightmap).
+                codes[i].opcode = OpCodes.Ldarg_0;
+                codes[i].operand = null;
+                codes.Insert(i + 1, new CodeInstruction(OpCodes.Call, TangentsOrDeferMethod));
+                replaced++;
+                i++;
+            }
+
+            if (replaced != 1) {
+                Logger.LogWarning(
+                    $"Heightmap.RebuildRenderMesh: expected 1 RecalculateTangents call, found {replaced}, " +
+                    "so the tangent half of the terrain seam fix is inactive. Another mod has most " +
+                    "likely already rewritten the method - if so, nothing is wrong.");
+                return instructions;
+            }
+
+            return codes;
+        }
+
+        // Runs where vanilla ran RecalculateTangents. Deferring is only legal when the dirty pass
+        // is guaranteed to supply tangents afterwards - same conditions under which the postfix
+        // marks the map, plus a live MonoUpdaters to host the pass (absent in the menu scene).
+        private static void TangentsOrDefer(Mesh mesh, Heightmap hmap) {
+            if (WillProcess(hmap)) { return; }
+
+            mesh.RecalculateTangents();
+        }
+
+        private static bool WillProcess(Heightmap hmap) {
+            return Enabled != null && Enabled.Value
+                && !RunMode.IsDedicated
+                && !hmap.IsDistantLod
+                && MonoUpdaters.s_instance != null;
+        }
 
         [HarmonyPostfix]
         [HarmonyPatch("RebuildRenderMesh")]
         private static void RebuildRenderMeshPostfix(Heightmap __instance) {
-            if (Enabled == null || !Enabled.Value) { return; }
-
-            // Nothing on a dedicated server ever looks at these normals - it builds the render mesh
-            // only because the MeshCollider needs the vertices, and collision does not use normals.
-            // IsDedicated rather than IsServer: a listen host draws its own terrain and needs the fix.
-            if (RunMode.IsDedicated) { return; }
-
-            // The distant LOD meshes are a separate 3x3 grid at a different vertex spacing; leave them
-            // on vanilla behaviour rather than pretending they tile with the zone heightmaps.
-            if (__instance.IsDistantLod) { return; }
+            if (!WillProcess(__instance)) { return; }
 
             Dirty.Add(__instance);
         }
@@ -114,22 +163,34 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             [HarmonyPostfix]
             private static void Postfix() {
                 if (Dirty.Count == 0) { return; }
-                if (Enabled == null || !Enabled.Value || RunMode.IsDedicated) { Dirty.Clear(); return; }
 
-                // Expand each dirty map to itself plus its four neighbours, deduped. The neighbour
+                if (Enabled == null || !Enabled.Value || RunMode.IsDedicated) {
+                    // Marked while enabled, processed while not: these meshes deferred their tangent
+                    // pass on the promise that this hook would deliver. Give them Unity's before
+                    // standing down.
+                    foreach (Heightmap hmap in Dirty) {
+                        if (hmap != null && hmap.m_renderMesh != null) { hmap.m_renderMesh.RecalculateTangents(); }
+                    }
+
+                    Dirty.Clear();
+                    return;
+                }
+
+                // Expand each rebuilt map to itself plus its four neighbours, deduped. The neighbour
                 // refresh is load-bearing: zones are always built at the frontier of the loaded
                 // area, so a new zone almost never has all four of its own neighbours yet. What it
                 // *does* do is complete the neighbour set of the zone behind it, which had bailed to
                 // vanilla normals for exactly that reason and would otherwise stay that way forever -
                 // nothing else re-pokes it. Neighbours are looked up here, at process time, so zones
                 // spawned later in the same burst are found.
+                RebuiltScratch.Clear();
                 AffectedScratch.Clear();
-                ProcessScratch.Clear();
 
                 foreach (Heightmap hmap in Dirty) {
                     if (hmap == null) { continue; }
 
-                    if (AffectedScratch.Add(hmap)) { ProcessScratch.Add(hmap); }
+                    RebuiltScratch.Add(hmap);
+                    AffectedScratch.Add(hmap);
 
                     float zoneSize = hmap.m_width * hmap.m_scale;
                     AddNeighbour(hmap, -zoneSize, 0f);
@@ -140,15 +201,22 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
                 Dirty.Clear();
 
-                for (int i = 0; i < ProcessScratch.Count; i++) { ApplyNormals(ProcessScratch[i]); }
+                foreach (Heightmap hmap in AffectedScratch) {
+                    if (ApplyNormals(hmap)) { continue; }
 
+                    // A bailed *rebuilt* map kept vanilla's normals but its tangents were wiped by
+                    // mesh.Clear() and deferred to us - compute them from the normals it has. A
+                    // bailed neighbour was not rebuilt this frame and keeps its existing tangents.
+                    if (RebuiltScratch.Contains(hmap)) { ApplyFallbackTangents(hmap); }
+                }
+
+                RebuiltScratch.Clear();
                 AffectedScratch.Clear();
-                ProcessScratch.Clear();
             }
 
             private static void AddNeighbour(Heightmap origin, float dx, float dz) {
                 Heightmap neighbour = FindNeighbour(origin, dx, dz);
-                if (neighbour != null && AffectedScratch.Add(neighbour)) { ProcessScratch.Add(neighbour); }
+                if (neighbour != null) { AffectedScratch.Add(neighbour); }
             }
         }
 
@@ -159,6 +227,17 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         internal static class OnDestroyHook {
             [HarmonyPostfix]
             private static void Postfix(Heightmap __instance) => Dirty.Remove(__instance);
+        }
+
+        // The one place the Gram-Schmidt tangent formula lives: T = normalize((1,0,0) - N.x*N),
+        // w = -1. The hot path, the bail path, and the verify comparison all call this, so a fix
+        // to the formula cannot miss one of them.
+        private static Vector4 AnalyticTangent(Vector3 normal) {
+            float tx = 1f - normal.x * normal.x;
+            float ty = -normal.x * normal.y;
+            float tz = -normal.x * normal.z;
+            float inv = 1f / Mathf.Sqrt(tx * tx + ty * ty + tz * tz);
+            return new Vector4(tx * inv, ty * inv, tz * inv, -1f);
         }
 
         // Returns false when the normals were left untouched, which is the correct outcome whenever we
@@ -190,7 +269,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             float southY = south.transform.position.y;
             float northY = north.transform.position.y;
 
-            float inv = 1f / (2f * hmap.m_scale);
+            float invStep = 1f / (2f * hmap.m_scale);
             bool analyticTangents = VerifyTangents == null || !VerifyTangents.Value;
 
             NormalBuffer.Clear();
@@ -198,20 +277,17 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             for (int y = 0; y < stride; y++) {
                 for (int x = 0; x < stride; x++) {
                     float dx = (Sample(hmap, x + 1, y, west, east, south, north, selfY, westY, eastY, southY, northY)
-                              - Sample(hmap, x - 1, y, west, east, south, north, selfY, westY, eastY, southY, northY)) * inv;
+                              - Sample(hmap, x - 1, y, west, east, south, north, selfY, westY, eastY, southY, northY)) * invStep;
                     float dz = (Sample(hmap, x, y + 1, west, east, south, north, selfY, westY, eastY, southY, northY)
-                              - Sample(hmap, x, y - 1, west, east, south, north, selfY, westY, eastY, southY, northY)) * inv;
+                              - Sample(hmap, x, y - 1, west, east, south, north, selfY, westY, eastY, southY, northY)) * invStep;
 
-                    Vector3 normal = new Vector3(-dx, 1f, -dz).normalized;
+                    // Manual inverse-sqrt normalization: Vector3.normalized was a measured cost at
+                    // 4225 vertices x 5 maps per burst.
+                    float inv = 1f / Mathf.Sqrt(dx * dx + 1f + dz * dz);
+                    Vector3 normal = new Vector3(-dx * inv, inv, -dz * inv);
                     NormalBuffer.Add(normal);
 
-                    if (analyticTangents) {
-                        // Gram-Schmidt of +X against the normal; see the header for why this equals
-                        // what RecalculateTangents produces for this mesh's planar UV layout.
-                        Vector3 tangent = new Vector3(1f - normal.x * normal.x, -normal.x * normal.y, -normal.x * normal.z);
-                        tangent.Normalize();
-                        TangentBuffer.Add(new Vector4(tangent.x, tangent.y, tangent.z, -1f));
-                    }
+                    if (analyticTangents) { TangentBuffer.Add(AnalyticTangent(normal)); }
                 }
             }
 
@@ -220,12 +296,32 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             if (analyticTangents) {
                 mesh.SetTangents(TangentBuffer);
             } else {
-                // Vanilla derived tangents from the normals it just replaced, so they have to follow.
                 mesh.RecalculateTangents();
                 CompareTangents(mesh);
             }
 
             return true;
+        }
+
+        // The bail path for a mesh rebuilt this frame: vanilla's normals are on the mesh, tangents
+        // were deferred to us. Analytic tangents from those normals are what Unity's pass would
+        // produce for this UV layout, at a fraction of the cost.
+        private static void ApplyFallbackTangents(Heightmap hmap) {
+            Mesh mesh = hmap.m_renderMesh;
+            if (mesh == null) { return; }
+
+            if (VerifyTangents != null && VerifyTangents.Value) {
+                mesh.RecalculateTangents();
+                return;
+            }
+
+            NormalBuffer.Clear();
+            mesh.GetNormals(NormalBuffer);
+
+            TangentBuffer.Clear();
+            for (int i = 0; i < NormalBuffer.Count; i++) { TangentBuffer.Add(AnalyticTangent(NormalBuffer[i])); }
+
+            mesh.SetTangents(TangentBuffer);
         }
 
         // Diagnostic path: Unity's tangents are on the mesh; recompute the analytic ones for a sample
@@ -239,8 +335,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             int divergent = 0;
             float worstDot = 1f;
             for (int i = 0; i < VerifyBuffer.Count; i += 173) {
-                Vector3 normal = NormalBuffer[i];
-                Vector3 analytic = new Vector3(1f - normal.x * normal.x, -normal.x * normal.y, -normal.x * normal.z).normalized;
+                Vector4 analytic = AnalyticTangent(NormalBuffer[i]);
                 Vector4 unity = VerifyBuffer[i];
 
                 float dot = analytic.x * unity.x + analytic.y * unity.y + analytic.z * unity.z;

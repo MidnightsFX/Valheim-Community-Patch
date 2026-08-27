@@ -30,6 +30,12 @@ namespace ValheimCommunityPatch {
         public const string SectionCorrectness = "Fixes - Correctness";
         public const string SectionTerrain = "Fixes - Terrain";
 
+        // Diagnostics only - the Verify toggles that run both an indexed path and vanilla's for
+        // comparison. Kept out of the Fixes sections so a new user browsing the config does not
+        // mistake them for fixes and turn them on; every one of them deliberately costs the work
+        // its fix exists to avoid.
+        public const string SectionDebug = "Debug";
+
         public ValConfig(ConfigFile cf) {
             // ensure all the config values are created
             cfg = cf;
@@ -65,7 +71,7 @@ namespace ValheimCommunityPatch {
                     new ConfigurationManagerAttributes { IsAdvanced = true }));
 
             // Instantiate server synced config entries here
-            ConfigApplyDelay = BindServerConfig("Config", "Config Apply Delay", 1f, "Delay in seconds before a changed config entry is applied in-game. Coalesces a burst of rapid edits (typing, file reloads, server sync) into a single apply. Set to 0 to apply instantly.", true, 0f, 10f);
+            ConfigApplyDelay = BindServerConfig(SectionDebug, "Config Apply Delay", 1f, "Delay in seconds before a changed config entry is applied in-game. Coalesces a burst of rapid edits (typing, file reloads, server sync) into a single apply. Set to 0 to apply instantly.", true, 0f, 10f);
 
             BindFixToggles();
         }
@@ -77,6 +83,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.PortalConnectionPatch.BindConfig();
             Patches.Performance.ZdoConnectionIndexPatch.BindConfig();
             Patches.Performance.OrphanZdoIndexPatch.BindConfig();
+            Patches.Performance.ZdoPrefabIndexPatch.BindConfig();
             Patches.Performance.AutoPickupAllocPatch.BindConfig();
             Patches.Performance.ZPackageWriteAllocPatch.BindConfig();
             Patches.Performance.MisterCachePatch.BindConfig();
@@ -85,6 +92,20 @@ namespace ValheimCommunityPatch {
             Patches.Performance.ClutterRebuildCapPatch.BindConfig();
             Patches.Performance.HeightmapBuilderThroughputPatch.BindConfig();
             Patches.Performance.AsyncColliderBakePatch.BindConfig();
+            Patches.Performance.ClutterGroundDataPatch.BindConfig();
+            Patches.Performance.ZoneGenPacingPatch.BindConfig();
+            Patches.Performance.WaterVolumeMaterialCachePatch.BindConfig();
+            Patches.Performance.TerrainLodSpreadPatch.BindConfig();
+            Patches.Performance.WearSupportLookupPatch.BindConfig();
+            Patches.Performance.SceneIdleSkipPatch.BindConfig();
+            Patches.Performance.LightCostPatch.BindConfig();
+            Patches.Performance.WearCacheEventPatch.BindConfig();
+            Patches.Performance.RemoveSweepPacingPatch.BindConfig();
+            Patches.Performance.SpawnQueueCachePatch.BindConfig();
+            Patches.Performance.SectorInstanceIndexPatch.BindConfig();
+            Patches.Performance.RandomMaterialPollPatch.BindConfig();
+            Patches.Performance.SupportSleepPatch.BindConfig();
+            Patches.Performance.SmokeCostPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();

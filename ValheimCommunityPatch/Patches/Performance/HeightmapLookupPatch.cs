@@ -51,7 +51,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 "times per second by linear search, for tiles that never move.");
 
             Verify = ValConfig.BindServerConfig(
-                ValConfig.SectionPerformance,
+                ValConfig.SectionDebug,
                 "Verify Heightmap Registry",
                 false,
                 "Diagnostic. Runs both the zone-keyed lookup and vanilla's scan on every terrain tile " +
@@ -63,6 +63,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private struct Entry {
             public Heightmap m_hmap;
             public float m_cx;
+            public float m_cy;
             public float m_cz;
             public float m_half;
         }
@@ -82,9 +83,43 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return new Entry {
                 m_hmap = hmap,
                 m_cx = position.x,
+                m_cy = position.y,
                 m_cz = position.z,
                 m_half = hmap.m_width * hmap.m_scale * 0.5f,
             };
+        }
+
+        /// <summary>
+        /// Registry-served lookup with the cached transform origin, for in-mod callers that would
+        /// otherwise pay a native transform read per query (HeightmapSampling's data paths).
+        /// </summary>
+        /// <remarks>
+        /// Returns false only when the registry cannot serve (fix off or hooks unhealthy) - the
+        /// caller then falls back to Heightmap.FindHeightmap plus a live transform read. A true
+        /// return with a null <paramref name="hmap"/> is a definitive miss: no registered map
+        /// contains the point, exactly as vanilla's scan would conclude.
+        /// </remarks>
+        internal static bool TryGetCached(Vector3 point, out Heightmap hmap, out Vector3 origin) {
+            hmap = null;
+            origin = default;
+
+            if (Enabled == null || !Enabled.Value || !HooksHealthy()) { return false; }
+
+            if (ByZone.TryGetValue(ZoneSystem.GetZone(point), out Entry entry) && Contains(entry, point)) {
+                hmap = entry.m_hmap;
+                origin = new Vector3(entry.m_cx, entry.m_cy, entry.m_cz);
+                return true;
+            }
+
+            for (int i = 0; i < Registered.Count; i++) {
+                if (!Contains(Registered[i], point)) { continue; }
+
+                hmap = Registered[i].m_hmap;
+                origin = new Vector3(Registered[i].m_cx, Registered[i].m_cy, Registered[i].m_cz);
+                return true;
+            }
+
+            return true;
         }
 
         private static void FileByZone(Entry entry) {
@@ -149,7 +184,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
                     Entry old = Registered[i];
                     Entry fresh = MakeEntry(__instance);
-                    if (fresh.m_cx == old.m_cx && fresh.m_cz == old.m_cz && fresh.m_half == old.m_half) { return; }
+                    if (fresh.m_cx == old.m_cx && fresh.m_cy == old.m_cy && fresh.m_cz == old.m_cz
+                        && fresh.m_half == old.m_half) { return; }
 
                     Unfile(__instance, old.m_cx, old.m_cz);
                     Registered[i] = fresh;

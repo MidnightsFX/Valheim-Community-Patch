@@ -60,9 +60,10 @@ fix under [Credit and sources](#credit-and-sources).
   bytes on the wire are unchanged; only the copy is gone.
 - **Fix Mist Query Overhead** *(client)* — Mistlands fog asks "is this point inside a mist volume"
   for every particle it considers, and each ask reads every mist volume's position from the engine
-  again — thousands of native reads per frame in the mist, a large share of the biome's frame cost.
-  Positions are now snapshotted once per frame and the checks run as plain math. Same fog, same
-  monster sightlines.
+  and scans all of them — thousands of native reads and full scans per frame in the mist, a large
+  share of the biome's frame cost. Volumes are now snapshotted when they spawn or despawn, looked
+  up by zone so each check touches only the handful nearby, and the mist system's ground probes are
+  answered from terrain data instead of physics rays. Same fog, same monster sightlines.
 - **Fix Heightmap Lookup Scan** *(both)* — "which terrain tile is this point on" was answered by
   scanning every loaded tile with a native position read per candidate, thousands of times a second,
   for tiles that never move. Now a zone-keyed lookup, with an admin-only "Verify Heightmap Registry"
@@ -83,6 +84,78 @@ fix under [Credit and sources](#credit-and-sources).
   at zone boundaries in generated terrain. This bakes it on a background thread instead, for exactly
   that case — freshly generating zones and terraforming keep the immediate behaviour. Turn it on if
   you want to help prove it out.
+- **Fix Prefab Query Scan** *(both)* — asking "every object of this prefab" scans every ZDO in the
+  world. Vanilla only does that from a console command, but it is the API mods use, and several
+  popular ones ask every tick — a continuous whole-world scan that was the largest remaining cost
+  measured in a heavily modded session. Objects are now indexed by prefab as they are assigned,
+  with an admin-only "Verify Prefab Index" diagnostic that runs both paths and reports any
+  disagreement.
+- **Fix Grass Ground Raycasts** *(client)* — grass placement casts hundreds of physics rays per
+  frame to ask where the ground is, but those rays can only ever hit the terrain surface, whose
+  shape is already known. The same surface height, slope and biome now come from terrain data
+  directly. Grass is cosmetic and regenerated constantly, so nothing saved or synced is involved.
+- **Fix Background Zone Pacing** *(server)* — the world pre-generates one full zone every 100 ms
+  around each player, entirely inside a single frame, even when that frame is already struggling —
+  the steady micro-stutter of exploring fresh terrain. Background pre-generation now waits a tick
+  when the previous frame ran long, and an expensive generation imposes a short cooldown before
+  the next (both configurable). The same zones generate identically; only the timing spreads out,
+  and zones a player actually enters are never delayed.
+- **Fix Water Material Lookup** *(client)* — every loaded water tile re-fetches its surface
+  material from the engine every frame just to advance the water time on it. The material is now
+  cached per tile; the water-time update itself is unchanged.
+- **Fix Distant Terrain Hitch** *(client)* — every 256 m of travel, the far-terrain ring rebuilds
+  all nine of its meshes in one frame, a fixed-cadence hitch most noticeable while sailing. The
+  rebuild is now spread over a few frames (configurable; 9 per frame is vanilla). During the brief
+  spread the distant ring is mid-transition, which under distance fog is far less visible than the
+  hitch was.
+- **Fix Idle Scene Sweep** *(both)* — thirty times a second the game rebuilds and sweeps its lists
+  of every loaded object, whether or not anything changed. In a big base that one pass is a
+  double-digit share of all frame time, almost entirely re-deriving the answer from 33 ms ago.
+  Cheap change-tracking now proves "nothing changed" and skips those passes, with one full pass
+  per second kept as a safety sweep and an admin-only "Verify Scene Idle Skip" diagnostic.
+- **Fix Support Lookup Cost** *(both)* — every structural-support check walks the object hierarchy
+  once per nearby collider to find which building piece owns it — a steady cost that scales with
+  base size. A lookup table answers it instead, self-populating and falling back to the walk
+  whenever it can't. Admin-only "Verify Support Lookup" compares both. Requires a restart to
+  change.
+- **Fix Light Flicker Overhead** *(client)* — torch flicker updates every flickering light every
+  frame with per-light engine calls, invisible past a few dozen metres; it now stops beyond a
+  configurable distance. Alongside it, a client-local "Point Light Limit" exposes the game's own
+  dormant nearest-N point-light cap (with its built-in smooth fade) for torch-heavy bases —
+  default -1 is exactly vanilla.
+- **Fix Piece Event Stall** *(both)* — every building piece subscribes a heightmap event (terrain
+  edits use it to flush cached support) whose subscriber array is copied whole on every subscribe
+  and scanned whole on every unsubscribe — loading or unloading a chunk of a big base through it
+  is a single multi-hundred-millisecond frame, plus an allocation per piece feeding GC pauses. A
+  per-heightmap lookup table now delivers the same cache clears in constant time.
+- **Fix Unload Sweep Cost** *(both)* — whenever the scene is changing, the game sweeps every
+  loaded object thirty times a second to find the few that left the loaded area in the last
+  33 ms — a steady share of frame time at large object counts, spent almost entirely on trivial
+  calls. The sweep now runs on a configurable wall-clock interval (default 100 ms); departing
+  objects linger imperceptibly longer at the far edge of the loaded distance, and each sweep
+  costs the same — there are just fewer of them.
+- **Fix Spawn Queue Churn** *(both)* — while an area streams in, the game rebuilds and re-sorts
+  its entire spawn backlog thirty times a second, only to spawn the first few entries. The
+  sorted queue now persists between frames and is rebuilt a few times a second instead; objects
+  spawn at the same rate in the same order, only the repeated bookkeeping goes away.
+- **Fix Zone Occupancy Scan** *(both)* — deciding whether a zone can unload walks every loaded
+  object with two engine calls each, per candidate zone. A per-zone tally answers it instantly,
+  with an admin-only "Verify Zone Occupancy" diagnostic comparing it against the walk.
+- **Fix Piece Material Polling** *(both)* — each spawned piece with material variation schedules
+  five string-based engine invokes just to wait for its random seed, then re-writes identical
+  values on every poll after the first success. One shared ticker does the waiting, and polling
+  stops once the values are applied — same seed, same math, same look.
+- **Fix Idle Support Checks** *(both)* — every building piece re-validates its cached structural
+  support on every updater visit, re-reading all its neighbours through engine calls just to
+  confirm nothing changed — the single biggest steady cost standing in a large base. Pieces now
+  sleep until an event that can change support fires (a neighbour built, destroyed or changed,
+  or a terrain edit); support changes still cascade exactly as before, and an admin-only
+  "Verify Support Sleep" diagnostic checks the sleep predictions against vanilla.
+- **Fix Smoke Overhead** *(client)* — every smoke puff pays several engine calls every frame: a
+  physics mass write whose value is a smooth curve of the smoke's age, and two position reads —
+  one to recheck which render chunk it belongs to (the answer changes every few seconds), one to
+  build the particle batch. The mass now writes on 2% lifetime steps, the chunk recheck runs
+  four times a second, and the position is read once. The smoke looks and moves the same.
 
 ### Terrain
 
@@ -225,6 +298,21 @@ involved.
 | Fix Grass Rebuild Burst | Original | — |
 | Fix Terrain Builder Throughput | Original | — |
 | Fix Zone Collider Stall | Original | — |
+| Fix Prefab Query Scan | Original | — |
+| Fix Grass Ground Raycasts | Original | — |
+| Fix Background Zone Pacing | Original | — |
+| Fix Water Material Lookup | Original | — |
+| Fix Distant Terrain Hitch | Original | — |
+| Fix Idle Scene Sweep | Original | — |
+| Fix Support Lookup Cost | Original | — |
+| Fix Light Flicker Overhead | Original | — (Point Light Limit exposes a dormant vanilla mechanism) |
+| Fix Piece Event Stall | Original | — |
+| Fix Unload Sweep Cost | Original | — |
+| Fix Spawn Queue Churn | Original | — |
+| Fix Zone Occupancy Scan | Original | — |
+| Fix Piece Material Polling | Original | — |
+| Fix Idle Support Checks | Original | — |
+| Fix Smoke Overhead | Original | — |
 
 ### Terrain
 

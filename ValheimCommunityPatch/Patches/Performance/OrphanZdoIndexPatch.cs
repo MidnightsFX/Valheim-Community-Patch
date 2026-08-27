@@ -60,7 +60,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 "main-thread freeze that grows with the size of the world.");
 
             Verify = ValConfig.BindServerConfig(
-                ValConfig.SectionPerformance,
+                ValConfig.SectionDebug,
                 "Verify Orphan Index",
                 false,
                 "Diagnostic. Runs both the indexed sweep and vanilla's full scan on every " +

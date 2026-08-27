@@ -38,6 +38,16 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // Provenance: guarded-sweep approach as ComfyMods/Scenic (GPL-3.0, redseiko).
     //
+    // Composition: SceneIdleSkipPatch (Patches/Performance) sits one level above, as a prefix on
+    // CreateDestroyObjects that skips whole unchanged passes - a skipped pass never calls
+    // RemoveObjects, a full pass reaches this prefix exactly as vanilla would. That patch relies
+    // on this one staying a prefix on RemoveObjects itself, and it defers the orphan detection
+    // here by at most its one-second hygiene interval. RemoveSweepPacingPatch
+    // (Patches/Performance) sits on RemoveObjects too, at Priority.High, skipping sweeps between
+    // its wall-clock interval; the __runOriginal guard below honours that decision without
+    // depending on Harmony's skip-remaining-prefixes ordering, and defers orphan detection by at
+    // most one more interval.
+    //
     // Both: ZNetScene.Update drives CreateDestroyObjects on every peer including a dedicated server,
     // just over a smaller instance set. The failure mode - nothing despawns and memory climbs -
     // applies there too.
@@ -63,13 +73,17 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         [HarmonyPrefix]
         [HarmonyPatch("RemoveObjects")]
         private static bool RemoveObjectsPrefix(
-            ZNetScene __instance, List<ZDO> currentNearObjects, List<ZDO> currentDistantObjects) {
+            ZNetScene __instance, List<ZDO> currentNearObjects, List<ZDO> currentDistantObjects,
+            bool __runOriginal) {
+            // A higher-priority prefix (RemoveSweepPacingPatch) already skipped this sweep.
+            if (!__runOriginal) { return false; }
+
             if (Enabled == null || !Enabled.Value) { return true; }
 
             byte earmark = (byte)(Time.frameCount & byte.MaxValue);
 
-            for (int i = 0; i < currentNearObjects.Count; i++) { currentNearObjects[i].TempRemoveEarmark = earmark; }
-            for (int i = 0; i < currentDistantObjects.Count; i++) { currentDistantObjects[i].TempRemoveEarmark = earmark; }
+            for (int i = 0; i < currentNearObjects.Count; i++) { currentNearObjects[i].m_tempRemoveEarmark = earmark; }
+            for (int i = 0; i < currentDistantObjects.Count; i++) { currentDistantObjects[i].m_tempRemoveEarmark = earmark; }
 
             try {
                 FastPass(__instance, earmark);
@@ -82,21 +96,24 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         // Vanilla's loops verbatim (ZNetScene.RemoveObjects, ZNetScene.cs:230-253), minus the
-        // earmarking already done above. No null guards on purpose: a plain field read and a byte
-        // compare per entry is the whole steady-state cost, exactly like vanilla. Anything a broken
-        // entry makes this throw - NullReferenceException from a reset ZDO, MissingReferenceException
-        // from a destroyed view's gameObject, or whatever a modded component's teardown raises - is
-        // the caller's signal to fall back to the guarded sweep.
+        // earmarking already done above, and with GetZDO()/TempRemoveEarmark read as the fields
+        // they trivially wrap - at millions of entries per second the call overhead alone was
+        // measured in whole percents of frame time, and a null m_zdo dereferences identically.
+        // No null guards on purpose: a plain field read and a byte compare per entry is the whole
+        // steady-state cost, exactly like vanilla. Anything a broken entry makes this throw -
+        // NullReferenceException from a reset ZDO, MissingReferenceException from a destroyed
+        // view's gameObject, or whatever a modded component's teardown raises - is the caller's
+        // signal to fall back to the guarded sweep.
         private static void FastPass(ZNetScene scene, byte earmark) {
             scene.m_tempRemoved.Clear();
 
             foreach (ZNetView view in scene.m_instances.Values) {
-                if (view.GetZDO().TempRemoveEarmark != earmark) { scene.m_tempRemoved.Add(view); }
+                if (view.m_zdo.m_tempRemoveEarmark != earmark) { scene.m_tempRemoved.Add(view); }
             }
 
             for (int i = 0; i < scene.m_tempRemoved.Count; i++) {
                 ZNetView view = scene.m_tempRemoved[i];
-                ZDO zdo = view.GetZDO();
+                ZDO zdo = view.m_zdo;
 
                 view.ResetZDO();
                 UnityEngine.Object.Destroy(view.gameObject);
