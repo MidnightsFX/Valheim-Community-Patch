@@ -67,10 +67,22 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Zones with a positive count only - Bump removes emptied keys, so presence in the
-        // dictionary IS the answer. CountedAt remembers which zone each view is tallied under,
-        // keyed by view because removal paths null the ZDO before OnDestroy runs.
+        // dictionary IS the answer for the occupancy read below.
         private static readonly Dictionary<Vector2i, int> NonDistantCount = new Dictionary<Vector2i, int>();
-        private static readonly Dictionary<ZNetView, Vector2i> CountedAt = new Dictionary<ZNetView, Vector2i>();
+
+        // The full index: every live instance, grouped by its ZDO's zone - the same sector value
+        // vanilla's own sector stores hold, updated at the same write sites. ZoneDiffRemovalPatch
+        // iterates this instead of the whole instance dictionary to find what left the loaded
+        // rings. Slots carries each view's zone AND its position in that zone's list, keyed by
+        // view because removal paths null the ZDO before OnDestroy runs; the index makes every
+        // move/removal an O(1) swap-remove even in five-thousand-piece base zones.
+        internal struct Slot {
+            public Vector2i m_zone;
+            public int m_index;
+        }
+
+        internal static readonly Dictionary<Vector2i, List<ZNetView>> ByZone = new Dictionary<Vector2i, List<ZNetView>>();
+        internal static readonly Dictionary<ZNetView, Slot> Slots = new Dictionary<ZNetView, Slot>();
 
         private static bool _hooksChecked;
         private static bool _hooksHealthy;
@@ -92,31 +104,53 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (count > 0) { NonDistantCount[sector] = count; } else { NonDistantCount.Remove(sector); }
         }
 
+        private static void IndexAdd(ZNetView view, Vector2i zone) {
+            if (!ByZone.TryGetValue(zone, out List<ZNetView> list)) {
+                list = new List<ZNetView>();
+                ByZone.Add(zone, list);
+            }
+
+            list.Add(view);
+            Slots[view] = new Slot { m_zone = zone, m_index = list.Count - 1 };
+
+            if (!view.m_distant) { Bump(zone, 1); }
+        }
+
+        private static void IndexRemove(ZNetView view) {
+            if (!Slots.TryGetValue(view, out Slot slot)) { return; }
+            Slots.Remove(view);
+
+            if (ByZone.TryGetValue(slot.m_zone, out List<ZNetView> list)) {
+                int last = list.Count - 1;
+                if (slot.m_index < last) {
+                    ZNetView moved = list[last];
+                    list[slot.m_index] = moved;
+                    Slots[moved] = new Slot { m_zone = slot.m_zone, m_index = slot.m_index };
+                }
+
+                list.RemoveAt(last);
+                if (list.Count == 0) { ByZone.Remove(slot.m_zone); }
+            }
+
+            if (!view.m_distant) { Bump(slot.m_zone, -1); }
+        }
+
         [HarmonyPostfix]
         [HarmonyPatch("AddInstance")]
         private static void AddInstancePostfix(ZDO zdo, ZNetView nview) {
-            if (ReferenceEquals(nview, null) || nview.m_distant) { return; }
-
-            Vector2i sector = zdo.GetSector();
+            if (ReferenceEquals(nview, null)) { return; }
 
             // A re-added view (should not happen, but m_instances[zdo] = nview tolerates it)
-            // must not be double-counted.
-            if (CountedAt.TryGetValue(nview, out Vector2i previous)) { Bump(previous, -1); }
-
-            CountedAt[nview] = sector;
-            Bump(sector, 1);
+            // must not be double-indexed.
+            IndexRemove(nview);
+            IndexAdd(nview, zdo.GetSector());
         }
 
         [HarmonyPatch(typeof(ZNetView))]
         internal static class ViewDestroyHook {
             [HarmonyPostfix]
             [HarmonyPatch("OnDestroy")]
-            private static void OnDestroyPostfix(ZNetView __instance) {
-                if (!CountedAt.TryGetValue(__instance, out Vector2i sector)) { return; }
-
-                CountedAt.Remove(__instance);
-                Bump(sector, -1);
-            }
+            private static void OnDestroyPostfix(ZNetView __instance) => IndexRemove(__instance);
         }
 
         [HarmonyPatch(typeof(ZDOMan))]
@@ -127,11 +161,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ZNetScene scene = ZNetScene.instance;
                 if (ReferenceEquals(scene, null)) { return; }
                 if (!scene.m_instances.TryGetValue(zdo, out ZNetView view)) { return; }
-                if (!CountedAt.TryGetValue(view, out Vector2i previous) || previous == sector) { return; }
+                if (!Slots.TryGetValue(view, out Slot slot) || slot.m_zone == sector) { return; }
 
-                Bump(previous, -1);
-                Bump(sector, 1);
-                CountedAt[view] = sector;
+                IndexRemove(view);
+                IndexAdd(view, sector);
             }
         }
 
@@ -140,7 +173,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPostfix]
             private static void Postfix() {
                 NonDistantCount.Clear();
-                CountedAt.Clear();
+                ByZone.Clear();
+                Slots.Clear();
             }
         }
 
@@ -149,7 +183,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("HaveInstanceInSector")]
         private static bool HaveInstanceInSectorPrefix(ZNetScene __instance, Vector2i sector, ref bool __result) {
-            if (Enabled == null || !Enabled.Value || !HooksHealthy()) { return true; }
+            if (Enabled == null || !Enabled.Value || !MaintenanceHealthy()) { return true; }
 
             bool indexed = NonDistantCount.ContainsKey(sector);
 
@@ -208,9 +242,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- hook health ---------------------------------------------------------------------
 
-        /// Without all three maintenance hooks the tally silently drifts, so the read stands
-        /// down to vanilla's walk when any is missing.
-        private static bool HooksHealthy() {
+        /// Without all three maintenance hooks the index silently drifts, so every consumer -
+        /// the occupancy read here, and ZoneDiffRemovalPatch's unload discovery - stands down to
+        /// its vanilla path when any is missing.
+        internal static bool MaintenanceHealthy() {
             if (_hooksChecked) { return _hooksHealthy; }
             _hooksChecked = true;
 
@@ -221,10 +256,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             if (!_hooksHealthy) {
                 Logger.LogError(
-                    "Zone occupancy: a maintenance hook is not attached, so the tally cannot be " +
-                    "trusted and occupancy checks have fallen back to vanilla's full walk for " +
-                    "this session. This usually means a Valheim update changed those methods - " +
-                    "look for the patch failure logged at startup.");
+                    "Sector instance index: a maintenance hook is not attached, so the index " +
+                    "cannot be trusted; zone occupancy checks and unload discovery have fallen " +
+                    "back to vanilla's full walks for this session. This usually means a Valheim " +
+                    "update changed those methods - look for the patch failure logged at startup.");
             }
 
             return _hooksHealthy;

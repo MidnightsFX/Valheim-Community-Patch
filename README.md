@@ -138,6 +138,14 @@ fix under [Credit and sources](#credit-and-sources).
   its entire spawn backlog thirty times a second, only to spawn the first few entries. The
   sorted queue now persists between frames and is rebuilt a few times a second instead; objects
   spawn at the same rate in the same order, only the repeated bookkeeping goes away.
+- **Fix Object Stream Rescan** *(both)* — thirty times a second the game rediscovers which
+  objects should be loaded by re-reading every zone around you and re-sorting the whole result,
+  only to spawn the first few. That rediscovery is the zone-border stutter: it is at its most
+  expensive exactly when you cross into a built-up area. The pending set is now kept as a running
+  list that the events changing it update directly, so crossing a border adds one new column of
+  zones instead of re-reading the loaded world. Objects spawn at the same rate, nearest first.
+  Needs "Fix Unload Discovery Scan" on — it stands down otherwise — and an admin-only "Verify
+  Spawn Queue" diagnostic checks the list against the full rescan.
 - **Fix Zone Occupancy Scan** *(both)* — deciding whether a zone can unload walks every loaded
   object with two engine calls each, per candidate zone. A per-zone tally answers it instantly,
   with an admin-only "Verify Zone Occupancy" diagnostic comparing it against the walk.
@@ -150,12 +158,46 @@ fix under [Credit and sources](#credit-and-sources).
   confirm nothing changed — the single biggest steady cost standing in a large base. Pieces now
   sleep until an event that can change support fires (a neighbour built, destroyed or changed,
   or a terrain edit); support changes still cascade exactly as before, and an admin-only
-  "Verify Support Sleep" diagnostic checks the sleep predictions against vanilla.
+  "Verify Support Sleep" diagnostic checks the sleep predictions against vanilla, reporting why
+  any check could not sleep. Two things that used to keep pieces awake are gone: a piece
+  streaming back in no longer looks like it changed (the game leaves a placeholder value on it
+  at spawn and never restores what it last computed, so its real value arriving looked like an
+  event), and a change on one floor no longer wakes every floor above and below it — the
+  neighbourhood test now accounts for height, not just the footprint. Neighbours are also
+  re-checked only past a "Support Change Threshold", far below anything that affects whether a
+  build stands and settable to 0 for an exact comparison.
 - **Fix Smoke Overhead** *(client)* — every smoke puff pays several engine calls every frame: a
   physics mass write whose value is a smooth curve of the smoke's age, and two position reads —
   one to recheck which render chunk it belongs to (the answer changes every few seconds), one to
   build the particle batch. The mass now writes on 2% lifetime steps, the chunk recheck runs
   four times a second, and the position is read once. The smoke looks and moves the same.
+- **Fix Unload Discovery Scan** *(both)* — finding which objects left the loaded area used to
+  mean stamping every loaded object and walking all of them to see what was missed — a cost that
+  scales with everything loaded, to find a handful of departures. A per-zone instance index now
+  answers it directly at any world size, unloading returns to vanilla's immediate cadence, and
+  an admin-only "Verify Unload Discovery" diagnostic compares the index against vanilla's walk.
+- **Fix Idle Wear Visits** *(both)* — even with support checks asleep, every building piece
+  still paid its full per-visit wear update just to conclude nothing wears right now. Pieces
+  that are provably quiet — support-slept, locally owned, dry or safely roofed while wet,
+  above the waterline, outside the Ashlands, undamaged since last visit — now skip the whole
+  visit; weather changes, roof changes, damage and repairs wake them immediately, and exposed
+  pieces in wet weather run exactly vanilla. Admin-only "Verify Wear Sleep" checks the
+  predictions against vanilla and reports why blocked visits could not sleep.
+- **Fix Reflection Probe Spikes** *(client)* — the realtime reflection cubemap renders all six
+  faces in a single frame every few seconds: a steady share of frame time delivered as periodic
+  spikes. It now renders one face per frame at a configurable resolution, with reduced quality
+  during the reflection render (lower LOD, no characters or items) — a deliberate trade that is
+  hard to spot in a blurry environment reflection. A face is also held back while the previous
+  frame ran long, so it lands on a quiet frame instead of piling onto one that was already
+  struggling; the reflection is never shown half-built, only the frame that pays for a face
+  moves.
+- **Fix Physics Catchup Spiral** *(both)* — after a long frame the engine runs up to ~16 fixed
+  physics steps of catch-up in the next frame, turning every big hitch into two. A configurable
+  cap (default 8) bounds the debt; dropped time is dropped exactly as vanilla drops it past its
+  own higher cap.
+- **Fix Map Generation Stall** *(client)* — the world map is recomputed from the generator on
+  every login for textures that are a pure function of the seed. Cached to disk per world and
+  game version; corrupt caches regenerate; exploration fog is untouched.
 
 ### Terrain
 
@@ -310,6 +352,12 @@ The mods involved:
 | Fix Piece Material Polling | MidnightsFX | — |
 | Fix Idle Support Checks | MidnightsFX | — |
 | Fix Smoke Overhead | MidnightsFX | — |
+| Fix Unload Discovery Scan | MidnightsFX | — |
+| Fix Idle Wear Visits | MidnightsFX | — |
+| Fix Reflection Probe Spikes | ontrigger's ValheimPerformanceOptimizations (MIT) | Face-sliced probe rendering with quality clamps |
+| Fix Physics Catchup Spiral | ontrigger's ValheimPerformanceOptimizations (MIT) | The maximumDeltaTime cap and its default |
+| Fix Map Generation Stall | ontrigger's ValheimPerformanceOptimizations (MIT) | Seed+version-keyed map texture cache |
+| Fix Object Stream Rescan | ontrigger's ValheimPerformanceOptimizations (MIT) | Event-fed spawn queue, the zone-set diff, and the 8 m re-sort threshold |
 
 ### Terrain
 

@@ -125,8 +125,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         // The recovery path: the per-entry alive checks the fast pass skips. Restartable from scratch
-        // after a partial fast pass - see the header for why.
-        private static void GuardedSweep(ZNetScene scene, byte earmark) {
+        // after a partial fast pass - see the header for why. Internal because ZoneDiffRemovalPatch
+        // (Patches/Performance) borrows it as ITS orphan-recovery fallback too: same contract, same
+        // earmark semantics, stamped by whichever caller invokes it.
+        internal static void GuardedSweep(ZNetScene scene, byte earmark) {
             scene.m_tempRemoved.Clear();
             OrphanedKeys.Clear();
 

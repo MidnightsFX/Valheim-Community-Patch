@@ -106,6 +106,11 @@ namespace ValheimCommunityPatch {
             Patches.Performance.RandomMaterialPollPatch.BindConfig();
             Patches.Performance.SupportSleepPatch.BindConfig();
             Patches.Performance.SmokeCostPatch.BindConfig();
+            Patches.Performance.ZoneDiffRemovalPatch.BindConfig();
+            Patches.Performance.ReflectionSlicePatch.BindConfig();
+            Patches.Performance.PhysicsCatchupPatch.BindConfig();
+            Patches.Performance.MinimapCachePatch.BindConfig();
+            Patches.Performance.SpawnEventQueuePatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();

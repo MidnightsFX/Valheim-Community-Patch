@@ -4,6 +4,170 @@ Each entry names the vanilla method it fixes, and is tagged with the side that f
 installing on — *(server)*, *(client)* or *(both)*. See the README for what a one-sided install gets
 you.
 
+## 0.18.0
+
+The VPO adaptation release: four techniques from ontrigger's ValheimPerformanceOptimizations
+(MIT), reworked into this mod's per-fix toggles and fallback discipline.
+
+- **Fix Reflection Probe Spikes** *(client)* — vanilla renders all six faces of the realtime
+  reflection cubemap in one frame every few seconds (a steady 14-18 ms/s across profiled
+  sessions, delivered as periodic single-frame spikes). Now one face per frame into a
+  128px cube ("Reflection Resolution" advanced setting: 64-512), with reduced quality
+  during the reflection render (lower LOD, shorter shadows, no characters/items) - a
+  deliberate fidelity trade in an already-blurry environment reflection. Toggling off
+  hands the probes back to vanilla's renderer at runtime. A face is additionally DEFERRED
+  while the previous frame is over budget ("Reflection Frame Budget", default 33 ms, 0 to
+  disable), because a ~10 ms face landing on a frame the streaming system was already
+  saturating was measured tipping marginal frames past the spike threshold. Nothing
+  consumes a half-built cubemap - the probe keeps showing the previous one until the sixth
+  face publishes - so a defer moves only which frame pays. A starvation guard renders
+  regardless after three consecutive defers, so a machine that never makes budget still
+  finishes a full cycle in ~24 frames, well inside vanilla's 3 s refresh interval.
+- **Fix Object Stream Rescan** *(both)* — the object stream stops rediscovering its own
+  work list. Vanilla's CreateDestroyObjects rebuilds the candidate set from every sector in
+  the loaded ring and re-sorts it thirty times a second, only to spawn its head; measured
+  in a crossing-heavy session that was 24.3 ms/s for the ring scan and 28.3 ms/s for the
+  sort in spiky seconds (13.7 and 20.0 in calm ones), against 36.5 ms/s for the actual
+  Instantiate calls, with worst seconds at 200 and 214 ms. The pending set is now a
+  persistent queue fed by the events that change it - a zone-set diff on the reference
+  zone or either ring radius, ZDOMan's sector add/remove, a buffered flush of the ZDOData
+  handler so a half-deserialised ZDO cannot enter mid-bounce, and the Created flag in both
+  directions so an object something else destroyed is recreated exactly as vanilla would.
+  FindSectorObjects is never called; the sort is lazy, re-run only when the player has
+  moved 8 m or enough arrivals have piled up at the tail; not-ready and unresolvable
+  entries park on a deferred list instead of being re-tested every pass. Spawn rate, order
+  and the "Spawn Burst Divisor" budget are unchanged. It stands down entirely unless "Fix
+  Unload Discovery Scan" is on and healthy, because replacing the pass leaves vanilla's
+  earmark-based unload discovery with an empty keep-set. That fix's own orphan-recovery
+  fallback now earmarks the keep set from what is actually loaded rather than from the
+  caller's lists, so it is correct whichever path drove the pass. New admin-only "Verify
+  Spawn Queue" rebuilds the candidate set the vanilla way every pass, acts on vanilla's
+  answer, and names anything the queue is missing.
+- **Fix Idle Support Checks** — the sleep now actually sleeps. A soak measured it
+  engaging on **none** of 316329 support checks, 85% of them blocked because the piece was
+  already flagged for a re-check, and the instrumentation added to find out why identified
+  a self-sustaining cascade: ~450 pieces a second enter tracking while an area streams,
+  each one seeding roughly 5.5 further re-checks. Two exact fixes, no heuristics:
+
+  - **Arrivals no longer look like changes.** Vanilla's Awake stamps a piece's support to
+    its material maximum as a placeholder and never restores the persisted value - it
+    writes the stored support in four places and reads it in exactly one, the non-owner
+    branch of GetSupport (WearNTear.cs:207). So a freshly streamed piece advertised an
+    optimistic maximum to its neighbours and then dropped to its real value, a change out
+    of nowhere that woke the whole neighbourhood. The stored value is now restored on
+    Awake, which is strictly better information than a placeholder (it is exactly what a
+    non-owner would have read for the same piece), and a piece returning to an unchanged
+    base now seeds no wave at all. No collapse or damage decision is taken on the restored
+    value - the wear pass consults support only after recomputing it.
+  - **Vertical neighbours are no longer woken.** The neighbourhood test compared only the
+    horizontal footprint, so in a multi-storey build a change on one floor woke every
+    piece above and below it in the same column - the exact over-waking the horizontal
+    test was introduced to prevent, never applied to the vertical. Heights are now part of
+    the test, which is strictly tighter and cannot miss a real neighbour.
+  - **A piece's neighbourhood is now its actual shape.** That region was bounded by a
+    sphere around each collider box, sized to the box's longest diagonal so it would hold
+    under any rotation. For the flat pieces most of a base is made of, that is enormously
+    too generous vertically - a floor with half-extents (1, 0.1, 1) claimed a vertical
+    reach of 1.42 instead of 0.1, swallowing the floors above and below it, which is why
+    adding heights to the test on its own changed almost nothing. The region is now the
+    true axis-aligned bound of the oriented box, exact for the axis-aligned and
+    quarter-turned pieces that dominate and never smaller than the truth.
+  - **The out-of-area stamp no longer poisons the stored value.** The wear pass stamps a
+    piece outside the active area to its material maximum and PERSISTS that
+    (WearNTear.cs:308-310), so the stored support - the only thing a non-owner reads, and
+    what a returning piece restores from - was overwritten with a placeholder every time
+    the ring edge swept past, defeating the arrival repair for exactly the pieces that
+    needed it. The in-memory stamp is untouched, so an unwatched structure still cannot
+    fail its support check; only the stored copy is put back to the last real value.
+
+  The wake scan also stops re-examining neighbourhoods that are already awake: each grid
+  cell tracks how many of its pieces are not flagged, and a cell at zero is skipped whole.
+  Neighbours are only notified past a "Support Change Threshold" (default 0.01, 0 restores
+  the exact compare); the piece still stores its exact support, each propagation step
+  multiplies by at most one so a suppressed difference stays bounded rather than
+  accumulating, and collapse thresholds sit orders of magnitude above it. Two honest
+  results worth recording: the threshold was added expecting the game's fixed 128-collider
+  surroundings buffer to be overflowing and returning unstable values, and direct
+  measurement killed that outright - zero of ~18700 sampled boxes reached the limit, the
+  worst held 82 - so the threshold is kept as a cheap bound, not as the cure; and the
+  fully-awake-cell skip engaged on only a few percent of scans, because one unflagged
+  piece in a cell defeats it. "Verify Support Sleep" now reports WHY checks could not
+  sleep and how many visits the wear sleep had already skipped before them; new admin-only
+  "Log Support Wake Stats" reports the change distribution - as a fraction of the piece's
+  material maximum, since that runs from 100 to 2000 and one absolute number cannot mean
+  the same thing on both - the scan traffic, how often the out-of-active-area
+  maximum-support stamp fires, and, sampled because it costs a real physics query, how
+  full the surroundings buffer actually gets.
+- **Fix Support Lookup Cost** — a building piece's centre of mass costs one transform
+  fetch instead of two. The support recompute asks for it for itself and for every
+  neighbour it overlaps, and with the support sleep measured engaging on none of 229431
+  visits in a soak, that and the transform reads around it were ~39 ms/s, the largest
+  single line inside the wear updater. Caching the value per
+  frame was measured costing 13.7 ms/s in map probing to avoid about 7 ms/s of transform
+  reads, so the cache was withdrawn and only the cheap half kept: vanilla fetches the
+  transform twice for that one expression and once is enough. Value-identical, cheaper
+  than both vanilla and the cache, and no bookkeeping. Provenance: ontrigger's
+  ValheimPerformanceOptimizations (MIT) derives it the same way.
+- **Fix Idle Support Checks** — the wake sweep no longer costs a dictionary probe per
+  candidate: registration hands each grid entry its piece's sleep state, so a wake sets a
+  bool through a reference the entry already holds. Deaths, which arrive in storms (a
+  streamed-out zone column, a collapsing structure), now queue their wake boxes and sweep
+  once per frame instead of once per piece - each grid cell the storm reaches is scanned
+  exactly once against the boxes that reach it, and a piece the first box woke costs one
+  branch for each later box. The woken set is identical either way; only the sweep is
+  deduplicated.
+- **Fix Physics Catchup Spiral** *(both)* — after a long frame Unity runs up to ~16 fixed
+  physics steps of catch-up in the next frame, turning every big hitch into two. The cap
+  ("Max Physics Steps Per Frame", default 8) bounds the debt; dropped time is dropped
+  exactly as vanilla drops it past its own higher cap.
+- **Fix Map Generation Stall** *(client)* — the world map is recomputed from the generator
+  on every login, a fixed multi-second block inside the load screen, for textures that are
+  a pure function of the seed. They are now cached to disk per world name + seed + game
+  version (auto-invalidating on updates), with corrupt caches deleted and regenerated.
+  Exploration fog is untouched - it lives in the character save.
+- **Fix Support Lookup Cost** — two more per-call costs recovered inside the support check:
+  the LINQ own-collider Contains scans (an allocating enumerator plus an O(n) scan per
+  overlap hit) become one map probe, and GetSupport's non-owner path stops computing the
+  material-property default eagerly when a stored value exists. Both value-identical; the
+  transpiler's count gate now covers all five rewritten call sites.
+
+## 0.17.0
+
+- **Fix Idle Wear Visits** *(both)* — the second sleep tier on building pieces. The support
+  sleep still left every piece paying its full per-visit wear update — owner checks, area
+  checks, wetness, biome, visual refresh — tens of thousands of times per sweep cycle just
+  to conclude nothing wears today. A piece now skips the whole visit when every input is
+  provably quiet: support-slept, owned by this machine (non-owner visits are the poll that
+  keeps remote damage visible, so they always run vanilla), dry OR roofed while wet (a
+  roof holds the rain branch provably inert, vanilla's separate cover pass keeps roof
+  state fresh, and a roof change wakes the piece - important because several biomes'
+  ambient environments are wet-flagged around the clock, and the wetness sample is
+  debounced because a base straddling a biome border can flip it with every few steps),
+  above the waterline, biome resolved and not Ashlands, inside the activated
+  area, and no damage or repair since its last visit (both wake it immediately). Wear
+  skips count toward the same hygiene streak as support skips, so the periodic full
+  revalidation is preserved. Exposed pieces in wet weather and everything in the Ashlands
+  run exactly vanilla. A new admin-only "Verify Wear Sleep" predicts every skip while
+  running vanilla, flags any visit where a predicted-quiet piece's support, health or
+  wetness actually changed, and reports WHY blocked visits could not sleep.
+
+## 0.16.0
+
+- **Fix Unload Discovery Scan** *(both)* — the object-unload pass discovered departures by
+  elimination: stamp every ZDO in the loaded rings, then walk every loaded instance and
+  remove whatever was not stamped — O(everything loaded) to find a handful of departures,
+  ~12 ms of every second at a widened zone ring even after pacing and field-read
+  optimizations. Discovery now asks the per-zone instance index directly (the same index
+  behind "Fix Zone Occupancy Scan", extended to full per-zone instance lists with O(1)
+  bookkeeping): iterate the few hundred zones that hold instances, keep the near ring,
+  drop non-distant objects from the distant band, drop everything outside — vanilla's
+  exact keep-set from the same sector values vanilla's own stores use. Effectively free at
+  any ring size, the earmark stamping disappears, and unloading returns to vanilla's
+  every-pass cadence (the sweep interval no longer applies while this is on). Orphan
+  recovery is inherited from Fix Object Unload Crash's guarded sweep, and a new admin-only
+  "Verify Unload Discovery" runs vanilla's walk alongside, compares removal sets
+  member-by-member, and acts on vanilla's.
+
 ## 0.15.1
 
 - **Fix Idle Support Checks** — three wake holes closed, found through live "Verify Support

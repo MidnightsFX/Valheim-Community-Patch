@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using BepInEx.Configuration;
@@ -29,11 +30,20 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // permanently. The only way the map could return a live *wrong* answer is a collider being
     // re-parented from one living piece to another, which no vanilla path does.
     //
+    // Two more per-call costs in the same method are recovered below (both corroborated by
+    // ontrigger's ValheimPerformanceOptimizations, MIT): the LINQ own-collider Contains scans
+    // become map probes (IsOwnCollider), and GetSupport's non-owner path stops evaluating
+    // GetMaxSupport as an eagerly-computed default when a stored value exists (GetSupportPrefix).
+    //
     // Not recovered, deliberately: the OverlapBoxNonAlloc calls themselves and the spread of
     // native property reads (attachedRigidbody, isTrigger, transform positions) - caching those
     // means caching mutable engine state for thin gains. Negative caching of non-piece colliders
     // (rocks etc.) was evaluated and rejected: no destroy signal exists for those keys, so the
     // cache would leak; the terrain-layer check already short-circuits the most common case.
+    // A centre-of-mass CACHE was tried here and withdrawn: measured, the per-frame memo spent
+    // 13.7 ms of every second probing its map to avoid about 7 ms of transform reads. What
+    // survives is the cheap half - vanilla fetches the transform twice for one expression, and
+    // once is enough - which beats both the memo and vanilla with no bookkeeping at all.
     //
     // Both: a dedicated server runs UpdateSupport for the pieces in its own active area.
     [PatchSide(Side.Both)]
@@ -69,6 +79,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly Dictionary<Collider, WearNTear> ColliderOwner = new Dictionary<Collider, WearNTear>();
         private static readonly Dictionary<WearNTear, List<Collider>> RegisteredBy = new Dictionary<WearNTear, List<Collider>>();
 
+
         private static bool _hooksChecked;
         private static bool _hooksHealthy;
 
@@ -85,6 +96,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 new Type[0], new[] { typeof(WearNTear) });
         private static readonly MethodInfo ResolveSupportMethod =
             AccessTools.Method(typeof(WearSupportLookupPatch), nameof(ResolveSupport));
+        private static readonly MethodInfo EnumerableContainsMethod =
+            typeof(Enumerable).GetMethods()
+                .First(m => m.Name == nameof(Enumerable.Contains) && m.GetParameters().Length == 2)
+                .MakeGenericMethod(typeof(Collider));
+        private static readonly MethodInfo IsOwnColliderMethod =
+            AccessTools.Method(typeof(WearSupportLookupPatch), nameof(IsOwnCollider));
 
         // ---- map maintenance (unconditional; the toggle gates only the transpiler) -----------
 
@@ -196,6 +213,74 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 $"{_verifyDivergences} divergence(s).");
         }
 
+        // Replaces the LINQ ((IEnumerable<Collider>)m_colliders).Contains(collider) at both
+        // UpdateSupport call sites - an allocating enumerator plus an O(n) scan per overlap hit.
+        // A collider's owning piece is already in the map, and a piece's own colliders are
+        // registered before UpdateSupport can reach this check (SetupColliders runs first), so
+        // "is this collider mine" is one dictionary probe plus a reference compare against the
+        // very array vanilla pushed. Signature matches the replaced call's stack exactly.
+        // Provenance: corroborated by ontrigger's ValheimPerformanceOptimizations (MIT).
+        public static bool IsOwnCollider(IEnumerable<Collider> ownColliders, Collider candidate) {
+            if (HooksHealthy() && ColliderOwner.TryGetValue(candidate, out WearNTear owner)) {
+                return ReferenceEquals(owner.m_colliders, ownColliders);
+            }
+
+            // Unregistered candidate (not a piece collider) or unhealthy hooks: vanilla's
+            // answer, without the enumerator allocation.
+            if (ownColliders is Collider[] array) {
+                for (int i = 0; i < array.Length; i++) {
+                    if (ReferenceEquals(array[i], candidate)) { return true; }
+                }
+
+                return false;
+            }
+
+            return ownColliders.Contains(candidate);
+        }
+
+        // GetSupport's non-owner path evaluates GetMaxSupport() - the material-property switch -
+        // as GetFloat's DEFAULT argument even when a stored value exists, on every neighbour
+        // read of every support check. The try-pattern pays it only on a genuine miss.
+        // Value-identical to vanilla (WearNTear.cs:207).
+        // Provenance: corroborated by ontrigger's ValheimPerformanceOptimizations (MIT).
+        [HarmonyPrefix]
+        [HarmonyPatch("GetSupport")]
+        private static bool GetSupportPrefix(WearNTear __instance, ref float __result) {
+            if (Enabled == null || !Enabled.Value) { return true; }
+
+            if (__instance.m_nview.IsOwner()) {
+                __result = __instance.m_support;
+                return false;
+            }
+
+            if (__instance.m_nview.GetZDO().GetFloat(ZDOVars.s_support, out float stored)) {
+                __result = stored;
+                return false;
+            }
+
+            __result = __instance.GetMaxSupport();
+            return false;
+        }
+
+        // Vanilla fetches the transform TWICE for this one expression (WearNTear.cs:594); one
+        // fetch serves both reads. Value-identical.
+        //
+        // This was briefly a per-frame memo instead, on the reasoning that neighbours repeat
+        // heavily inside a sweep. Measured, the memo cost 13.7 ms of every second in dictionary
+        // probing to avoid roughly 7 ms of transform reads - a Unity object key hashes and
+        // compares fast, but the map is thousands of entries and every hit still copies the
+        // record out. The plain single-fetch form is cheaper than both the memo and vanilla, so
+        // that is what this is.
+        [HarmonyPrefix]
+        [HarmonyPatch("GetCOM")]
+        private static bool GetCOMPrefix(WearNTear __instance, ref Vector3 __result) {
+            if (Enabled == null || !Enabled.Value) { return true; }
+
+            Transform transform = __instance.transform;
+            __result = transform.position + transform.rotation * __instance.m_comOffset;
+            return false;
+        }
+
         // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
@@ -205,20 +290,27 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (Enabled == null || !Enabled.Value) { return codes; }
 
             int replaced = 0;
+            int containsReplaced = 0;
             for (int i = 0; i < codes.Count; i++) {
-                if (!codes[i].Calls(GetComponentInParentMethod)) { continue; }
-
-                // Same stack shape: [collider] -> WearNTear. A one-for-one operand rewrite.
-                codes[i].opcode = OpCodes.Call;
-                codes[i].operand = ResolveSupportMethod;
-                replaced++;
+                if (codes[i].Calls(GetComponentInParentMethod)) {
+                    // Same stack shape: [collider] -> WearNTear. A one-for-one operand rewrite.
+                    codes[i].opcode = OpCodes.Call;
+                    codes[i].operand = ResolveSupportMethod;
+                    replaced++;
+                } else if (codes[i].Calls(EnumerableContainsMethod)) {
+                    // Same stack shape: [IEnumerable<Collider>, Collider] -> bool.
+                    codes[i].opcode = OpCodes.Call;
+                    codes[i].operand = IsOwnColliderMethod;
+                    containsReplaced++;
+                }
             }
 
-            if (replaced != 3) {
+            if (replaced != 3 || containsReplaced != 2) {
                 Logger.LogWarning(
-                    $"WearNTear.UpdateSupport: expected 3 GetComponentInParent<WearNTear> calls, " +
-                    $"found {replaced}, so this fix is inactive. Another mod has most likely " +
-                    "already rewritten the method - if so, nothing is wrong.");
+                    $"WearNTear.UpdateSupport: expected 3 GetComponentInParent<WearNTear> and 2 " +
+                    $"Enumerable.Contains calls, found {replaced} and {containsReplaced}, so " +
+                    "this fix is inactive. Another mod has most likely already rewritten the " +
+                    "method - if so, nothing is wrong.");
                 return instructions;
             }
 

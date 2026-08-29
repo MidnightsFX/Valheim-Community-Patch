@@ -374,3 +374,6 @@ Environment.props
 # not the generated dll for thunderstore
 */Package/plugins/*
 .env
+
+# profiling-session working notes (findings that survive become patch headers/CHANGELOG entries)
+Investigations/
