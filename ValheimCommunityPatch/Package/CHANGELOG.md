@@ -120,15 +120,24 @@ that session, about 1.5 s was this mod. Two fixes here, plus a diagnostic.
   It is also a robustness improvement, not only a smoothness one: whatever makes a pass discover
   twenty thousand departures at once, a capped pass acts on 250 of them instead of all of them.
 
-- **Fix Eager Support Default** *(both, new advanced toggle, default on — no behaviour change)* —
-  the `WearNTear.GetSupport` prefix has been split out of `Fix Support Lookup Cost` onto its own
-  toggle. It is a different optimisation from the collider lookup it shared a switch with, and it is
-  under suspicion: measured at 12.04 ms/s, intercepting a five-line method to avoid a
-  `GetMaterialProperties` call that costs 0.07 ms/s across a whole session. Whether Harmony's
-  dispatch into a method that hot is cheaper than vanilla's eager default argument is an open
-  question that could not even be asked while the two shared one toggle. Nothing changes by default;
-  the toggle exists so the answer can be measured. See
-  `Investigations/2026-09-01-wearntear-support-round.md`.
+- **Removed: the `WearNTear.GetSupport` interception** — this mod used to intercept the
+  structural-support read to stop it computing a fallback value it usually throws away. Measured
+  properly this release, the interception cost 12.04 ms/s on one of the hottest small methods in
+  the game, guarding work that cost 0.07 ms/s across the whole session — the fix was two orders of
+  magnitude more expensive than the defect. It is deleted, not toggled off: vanilla's eager default
+  is simply cheaper than any per-call interception of a method that hot. Recorded in the source so
+  it does not come back as a prefix. See `Investigations/2026-09-01-wearntear-support-round.md`.
+
+- **The support sleep and support lookup were put on trial and validated** — no behaviour change,
+  recorded because the measurements were close enough that deletion was on the table. A first A/B
+  measured the sleep as a wash during heavy churn (102.9 ms/s with it on, 104.4 off); an alternating
+  on-off-on run in settled play then showed the full picture: 36-43 ms/s against 94, physics queries
+  at 2.7 against 17.6, with the bracket recovering fully — the sleep is a cache, break-even under
+  constant invalidation and a 2.6x win in its normal regime. The collider lookup swaps ~10 ms/s of
+  dictionary probes for ~10 ms/s of hierarchy walks in absolute terms, but serves ~40% more call
+  volume per unit cost and removes an allocating enumerator per overlap hit; normalized it is ~30%
+  cheaper per call and scales with base size. Both stay, now with the evidence attached
+  (`Investigations/2026-09-01-wearntear-support-round.md`).
 
 - **Log Destroy Storm Stats** *(diagnostic, admin-only, default off)* — buckets every frame by how
   many networked objects were torn down in it and reports the frame time each bucket ran at, next to

@@ -122,10 +122,7 @@ fix under [Credit and sources](#credit-and-sources).
   once per nearby collider to find which building piece owns it — a steady cost that scales with
   base size. A lookup table answers it instead, self-populating and falling back to the walk
   whenever it can't. Admin-only "Verify Support Lookup" compares both. Requires a restart to
-  change. A second, separate optimisation in the same area — skipping a fallback value the support
-  read usually throws away — now has its own advanced "Fix Eager Support Default" toggle, because it
-  intercepts a very hot, very small method and whether that interception pays for itself is being
-  measured rather than assumed.
+  change.
 - **Fix Light Flicker Overhead** *(client)* — torch flicker updates every flickering light every
   frame with per-light engine calls, invisible past a few dozen metres; it now stops beyond a
   configurable distance. Alongside it, a client-local "Point Light Limit" exposes the game's own

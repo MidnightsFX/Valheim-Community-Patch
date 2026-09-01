@@ -30,11 +30,19 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // permanently. The only way the map could return a live *wrong* answer is a collider being
     // re-parented from one living piece to another, which no vanilla path does.
     //
-    // Two more per-call costs in the same method are recovered below (both corroborated by
-    // ontrigger's ValheimPerformanceOptimizations, MIT,
-    // https://github.com/ontrigger/ValheimPerformanceOptimizations): the LINQ own-collider Contains scans
-    // become map probes (IsOwnCollider), and GetSupport's non-owner path stops evaluating
-    // GetMaxSupport as an eagerly-computed default when a stored value exists (GetSupportPrefix).
+    // One more per-call cost in the same method is recovered below (corroborated by ontrigger's
+    // ValheimPerformanceOptimizations, MIT,
+    // https://github.com/ontrigger/ValheimPerformanceOptimizations): the LINQ own-collider Contains
+    // scans become map probes (IsOwnCollider).
+    //
+    // A second one used to live here and was REMOVED after measurement: a GetSupport prefix that
+    // stopped GetMaxSupport being evaluated as an eager default argument on the non-owner path.
+    // Measured 2026-09-01: the interception cost 12.04 ms/s on one of the hottest small methods in
+    // the game, guarding a GetMaterialProperties that cost 0.07 ms/s across the whole session, and
+    // the A/B run with it disabled measured marginally better frame stats than baseline. Vanilla's
+    // eager default is cheaper than any interception of a method this hot; do not reintroduce this
+    // as a prefix. (A transpiler form would be legitimate but its ceiling is ~1 ms/s.)
+    // See Investigations/2026-09-01-wearntear-support-round.md.
     //
     // Not recovered, deliberately: the OverlapBoxNonAlloc calls themselves and the spread of
     // native property reads (attachedRigidbody, isTrigger, transform positions) - caching those
@@ -52,7 +60,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
     internal static class WearSupportLookupPatch {
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
-        internal static ConfigEntry<bool> LazyDefaultEnabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -73,17 +80,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 "vanilla's hierarchy walk, acts on vanilla's answer, and logs any disagreement. " +
                 "Costs the walk this fix exists to avoid, so leave it off unless you are " +
                 "validating the table.",
-                advanced: true);
-
-            LazyDefaultEnabled = ValConfig.BindServerConfig(
-                ValConfig.SectionPerformance,
-                "Fix Eager Support Default",
-                true,
-                "Stops the structural-support read from computing a fallback value it usually " +
-                "throws away. Split out from \"Fix Support Lookup Cost\" so it can be measured on " +
-                "its own: it works by intercepting a very small, very hot method, and the " +
-                "interception is not obviously cheaper than the work it avoids. Turn it off and " +
-                "compare if you are profiling structural support.",
                 advanced: true);
         }
 
@@ -266,58 +262,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             return ownColliders.Contains(candidate);
-        }
-
-        // GetSupport's non-owner path evaluates GetMaxSupport() - the material-property switch -
-        // as GetFloat's DEFAULT argument even when a stored value exists, on every neighbour
-        // read of every support check. The try-pattern pays it only on a genuine miss.
-        // Value-identical to vanilla (WearNTear.cs:207).
-        // Provenance: corroborated by ontrigger's ValheimPerformanceOptimizations (MIT).
-        [HarmonyPrefix]
-        [HarmonyPatch("GetSupport")]
-        private static bool GetSupportPrefix(WearNTear __instance, ref float __result) {
-            // Deliberately NOT gated on Enabled: this is a different optimisation from the
-            // collider lookup that shares this class, and it was measured at 12.04 ms/s guarding a
-            // GetMaterialProperties that costs 0.07 ms/s across a whole session. Whether Harmony's
-            // dispatch into a method this hot and this small is cheaper than vanilla's eager
-            // default argument is an open question, and it could not even be asked while the two
-            // shared one toggle. See Investigations/2026-09-01-wearntear-support-round.md.
-            if (LazyDefaultEnabled == null || !LazyDefaultEnabled.Value) { return true; }
-
-            ZNetView nview = __instance.m_nview;
-
-            // Vanilla's guard, which the first version of this prefix dropped. It looked safe
-            // because IsOwner is internally guarded (IsValid() && ...) - but GetZDO() is a bare
-            // field read that returns null for a piece whose ZDO has been reset, which the
-            // unload path does while the component is still in the updater's instance list, so a
-            // neighbour's UpdateSupport still reaches it. That was the NullReferenceException.
-            //
-            // HasOwner belongs here for a different reason than the crash: vanilla answers
-            // GetMaxSupport for a ZDO with no owner rather than reading its stored value, and
-            // dropping that was a silent divergence in support propagation.
-            //
-            // The null check on nview itself is ours - vanilla throws there - because answering
-            // with the same GetMaxSupport it already uses for every other unusable view is the
-            // strictly safer read.
-            if (nview == null || !nview.IsValid() || !nview.HasOwner()) {
-                __result = __instance.GetMaxSupport();
-                return false;
-            }
-
-            if (nview.IsOwner()) {
-                __result = __instance.m_support;
-                return false;
-            }
-
-            // The actual saving, unchanged: the try-pattern pays for GetMaxSupport only on a
-            // genuine miss instead of evaluating it as an eager default on every call.
-            if (nview.GetZDO().GetFloat(ZDOVars.s_support, out float stored)) {
-                __result = stored;
-                return false;
-            }
-
-            __result = __instance.GetMaxSupport();
-            return false;
         }
 
         // Vanilla fetches the transform TWICE for this one expression (WearNTear.cs:594); one
