@@ -165,7 +165,10 @@ fix under [Credit and sources](#credit-and-sources).
   event), and a change on one floor no longer wakes every floor above and below it — the
   neighbourhood test now accounts for height, not just the footprint. Neighbours are also
   re-checked only past a "Support Change Threshold", far below anything that affects whether a
-  build stands and settable to 0 for an exact comparison.
+  build stands and settable to 0 for an exact comparison. Because the re-check signal is on
+  almost permanently in a large base, a piece that has produced the same answer several times
+  running ("Settled Piece Patience") may take a slower look when only a neighbour's value
+  drifted — anything structural stays immediate, and any real change resets its patience.
 - **Fix Smoke Overhead** *(client)* — every smoke puff pays several engine calls every frame: a
   physics mass write whose value is a smooth curve of the smoke's age, and two position reads —
   one to recheck which render chunk it belongs to (the answer changes every few seconds), one to
@@ -188,16 +191,52 @@ fix under [Credit and sources](#credit-and-sources).
   spikes. It now renders one face per frame at a configurable resolution, with reduced quality
   during the reflection render (lower LOD, no characters or items) — a deliberate trade that is
   hard to spot in a blurry environment reflection. A face is also held back while the previous
-  frame ran long, so it lands on a quiet frame instead of piling onto one that was already
-  struggling; the reflection is never shown half-built, only the frame that pays for a face
-  moves.
+  frame ran long, or after a face that was itself expensive, so it lands on a quiet frame
+  instead of piling onto one that was already struggling; the reflection is never shown
+  half-built, only the frame that pays for a face moves.
 - **Fix Physics Catchup Spiral** *(both)* — after a long frame the engine runs up to ~16 fixed
   physics steps of catch-up in the next frame, turning every big hitch into two. A configurable
   cap (default 8) bounds the debt; dropped time is dropped exactly as vanilla drops it past its
   own higher cap.
-- **Fix Map Generation Stall** *(client)* — the world map is recomputed from the generator on
-  every login for textures that are a pure function of the seed. Cached to disk per world and
-  game version; corrupt caches regenerate; exploration fog is untouched.
+- **Fix Location Biome Area Rescan** *(server)* — generating a world's locations asks the terrain
+  the same question tens of millions of times to get about eighty thousand distinct answers. For
+  each of the hundred thousand placement attempts made per location type, the game classifies a
+  zone by sampling the terrain noise nine times, and it redoes that from scratch every attempt for
+  the same few thousand zones. Each answer is now computed once and remembered for the rest of
+  generation. Worlds come out identical — the value handed back is the one vanilla itself produced
+  for those exact coordinates, and the random stream that decides placement is untouched — so the
+  same seed still gives the same layout, and this is safe to turn on for an existing world.
+- **Fix ZDO Value Write Allocation** *(both)* — every write of a ZDO field allocates an object just
+  to ask whether the value changed, then compares it and drops it on the same line. That is the only
+  path ZDO data is written through, so it is paid by every moving creature's velocity write, every
+  animation parameter, and every health, fuel and growth change in the world. The comparison now
+  runs against the value's own type instead of a boxed copy — the same answer, down to how it treats
+  `NaN`, with the allocation gone.
+- **Fix Doubled ZDO Lookups** *(both)* — every read of ZDO data searches for the object twice: once
+  to ask whether it holds any data of that kind, then again to fetch it. These are the largest
+  dictionaries the game keeps — one entry per object in the world — so each search is a cold read
+  through megabytes, and the second one only re-derives what the first already found and threw
+  away. One search now answers both. This sits under every health, fuel, growth, state and
+  animation read in the world, and under the packing of every object the server sends to a peer or
+  writes to a save, which does sixteen of these lookups per object.
+- **Fix Collision Contact Allocation** *(both)* — reading a collision's contact points builds a
+  brand new array every time, and the game reads them from inside physics callbacks that fire on
+  every fixed step for every character the machine owns. The contact data now comes back in a reused
+  buffer sized to the real contact count, so everything downstream — including a loop that bounds
+  itself on the array's length — sees exactly what it saw before.
+- **Fix Collision Callback Allocation** *(both)* — Unity allocates a collision object for every
+  collision callback and discards it when the callback returns; it has a setting to reuse one
+  instead, on by default in new Unity projects since 2018.3. Every vanilla handler was checked and
+  none keeps a collision past its own callback. This is the one fix here that can affect other mods
+  — a mod that stashes a collision object for later would read the next collision's data — so it is
+  the first thing to turn off if a physics-touching mod starts misbehaving.
+- **Fix Equipment Visual Refresh** *(client)* — every character, dropped armour piece and armour
+  stand re-derives its whole equipment appearance every frame. Skin and hair colour are re-applied
+  on every one of those frames, allocating material and renderer arrays and walking the beard and
+  hair hierarchies to write a colour that has not changed since the character was made; that now
+  happens only when something it depends on differs. And the fifteen equipment fields are read back
+  one at a time, at *two* dictionary lookups each — thirty per character per frame to read fifteen
+  values out of one table, which is now fetched once. The appearance is unchanged.
 
 ### Terrain
 
@@ -309,13 +348,20 @@ patch file. [CREDITS.md][credits] has the detail: exactly what was taken, what w
 out, and how our implementation differs and why.
 
 [credits]: https://github.com/MidnightsFX/Valheim-Community-Patch/blob/master/CREDITS.md
+[vpo]: https://github.com/ontrigger/ValheimPerformanceOptimizations
 
 The mods involved:
 
 - **[ComfyMods](https://github.com/redseiko/ComfyMods)** — redseiko (GPL-3.0), the same licence as
   this project. Seven of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Compress,
   Effectual and Atlas — account for eleven of the entries below.
+- **[ValheimPerformanceOptimizations](https://github.com/ontrigger/ValheimPerformanceOptimizations)**
+  — ontrigger (MIT). Three of the performance entries below, including the event-fed spawn queue the
+  object-stream rescan fix is built on, plus independent corroboration of two more.
 - **[MyPitsDontLeak](https://github.com/AzumattDev/MyPitsDontLeak)** — Azumatt (MIT).
+- **[Terramizer](https://thunderstore.io/c/valheim/p/Terramizer/Terramizer/)** — R4V9N1. Three of
+  the allocation fixes below. Its terrain-limit and placement-effect features are gameplay and
+  visual changes and are deliberately not here.
 - **Zen.ModLib** — ZenDragon. Used only as a *catalogue* of which vanilla bugs exist; no code was
   copied.
 - **Iron Gate Studio** — Valheim itself. The decompiled game source is the reference used to locate
@@ -343,7 +389,7 @@ The mods involved:
 | Fix Water Material Lookup | MidnightsFX | — |
 | Fix Distant Terrain Hitch | MidnightsFX | — |
 | Fix Idle Scene Sweep | MidnightsFX | — |
-| Fix Support Lookup Cost | MidnightsFX | — |
+| Fix Support Lookup Cost | MidnightsFX; corroborated by [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | Arrived at the same map-probe and lazy-default forms, and the single-fetch centre of mass |
 | Fix Light Flicker Overhead | MidnightsFX | — (Point Light Limit exposes a dormant vanilla mechanism) |
 | Fix Piece Event Stall | MidnightsFX | — |
 | Fix Unload Sweep Cost | MidnightsFX | — |
@@ -354,10 +400,15 @@ The mods involved:
 | Fix Smoke Overhead | MidnightsFX | — |
 | Fix Unload Discovery Scan | MidnightsFX | — |
 | Fix Idle Wear Visits | MidnightsFX | — |
-| Fix Reflection Probe Spikes | ontrigger's ValheimPerformanceOptimizations (MIT) | Face-sliced probe rendering with quality clamps |
-| Fix Physics Catchup Spiral | ontrigger's ValheimPerformanceOptimizations (MIT) | The maximumDeltaTime cap and its default |
-| Fix Map Generation Stall | ontrigger's ValheimPerformanceOptimizations (MIT) | Seed+version-keyed map texture cache |
-| Fix Object Stream Rescan | ontrigger's ValheimPerformanceOptimizations (MIT) | Event-fed spawn queue, the zone-set diff, and the 8 m re-sort threshold |
+| Fix Reflection Probe Spikes | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | Face-sliced probe rendering with quality clamps |
+| Fix Physics Catchup Spiral | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | The maximumDeltaTime cap and its default |
+| Fix Object Stream Rescan | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | Event-fed spawn queue, the zone-set diff, and the 8 m re-sort threshold |
+| Fix Location Biome Area Rescan | worldGenAccelerator — jneb802 / warpalicious (MIT) | The observation that per-zone biome-area evaluation dominates location generation. No code, and not that mod's approach, which trades vanilla world layout for the speed |
+| Fix ZDO Value Write Allocation | Terramizer — R4V9N1 | The boxed comparison in `BinarySearchDictionary.SetValue`. That mod replaces the method with a hand-written copy driven by reflected field refs; this is a three-instruction IL edit, so the growth policy and binary search stay vanilla's |
+| Fix Doubled ZDO Lookups | MidnightsFX | — |
+| Fix Collision Contact Allocation | MidnightsFX | — |
+| Fix Collision Callback Allocation | Terramizer — R4V9N1 | The same `Physics.reuseCollisionCallbacks` flag; the per-handler audit and the restore-on-disable are ours |
+| Fix Equipment Visual Refresh | Terramizer — R4V9N1 | The ZDO int-table cache across `UpdateEquipmentVisuals`, same prefix-plus-transpiler shape, keyed here on ZDO identity. The `UpdateColors` change gate is not in that mod |
 
 ### Terrain
 

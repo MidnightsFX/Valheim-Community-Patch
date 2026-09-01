@@ -31,7 +31,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // re-parented from one living piece to another, which no vanilla path does.
     //
     // Two more per-call costs in the same method are recovered below (both corroborated by
-    // ontrigger's ValheimPerformanceOptimizations, MIT): the LINQ own-collider Contains scans
+    // ontrigger's ValheimPerformanceOptimizations, MIT,
+    // https://github.com/ontrigger/ValheimPerformanceOptimizations): the LINQ own-collider Contains scans
     // become map probes (IsOwnCollider), and GetSupport's non-owner path stops evaluating
     // GetMaxSupport as an eagerly-computed default when a stored value exists (GetSupportPrefix).
     //
@@ -51,6 +52,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     internal static class WearSupportLookupPatch {
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
+        internal static ConfigEntry<bool> LazyDefaultEnabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -72,12 +74,36 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 "Costs the walk this fix exists to avoid, so leave it off unless you are " +
                 "validating the table.",
                 advanced: true);
+
+            LazyDefaultEnabled = ValConfig.BindServerConfig(
+                ValConfig.SectionPerformance,
+                "Fix Eager Support Default",
+                true,
+                "Stops the structural-support read from computing a fallback value it usually " +
+                "throws away. Split out from \"Fix Support Lookup Cost\" so it can be measured on " +
+                "its own: it works by intercepting a very small, very hot method, and the " +
+                "interception is not obviously cheaper than the work it avoids. Turn it off and " +
+                "compare if you are profiling structural support.",
+                advanced: true);
         }
 
-        // Positive entries only; keyed by reference (UnityEngine.Object does not override
-        // Equals/GetHashCode), so a fake-null key stays removable through the reverse map.
-        private static readonly Dictionary<Collider, WearNTear> ColliderOwner = new Dictionary<Collider, WearNTear>();
-        private static readonly Dictionary<WearNTear, List<Collider>> RegisteredBy = new Dictionary<WearNTear, List<Collider>>();
+        // Positive entries only. A destroyed piece's entry stays removable because the reverse map
+        // holds the collider keys, not the colliders, so cleanup never has to touch a fake-null.
+        //
+        // Both maps are keyed on GetInstanceID(), not on the Collider / WearNTear itself: a
+        // Dictionary keyed on a UnityEngine.Object pays a native CompareBaseObjects call on every
+        // probe. That matters twice over here. On the teardown path a piece unmapped two entries
+        // per collider it owned, so a four-collider piece paid eight native compares just to
+        // leave. On the READ path the trade is NOT a win and the comment here used to claim it
+        // was: ResolveSupport does a single probe per call, so keying on the id swaps one native
+        // call (Equals) for another (GetInstanceID), measured at 1.06 ms/s. It is kept int-keyed
+        // only because ColliderOwner has to agree with RegisteredBy, which is genuinely
+        // multi-probe. See the measured caveat in TeardownHooks.
+        // RegisteredBy holds collider ids rather than colliders because
+        // unmapping only ever needs the key. See TeardownHooks for the liveness invariant an int
+        // key depends on.
+        private static readonly Dictionary<int, WearNTear> ColliderOwner = new Dictionary<int, WearNTear>();
+        private static readonly Dictionary<int, List<int>> RegisteredBy = new Dictionary<int, List<int>>();
 
 
         private static bool _hooksChecked;
@@ -108,14 +134,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static void Register(WearNTear piece, Collider collider) {
             if (collider == null) { return; }
 
-            ColliderOwner[collider] = piece;
+            int colliderId = collider.GetInstanceID();
+            ColliderOwner[colliderId] = piece;
 
-            if (!RegisteredBy.TryGetValue(piece, out List<Collider> owned)) {
-                owned = new List<Collider>();
-                RegisteredBy.Add(piece, owned);
+            int pieceId = piece.GetInstanceID();
+            if (!RegisteredBy.TryGetValue(pieceId, out List<int> owned)) {
+                owned = new List<int>();
+                RegisteredBy.Add(pieceId, owned);
             }
 
-            owned.Add(collider);
+            owned.Add(colliderId);
         }
 
         [HarmonyPostfix]
@@ -127,20 +155,22 @@ namespace ValheimCommunityPatch.Patches.Performance {
             for (int i = 0; i < colliders.Length; i++) { Register(__instance, colliders[i]); }
         }
 
-        [HarmonyPostfix]
-        [HarmonyPatch("OnDestroy")]
-        private static void OnDestroyPostfix(WearNTear __instance) {
-            if (!RegisteredBy.TryGetValue(__instance, out List<Collider> owned)) { return; }
+        /// <summary>
+        /// The destroy half of the maps, called from this mod's one WearNTear.OnDestroy postfix.
+        /// </summary>
+        internal static void OnPieceDestroyed(int pieceId) {
+            if (!RegisteredBy.TryGetValue(pieceId, out List<int> owned)) { return; }
 
             for (int i = 0; i < owned.Count; i++) {
                 // Only unmap keys that still point at this piece: learn-on-miss may have
                 // re-attributed a collider in an exotic re-parenting scenario.
-                if (ColliderOwner.TryGetValue(owned[i], out WearNTear current) && ReferenceEquals(current, __instance)) {
+                if (ColliderOwner.TryGetValue(owned[i], out WearNTear current)
+                    && !ReferenceEquals(current, null) && current.GetInstanceID() == pieceId) {
                     ColliderOwner.Remove(owned[i]);
                 }
             }
 
-            RegisteredBy.Remove(__instance);
+            RegisteredBy.Remove(pieceId);
         }
 
         // A mod suppressing OnDestroy (or a scene teardown race) must not leak the maps across
@@ -167,7 +197,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 _verifyActive = true;
                 _verifyComparisons++;
 
-                ColliderOwner.TryGetValue(collider, out WearNTear cached);
+                ColliderOwner.TryGetValue(collider.GetInstanceID(), out WearNTear cached);
                 WearNTear walked = collider.GetComponentInParent<WearNTear>();
 
                 // Both-dead counts as agreement: the call sites treat fake-null and null alike.
@@ -199,7 +229,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 _comparisonsSinceReport = 0;
             }
 
-            if (ColliderOwner.TryGetValue(collider, out WearNTear owner)) { return owner; }
+            if (ColliderOwner.TryGetValue(collider.GetInstanceID(), out WearNTear owner)) { return owner; }
 
             WearNTear found = collider.GetComponentInParent<WearNTear>();
             if (found != null) { Register(found, collider); }
@@ -221,7 +251,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // very array vanilla pushed. Signature matches the replaced call's stack exactly.
         // Provenance: corroborated by ontrigger's ValheimPerformanceOptimizations (MIT).
         public static bool IsOwnCollider(IEnumerable<Collider> ownColliders, Collider candidate) {
-            if (HooksHealthy() && ColliderOwner.TryGetValue(candidate, out WearNTear owner)) {
+            if (HooksHealthy() && ColliderOwner.TryGetValue(candidate.GetInstanceID(), out WearNTear owner)) {
                 return ReferenceEquals(owner.m_colliders, ownColliders);
             }
 
@@ -246,14 +276,42 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("GetSupport")]
         private static bool GetSupportPrefix(WearNTear __instance, ref float __result) {
-            if (Enabled == null || !Enabled.Value) { return true; }
+            // Deliberately NOT gated on Enabled: this is a different optimisation from the
+            // collider lookup that shares this class, and it was measured at 12.04 ms/s guarding a
+            // GetMaterialProperties that costs 0.07 ms/s across a whole session. Whether Harmony's
+            // dispatch into a method this hot and this small is cheaper than vanilla's eager
+            // default argument is an open question, and it could not even be asked while the two
+            // shared one toggle. See Investigations/2026-09-01-wearntear-support-round.md.
+            if (LazyDefaultEnabled == null || !LazyDefaultEnabled.Value) { return true; }
 
-            if (__instance.m_nview.IsOwner()) {
+            ZNetView nview = __instance.m_nview;
+
+            // Vanilla's guard, which the first version of this prefix dropped. It looked safe
+            // because IsOwner is internally guarded (IsValid() && ...) - but GetZDO() is a bare
+            // field read that returns null for a piece whose ZDO has been reset, which the
+            // unload path does while the component is still in the updater's instance list, so a
+            // neighbour's UpdateSupport still reaches it. That was the NullReferenceException.
+            //
+            // HasOwner belongs here for a different reason than the crash: vanilla answers
+            // GetMaxSupport for a ZDO with no owner rather than reading its stored value, and
+            // dropping that was a silent divergence in support propagation.
+            //
+            // The null check on nview itself is ours - vanilla throws there - because answering
+            // with the same GetMaxSupport it already uses for every other unusable view is the
+            // strictly safer read.
+            if (nview == null || !nview.IsValid() || !nview.HasOwner()) {
+                __result = __instance.GetMaxSupport();
+                return false;
+            }
+
+            if (nview.IsOwner()) {
                 __result = __instance.m_support;
                 return false;
             }
 
-            if (__instance.m_nview.GetZDO().GetFloat(ZDOVars.s_support, out float stored)) {
+            // The actual saving, unchanged: the try-pattern pays for GetMaxSupport only on a
+            // genuine miss instead of evaluating it as an eager default on every call.
+            if (nview.GetZDO().GetFloat(ZDOVars.s_support, out float stored)) {
                 __result = stored;
                 return false;
             }
@@ -327,7 +385,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             _hooksHealthy =
                 HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "SetupColliders"))
-                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"));
+                && HasOurPostfixIn(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook));
 
             if (!_hooksHealthy) {
                 Logger.LogError(
@@ -340,14 +398,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return _hooksHealthy;
         }
 
-        private static bool HasOurPostfix(MethodBase target) {
+        private static bool HasOurPostfix(MethodBase target) =>
+            HasOurPostfixIn(target, typeof(WearSupportLookupPatch));
+
+        private static bool HasOurPostfixIn(MethodBase target, Type hookClass) {
             // Fully qualified: HarmonyLib.Patches collides with this mod's own Patches namespace.
             HarmonyLib.Patches info = target == null ? null : Harmony.GetPatchInfo(target);
             if (info == null) { return false; }
 
             foreach (Patch patch in info.Postfixes) {
                 if (patch.owner != ValheimCommunityPatch.PluginGUID) { continue; }
-                if (patch.PatchMethod == null || patch.PatchMethod.DeclaringType != typeof(WearSupportLookupPatch)) { continue; }
+                if (patch.PatchMethod == null || patch.PatchMethod.DeclaringType != hookClass) { continue; }
                 return true;
             }
 

@@ -62,8 +62,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // Keyed by reference (UnityEngine.Object does not override Equals/GetHashCode), so a
         // fake-null heightmap key stays removable until its own OnDestroy drops the whole set.
-        private static readonly Dictionary<Heightmap, HashSet<WearNTear>> Registered =
-            new Dictionary<Heightmap, HashSet<WearNTear>>();
+        // Heightmap instance id -> (piece instance id -> piece). Both levels are keyed on
+        // GetInstanceID() rather than on the object, because a Dictionary or HashSet keyed on a
+        // UnityEngine.Object pays a native CompareBaseObjects call on every probe - the profile
+        // named ObjectEqualityComparer`1.Equals under this patch's HashSet`1.Remove directly. The
+        // inner map keeps the piece as its VALUE because Regenerate has to call ClearCachedSupport
+        // on it. See TeardownHooks for the liveness invariant an int key depends on.
+        private static readonly Dictionary<int, Dictionary<int, WearNTear>> Registered =
+            new Dictionary<int, Dictionary<int, WearNTear>>();
 
         private static bool _hooksChecked;
         private static bool _hooksHealthy;
@@ -79,27 +85,30 @@ namespace ValheimCommunityPatch.Patches.Performance {
             __instance.m_connectedHeightMap = hmap;
             if (hmap == null) { return false; }
 
-            if (!Registered.TryGetValue(hmap, out HashSet<WearNTear> pieces)) {
-                pieces = new HashSet<WearNTear>();
-                Registered.Add(hmap, pieces);
+            int hmapId = hmap.GetInstanceID();
+            if (!Registered.TryGetValue(hmapId, out Dictionary<int, WearNTear> pieces)) {
+                pieces = new Dictionary<int, WearNTear>();
+                Registered.Add(hmapId, pieces);
             }
 
-            pieces.Add(__instance);
+            pieces[__instance.GetInstanceID()] = __instance;
             return false;
         }
 
         // Unconditional: a piece registered while the toggle was on must leave the registry even
         // if the toggle is off by the time it is destroyed. Vanilla's own -= has already run (this
         // is a postfix) and was a no-op scan for registry-subscribed pieces.
-        [HarmonyPostfix]
-        [HarmonyPatch("OnDestroy")]
-        private static void OnDestroyPostfix(WearNTear __instance) {
-            Heightmap hmap = __instance.m_connectedHeightMap;
+        /// <summary>
+        /// The destroy half of the registry, called from this mod's one WearNTear.OnDestroy postfix.
+        /// </summary>
+        internal static void OnPieceDestroyed(WearNTear piece, int pieceId) {
+            Heightmap hmap = piece.m_connectedHeightMap;
             if (ReferenceEquals(hmap, null)) { return; }
 
-            if (Registered.TryGetValue(hmap, out HashSet<WearNTear> pieces)) {
-                pieces.Remove(__instance);
-                if (pieces.Count == 0) { Registered.Remove(hmap); }
+            int hmapId = hmap.GetInstanceID();
+            if (Registered.TryGetValue(hmapId, out Dictionary<int, WearNTear> pieces)) {
+                pieces.Remove(pieceId);
+                if (pieces.Count == 0) { Registered.Remove(hmapId); }
             }
         }
 
@@ -110,16 +119,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPostfix]
             [HarmonyPatch("Regenerate")]
             private static void RegeneratePostfix(Heightmap __instance) {
-                if (!Registered.TryGetValue(__instance, out HashSet<WearNTear> pieces)) { return; }
+                if (!Registered.TryGetValue(__instance.GetInstanceID(), out Dictionary<int, WearNTear> pieces)) { return; }
 
-                foreach (WearNTear piece in pieces) { piece.ClearCachedSupport(); }
+                foreach (WearNTear piece in pieces.Values) { piece.ClearCachedSupport(); }
             }
 
             // A heightmap unloading takes its whole subscriber set with it, exactly like the
             // event field it replaces; the pieces' own OnDestroy lookups then miss harmlessly.
             [HarmonyPostfix]
             [HarmonyPatch("OnDestroy")]
-            private static void OnDestroyPostfix(Heightmap __instance) => Registered.Remove(__instance);
+            private static void OnDestroyPostfix(Heightmap __instance) => Registered.Remove(__instance.GetInstanceID());
         }
 
         // A mod suppressing OnDestroy (or a scene teardown race) must not leak the registry
@@ -140,7 +149,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _hooksChecked = true;
 
             _hooksHealthy =
-                HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(WearCacheEventPatch))
+                HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook))
                 && HasOurPostfix(AccessTools.DeclaredMethod(typeof(Heightmap), "Regenerate"), typeof(HeightmapHooks))
                 && HasOurPostfix(AccessTools.DeclaredMethod(typeof(Heightmap), "OnDestroy"), typeof(HeightmapHooks));
 

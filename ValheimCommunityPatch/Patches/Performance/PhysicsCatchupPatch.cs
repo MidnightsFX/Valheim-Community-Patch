@@ -15,7 +15,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Not a Harmony patch: maximumDeltaTime is a global the engine never rewrites mid-session,
     // so binding plus a SettingChanged reapply is the whole mechanism (the Point Light Limit
-    // precedent). Provenance: ontrigger's ValheimPerformanceOptimizations (MIT), same default.
+    // precedent). Provenance: ontrigger's ValheimPerformanceOptimizations (MIT), same default -
+    // https://github.com/ontrigger/ValheimPerformanceOptimizations
     //
     // Both: a dedicated server pays the identical catch-up spiral after its own stalls.
     [PatchSide(Side.Both)]

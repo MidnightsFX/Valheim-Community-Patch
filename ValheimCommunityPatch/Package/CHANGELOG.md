@@ -4,10 +4,303 @@ Each entry names the vanilla method it fixes, and is tagged with the side that f
 installing on — *(server)*, *(client)* or *(both)*. See the README for what a one-sided install gets
 you.
 
+## 0.21.0
+
+The teardown release. Object destruction, not object creation, is where this mod's remaining
+boundary hitch lived — and most of it turned out to be this mod's own bookkeeping.
+
+Measured over a clean 429-second session, `OnDestroy`-rooted work ran at **7.21 ms/s in spiky
+seconds against 0.64 calm — an 11x ratio**, the sharpest boundary correlation in the whole profile
+(object creation is 2.3x, `ZNetView.LoadFields` 1.4x). Of the ~3.3 s the destroy path cost across
+that session, about 1.5 s was this mod. Two fixes here, plus a diagnostic.
+
+- **Fix Object Teardown Cost** *(both)* — two defects, one on top of the other.
+
+  The first is the dictionary key. Five registries in this mod — the zone instance index, the
+  support-sleep grid and state map, the collider-to-piece lookup, the heightmap cache registry, and
+  the light flicker anchors — were keyed on a `UnityEngine.Object`. That looks free and is not:
+  `Object.GetHashCode()` returns the cached instance id and costs nothing, but `Object.Equals` routes
+  to `CompareBaseObjects`, a native interop call, and a `Dictionary` pays it on **every** probe, not
+  only on a collision. The profile named the leaf directly and repeatedly:
+
+      ...WearCacheEventPatch.OnDestroyPostfix;HashSet`1.Remove;ObjectEqualityComparer`1.Equals
+      ...SectorInstanceIndexPatch.IndexRemove;Dictionary`2.Remove;ObjectEqualityComparer`1.Equals
+      ...SectorInstanceIndexPatch.IndexRemove;Dictionary`2.TryGetValue;...;ObjectEqualityComparer`1.Equals
+
+  A four-collider building piece made about sixteen such probes on its way out. Every one of those
+  registries is now keyed on `GetInstanceID()`, so a probe is an integer compare.
+
+  One correction to that reasoning, measured after the fact and left here rather than quietly fixed:
+  `GetInstanceID()` is **not** free in this build. It carries real self time, on the same order as
+  the native `Equals` it replaces. The trade therefore only pays where one id is amortised over many
+  probes — which is exactly the teardown shape (one id, ~16 probes; the whole teardown path now
+  spends ~0.3 ms/s inside `GetInstanceID`). It does **not** pay on a read path that does a single
+  probe per call, and two of the re-keyed maps are that shape: `LightCostPatch`'s flicker anchors
+  (4.04 ms/s in `GetInstanceID`, the largest single cost this mod adds anywhere) and
+  `WearSupportLookupPatch.ResolveSupport` (1.06 ms/s). Those two are marked in place and are a wash
+  at best, not the win this entry originally claimed for them.
+
+  The second is hook multiplicity. A destroyed `ZNetView` visited one postfix and a destroyed
+  `WearNTear` visited three, each re-deriving the same identity independently. They are now one
+  postfix per method, resolving the id once and handing it to each registry.
+
+  On top of both: ghost objects are skipped outright. Pre-generating a zone instantiates every
+  vegetation prefab and every location piece in it and destroys them all inside one call
+  (`ZoneSystem.cs:589-604`), and `ZNetView.Awake` returns before `ZNetScene.AddInstance` for those
+  (`ZNetView.cs:80-85`), so they were never in the index — but each one still paid a lookup to
+  discover that. Several hundred pointless probes per pre-generated zone, now none. The invariant is
+  enforced at both ends rather than assumed: the index refuses to add a ghost as well as to look one
+  up.
+
+  Nothing about *what* is loaded or unloaded changes. The one thing an integer key costs is an
+  invariant — an entry must be removed while its object is alive, because an id can be reused once
+  its object is gone — and every registry already satisfied it, since every one removes in
+  `OnDestroy` and clears wholesale on `ZNetScene.Shutdown`. The object key was not safer, only
+  quieter: a leaked entry under it is the same bug plus a strong reference to a dead object.
+
+- **Fix Light Settings Subscription** *(client)* — `LightFlicker` subscribes to a **static** event
+  and unsubscribes from it by linear scan (`LightFlicker.cs:78/84`):
+
+      GraphicsSettingsManager.GraphicsSettingsChanged += new Action(this.ApplySettings);   // OnEnable
+      GraphicsSettingsManager.GraphicsSettingsChanged -= new Action(this.ApplySettings);   // OnDisable
+
+  The removal allocates a delegate purely to serve as a search key, then `Delegate.Remove` walks the
+  whole invocation list comparing with `MulticastDelegate.Equals`. The list is as long as the number
+  of lit lights, so unloading N of them is **O(N²)** — and it runs synchronously inside
+  `Object.Destroy`, because Unity deactivates a hierarchy inline and defers only the rest. A
+  registry keyed on instance id replaces it, with the invocation raised explicitly at the one place
+  the event fires (`GraphicsSettingsManager.cs:286`).
+
+  Only `LightFlicker` is patched, though four vanilla classes subscribe the same way. `CameraEffects`
+  and `ClutterSystem` are singletons and `Heightmap` is one per loaded zone; `LightFlicker` is one
+  per light, so it is what makes the list long — and the list's *length* is the defect. Taking the
+  hundreds out of it makes every other subscriber's unsubscribe cheap too, including `Heightmap`'s on
+  the same zone-unload path, without patching them at all. The event is left fully functional for any
+  other subscriber, and vanilla's own `-=` still runs where it always did.
+
+- **Object Unload Frame Budget** *(both, new dial on `Fix Unload Discovery Scan`, default 250)* —
+  caps how many departed objects are handed to the engine for destruction in one unload pass.
+
+  This is the fix the instrument below was built to justify, and the measurement is unambiguous.
+  Frames bucketed by teardown count, on a live session:
+
+  | objects destroyed in the frame | frames | mean frame | worst frame |
+  |---|---|---|---|
+  | 0 | 1372 | 20.5 ms | 176 ms |
+  | 1-24 | 5 | 18.3 ms | 23 ms |
+  | 25-99 | 1 | 11.6 ms | 12 ms |
+  | 100-499 | 4 | 45.1 ms | 63 ms |
+  | **500+** | **5** | **348.9 ms** | **844 ms** |
+
+  And the split of that 844 ms frame: the unload pass that fed it destroyed **21,393 objects and
+  spent 49 ms** doing so. The other ~795 ms is Unity's end-of-frame destruction flush — PhysX actor
+  removal, renderer and culling unregistration, hierarchy teardown — which the out-of-process hitch
+  sampler attributes **79% to `native:UnityPlayer` with no managed frame in it at all**. Seven more
+  hitches in the same session (769, 608, 487, 420, 392, 391, 389 ms) have the identical signature at
+  75-82% native.
+
+  So the cost is proportional to how many objects are destroyed in one frame, it is engine work, and
+  no amount of managed optimisation touches it. The only lever is to hand the engine fewer at a time.
+
+  **Why this is not the spawn budget that was withdrawn.** That one failed because deferring left a
+  backlog whose per-pass fixed *discovery* cost was re-paid every pass. Discovery here is the zone
+  index walk — a few hundred keys — so re-discovering the remainder costs essentially nothing, and
+  because the removal set is recomputed from the index every pass rather than queued, the leftovers
+  simply reappear. There is no queue, no state, nothing to go stale, and draining shrinks the index
+  so nothing can starve. What it genuinely costs is that a departed object keeps ticking while it
+  waits, outside the loaded ring where nothing can observe it, for at most backlog/budget passes at
+  the 30 Hz unload cadence.
+
+  Sizing, from the same table: roughly 0.07 ms of frame time per object destroyed. At the default
+  250 a capped pass adds ~17 ms and drains 7,500 objects a second, so a full-world unload settles in
+  about three seconds instead of one 844 ms freeze. Lower it for a shallower dip and a longer tail,
+  raise it for the reverse, 0 for vanilla's all-at-once. The dial is worth sweeping against the
+  bucket table rather than taking on trust.
+
+  It is also a robustness improvement, not only a smoothness one: whatever makes a pass discover
+  twenty thousand departures at once, a capped pass acts on 250 of them instead of all of them.
+
+- **Fix Eager Support Default** *(both, new advanced toggle, default on — no behaviour change)* —
+  the `WearNTear.GetSupport` prefix has been split out of `Fix Support Lookup Cost` onto its own
+  toggle. It is a different optimisation from the collider lookup it shared a switch with, and it is
+  under suspicion: measured at 12.04 ms/s, intercepting a five-line method to avoid a
+  `GetMaterialProperties` call that costs 0.07 ms/s across a whole session. Whether Harmony's
+  dispatch into a method that hot is cheaper than vanilla's eager default argument is an open
+  question that could not even be asked while the two shared one toggle. Nothing changes by default;
+  the toggle exists so the answer can be measured. See
+  `Investigations/2026-09-01-wearntear-support-round.md`.
+
+- **Log Destroy Storm Stats** *(diagnostic, admin-only, default off)* — buckets every frame by how
+  many networked objects were torn down in it and reports the frame time each bucket ran at, next to
+  the unload pass's own object count and wall-clock.
+
+  This exists to answer a question two profiling rounds could not. The worst seconds in both sessions
+  (1014, 946, 927, 580, 526 ms) show a *uniform* self-time across every stack — a handful of samples
+  spread evenly, the signature of a stall with no dominant managed frame. Unity defers GameObject
+  destruction to the end of the frame that requested it and runs the native half there — PhysX actor
+  removal, renderer and culling unregistration, hierarchy teardown — where no managed sampler can see
+  it. Counting destroys as they happen and measuring the following frame's wall-clock attributes that
+  work to the frame that actually paid for it.
+
+  It answered on the first run, and the answer was yes — see the budget entry above for the table.
+  The reports also now name any pass that discovers 500+ departures, with the ring centre, how far
+  that centre moved since the previous pass, the ring sizes and the loaded instance count, because
+  the one thing still unexplained is what moves twenty thousand objects out of the ring at once
+  during ordinary gameplay with no teleport, death or world load in the log.
+
+## 0.20.0
+
+The ZDO and allocation release. Five fixes: three remove garbage the game produces to answer
+questions that need no allocation at all, and two remove work it does twice. Three were found by
+reading R4V9N1's Terramizer (https://thunderstore.io/c/valheim/p/Terramizer/Terramizer/) against
+this mod's patch set; where that mod already fixes one, the entry says so and says how the
+implementation here differs.
+
+- **Fix Doubled ZDO Lookups** *(both)* — every read of ZDO data searches for the ZDO twice. The
+  four helpers behind the whole read path ask the dictionary whether a key is present and then ask
+  it again for the value (`ZDOHelper.cs:64-70, :123-145`):
+
+      => !container.ContainsKey(zid) ? defaultValue : container[zid].GetValueOrDefault(hash, defaultValue);
+
+  `ContainsKey` and the indexer are both a full `Dictionary.FindEntry` — hash, probe, compare —
+  and the second one re-derives an answer the first already had and discarded. Two things make it
+  worse than it reads. The key is a `ZDOID`, whose `GetHashCode` runs
+  `ZDOID.GetUserID(UserKey).GetHashCode() ^ ID.GetHashCode()` and `GetUserID` is a `List<long>`
+  indexer (`ZDOID.cs:46, :97-100`), so hashing is a bounds-checked heap read before any probing
+  starts and it happens twice. And these are the largest dictionaries in the process — one entry
+  per ZDO holding a field of that type — so on a long-lived world the buckets and entries arrays
+  are megabytes and the probe is a cold read.
+
+  It sits under everything: every `WearNTear` health read, every `Fireplace` fuel read, every
+  `Pickable`, `Plant` and `Container` check, and `ZSyncAnimation.SyncParameters`, which reads
+  every animation parameter of every character this machine does *not* own on every fixed step
+  (`ZSyncAnimation.cs:99-121`). `ZDO.Serialize` (`ZDO.cs:461-470`) does seven of the list forms
+  plus a connection read — sixteen lookups per ZDO — and runs for every ZDO sent to every peer on
+  every send tick, and again for every ZDO in the world on every save.
+
+  `TryGetValue` answers both questions in one `FindEntry`. The four replacements are
+  signature-identical drop-ins, so the edit at each of the 34 accessors on `ZDOExtraData` is a
+  call-operand swap with no change to the stack — and therefore no Harmony prefix dispatch added
+  to methods this small. Nothing is cached and no state is kept, so there is nothing to invalidate:
+  this is the same question asked once instead of twice. Equivalence is exact down to the edge
+  cases — an entry present with a null table throws the identical `NullReferenceException` rather
+  than being quietly absorbed, and `GetValuesOrEmpty`'s miss path returns the same fresh
+  zero-capacity `List`.
+
+  Patched on `ZDOExtraData`'s accessors rather than on the four `ZDOHelper` helpers, and that is a
+  correctness requirement rather than a preference: the helpers are generic methods, and Mono
+  compiles one shared body for all reference-type instantiations, so a patch aimed at
+  `GetValueOrDefault<string>` would land on `GetValueOrDefault<byte[]>` as well. Emitting a *call*
+  to our own instantiation has no such problem, which is why this covers `string` and `byte[]`
+  reads where the write fix below could not.
+
+  Deliberately not included, both the same defect: the write path (`ZDOHelper.InitAndSet` calls
+  `Init`, a `ContainsKey`, then indexes — two lookups on an existing field, three when adding one),
+  and `ZDOExtraData.GetOwner`, which spells the double lookup out inline instead of going through
+  a helper. `ZDO.IsOwner` does not go near it — that is a flag test on the ZDO itself — which is
+  what makes `GetOwner` cold enough to leave for now.
+
+- **Fix ZDO Value Write Allocation** *(both)* — every write of a ZDO field allocates.
+  `BinarySearchDictionary<TKey, TValue>.SetValue` (assembly_utils) answers "did this value
+  change?" with `this.m_values[keyIndex].Equals((object) value)`, and because `TValue` is an
+  unconstrained type parameter that cast compiles to a `box` — one heap allocation per write,
+  compared and dropped on the same line. That method is the only way ZDO data is written
+  (`ZDO.Set` → `ZDOExtraData.Set` → `ZDOHelper.InitAndSet` → `SetValue`), so it is paid by every
+  `ZSyncTransform` velocity write, both unconditional `m_syncBodyVelocity` writes per rigidbody
+  per fixed step, every animation parameter that moves, and every health, fuel and growth write
+  in the world. The comparison now goes through the value type's own strongly typed `Equals`
+  overload, which is what `Equals(object)` delegates to after its type test — so the answer is
+  identical, NaN-to-NaN included, and only the box is gone. Only the five value-type
+  instantiations are patched: `string` and `byte[]` never boxed, and Mono compiles one shared
+  body for all reference-type instantiations of a generic, so patching those would land on each
+  other. Found by Terramizer, which replaces the method with a hand-written copy driven by
+  reflected field refs; this is a three-instruction IL edit instead, so the growth policy, the
+  binary search and the ordering stay vanilla's.
+- **Fix Collision Contact Allocation** *(both)* — `Collision.contacts` builds a fresh
+  `ContactPoint[]` on every read, and the game reads it from inside physics callbacks:
+  `Character.OnCollisionStay` once per contacting collider per fixed step for every character the
+  machine owns, `ImpactEffect.OnCollisionEnter` twice for one collision, `FloatingTerrain` once.
+  Each array is read and dropped. The reads now go to a buffer sized to the actual contact count
+  and filled through `Collision.GetContacts`, which is the same data the property copies out.
+  Sizing to the real count rather than handing back one oversized scratch array is what keeps
+  this a single edit — the compiled `foreach` bounds itself on the array's length, and
+  `ImpactEffect` reads `.Length` directly, so both stay correct with no second rewrite. Reuse is
+  safe because none of the three holds the array across anything that could ask for contacts
+  again; an unusually large manifold falls back to vanilla's property.
+- **Fix Collision Callback Allocation** *(both)* — Unity allocates a `Collision` object for every
+  collision callback it dispatches and throws it away when the callback returns.
+  `Physics.reuseCollisionCallbacks` makes it hand back one instance instead; new Unity projects
+  have shipped with it on by default since 2018.3. This reaches wider than the contact fix above,
+  because the allocation happens before the callback body runs — `Character.OnCollisionStay`
+  allocates and then immediately returns on `!IsOwner()` for every character the machine does
+  *not* own. All six vanilla handlers were checked one by one and none keeps a `Collision` past
+  the end of its callback. This is the one fix here whose blast radius reaches outside the mod:
+  a *mod* that stashes a `Collision` for later would read the next collision's data, so it has
+  its own toggle and is the first thing to turn off if a physics-touching mod misbehaves. A build
+  that already enables the setting is left alone, and says so in the log. Same flag Terramizer
+  sets.
+- **Fix Equipment Visual Refresh** *(client)* — every character, dropped armour piece and armour
+  stand re-derives its entire equipment appearance from scratch every frame, through
+  `VisEquipment.CustomUpdate`. Two costs, fixed separately. `UpdateColors` re-applies skin and
+  hair colour every frame for every player: `Renderer.materials` allocates a fresh `Material[]`
+  on each of its two reads, and the beard and hair loops each allocate an array and walk a
+  hierarchy through `GetComponentsInChildren`, all to write a colour that has not changed since
+  the character was created — it now runs only when one of its inputs actually differs, with
+  vanilla's own method doing the work on a miss and the snapshot recorded in a postfix so a
+  throw is retried rather than marked applied. And `UpdateEquipmentVisuals` opens with fifteen
+  `ZDO.GetInt` calls, each of which is *two* dictionary lookups, not one, because
+  `ZDOHelper.GetValueOrDefault` does `ContainsKey` and then indexes — thirty lookups per
+  character per frame, each hashing a `ZDOID`, to read fifteen fields out of one table. That
+  table is now fetched once and all fifteen reads answered from it. The int-table cache is
+  Terramizer's (`VisEquipmentIntCachePatch`), same prefix-plus-transpiler shape, keyed here on
+  ZDO reference identity so a nested call falls back to vanilla instead of reading the wrong
+  table; the colour gate is not in that mod.
+
+## 0.19.0
+
+- **Fix Location Biome Area Rescan** *(server)* — `ZoneSystem.GenerateLocationsTimeSliced`
+  (ZoneSystem.cs:957-1141) runs 100,000 placement attempts per location type, 200,000 for a
+  prioritized one, and gates every attempt on
+  `WorldGenerator.GetBiomeArea(ZoneSystem.GetZonePos(zoneID))` (ZoneSystem.cs:1005).
+  `GetBiomeArea` (WorldGenerator.cs:576-588) is nine `GetBiome` calls — the sample point and its
+  eight neighbours at ±64 m — and each one runs the multi-octave Perlin chain in `GetBaseHeight`
+  (WorldGenerator.cs:620-651). It is a pure function of the position, and the positions are zone
+  centres: a vanilla 10 km world has only ~78,000 of them. Across the ~150 enabled location types
+  that is on the order of 10^8 noise evaluations spent deriving ~78,000 values, and it is paid
+  again on every `genloc` and whenever a mod adds locations. Each answer is now computed once and
+  remembered, keyed on exact (x, z).
+
+  Two properties of the target make it unusually safe to cache, both checked against the
+  decompiled source. `WorldGenerator.GetBiomeArea(Vector3)` has exactly one call site in the whole
+  game — the line above; `Heightmap.GetBiomeArea()` at Heightmap.cs:345 is an unrelated instance
+  method — so there is no second caller to keep correct and no unbounded key space. And that call
+  site is a coroutine, so it is main thread only. `GetBiome` by contrast *is* called off-thread
+  from `HeightmapBuilder.BuildThread` (HeightmapBuilder.cs:103-143), which is exactly why the
+  cache sits on `GetBiomeArea` and not one level down on `GetBiome`.
+
+  Worlds are identical, not approximately identical: the value handed back is the one vanilla
+  itself produced for that exact input, no branch is taken that vanilla would not take, and the
+  `UnityEngine.Random` stream that decides placement is never touched. Same seed, same layout,
+  safe to enable on an existing save.
+
+  Deliberately bounded. This does not make location generation an order of magnitude faster: per
+  attempt vanilla spends ~9 `GetBiome` on this gate and, when the gate passes, up to ~20 more on
+  the per-point biome checks inside the zone, so removing the 9 is most of what can be removed
+  without changing *which points get sampled*. Changing that is what moves every dungeon, village
+  and boss stone in the world. The mod this idea came from does change it — and is much faster as
+  a result — but a patch mod should not relocate a world's contents silently, so that trade was
+  considered and declined.
+
+- **Verify Location Biome Area Cache** *(server, debug)* — recomputes every remembered answer the
+  vanilla way, acts on vanilla's answer, and logs disagreements. There should never be one; it
+  exists to catch a world-generation mod mutating `WorldGenerator`'s noise parameters partway
+  through generation, which is the only way a pure-function cache could go stale.
+
 ## 0.18.0
 
-The VPO adaptation release: four techniques from ontrigger's ValheimPerformanceOptimizations
-(MIT), reworked into this mod's per-fix toggles and fallback discipline.
+The VPO adaptation release: three techniques from ontrigger's ValheimPerformanceOptimizations
+(MIT, https://github.com/ontrigger/ValheimPerformanceOptimizations), reworked into
+this mod's per-fix toggles and fallback discipline.
 
 - **Fix Reflection Probe Spikes** *(client)* — vanilla renders all six faces of the realtime
   reflection cubemap in one frame every few seconds (a steady 14-18 ms/s across profiled
@@ -80,6 +373,28 @@ The VPO adaptation release: four techniques from ontrigger's ValheimPerformanceO
     needed it. The in-memory stamp is untouched, so an unwatched structure still cannot
     fail its support check; only the stored copy is put back to the last real value.
 
+  - **A piece that has proven it is not moving may take a slower look.** Even with the
+    above, the re-check signal is on almost permanently in a large base - the support
+    recalculation wave through a big structure never fully settles while anything streams -
+    so the exact predicate still almost never fired. But "flagged" is not "will change": a
+    quarter of re-checks land on exactly the same value and another fifth move by under 1%
+    of the piece's material maximum. A piece that has produced the same answer several
+    times running ("Settled Piece Patience", default 3, 0 disables) may now defer a wake
+    that came only from a neighbour's value drifting. Every structural event - building,
+    destroying, damage, repairs, terrain edits, entering or leaving the active area - stays
+    immediate and is never deferred, which is what keeps a collapse from being delayed;
+    deferral is capped by the same hygiene streak as every other skip, and any real change
+    resets the piece's patience to zero. This is the one heuristic in an otherwise
+    event-exact fix, and it is deliberately the narrowest one that pays.
+  - **A piece streaming in is no longer treated as a structural event.** Awake fires for
+    every piece that loads, which while moving is hundreds a second, and treating those
+    neighbourhoods as structural made almost every flagged piece ineligible for the
+    patience above. But a piece arriving by streaming is not a change to the world - it was
+    always there, and its support is already baked into the values its neighbours hold. The
+    genuinely structural case, a player building something, has its own path and does not
+    rely on this one: placement broadcasts a cache-clear to every overlapping piece, which
+    arrives as a structural signal in its own right.
+
   The wake scan also stops re-examining neighbourhoods that are already awake: each grid
   cell tracks how many of its pieces are not flagged, and a cell at zero is skipped whole.
   Neighbours are only notified past a "Support Change Threshold" (default 0.01, 0 restores
@@ -116,15 +431,18 @@ The VPO adaptation release: four techniques from ontrigger's ValheimPerformanceO
   exactly once against the boxes that reach it, and a piece the first box woke costs one
   branch for each later box. The woken set is identical either way; only the sweep is
   deduplicated.
+- **Fix Reflection Probe Spikes** *(client)* — the face deferral now also reacts to a face
+  that was itself expensive. Reading only the previous frame cannot see that: measured in a
+  large base a face is usually ~4 ms but occasionally 100-150 ms inside RenderToCubemap, and
+  those land on frames that looked healthy a moment earlier. Each face is now timed, and one
+  that blew the budget arms a short cooldown so the rest of that cycle spreads out - the same
+  two-signal pacing "Fix Background Zone Pacing" uses, and for the same reason: the expensive
+  renders cluster. The starvation guard still outranks both signals, so the cubemap always
+  finishes.
 - **Fix Physics Catchup Spiral** *(both)* — after a long frame Unity runs up to ~16 fixed
   physics steps of catch-up in the next frame, turning every big hitch into two. The cap
   ("Max Physics Steps Per Frame", default 8) bounds the debt; dropped time is dropped
   exactly as vanilla drops it past its own higher cap.
-- **Fix Map Generation Stall** *(client)* — the world map is recomputed from the generator
-  on every login, a fixed multi-second block inside the load screen, for textures that are
-  a pure function of the seed. They are now cached to disk per world name + seed + game
-  version (auto-invalidating on updates), with corrupt caches deleted and regenerated.
-  Exploration fog is untouched - it lives in the character save.
 - **Fix Support Lookup Cost** — two more per-call costs recovered inside the support check:
   the LINQ own-collider Contains scans (an allocating enumerator plus an O(n) scan per
   overlap hit) become one map probe, and GetSupport's non-owner path stops computing the

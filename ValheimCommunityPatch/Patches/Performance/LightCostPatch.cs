@@ -96,7 +96,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // stale - noise against a 45 m gate.
         private const int AnchorRefreshFrames = 10;
 
-        private static readonly Dictionary<LightFlicker, Anchor> Anchors = new Dictionary<LightFlicker, Anchor>();
+        // Keyed on GetInstanceID(), not the LightFlicker. NOTE this one has not paid off and is
+        // the clearest counter-example to the re-key pattern: the prefix does exactly ONE probe
+        // per light per frame, so the id lookup replaced one native call with another, and
+        // GetInstanceID under CustomUpdatePrefix now measures 4.04 ms/s - the largest single cost
+        // this mod adds anywhere. The real fix is to stop needing per-light state on this path at
+        // all rather than to argue about which key is cheaper; until that is designed and
+        // measured, this stays as-is so both halves agree. See TeardownHooks' measured caveat.
+        private static readonly Dictionary<int, Anchor> Anchors = new Dictionary<int, Anchor>();
 
         private static int _playerPosFrame = -1;
         private static Vector3 _playerPos;
@@ -118,14 +125,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 _playerPos = player.transform.position;
             }
 
-            if (!Anchors.TryGetValue(__instance, out Anchor anchor) || frame - anchor.m_frame >= AnchorRefreshFrames) {
+            int id = __instance.GetInstanceID();
+            if (!Anchors.TryGetValue(id, out Anchor anchor) || frame - anchor.m_frame >= AnchorRefreshFrames) {
                 Vector3 pos = __instance.transform.position;
                 float dx = pos.x - _playerPos.x;
                 float dz = pos.z - _playerPos.z;
                 float limit = FlickerDistance != null ? FlickerDistance.Value : 45f;
 
                 anchor = new Anchor { m_frame = frame, m_skip = dx * dx + dz * dz > limit * limit };
-                Anchors[__instance] = anchor;
+                Anchors[id] = anchor;
             }
 
             return !anchor.m_skip;
@@ -135,7 +143,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(typeof(LightFlicker), "OnDisable")]
         internal static class DisableHook {
             [HarmonyPostfix]
-            private static void Postfix(LightFlicker __instance) => Anchors.Remove(__instance);
+            private static void Postfix(LightFlicker __instance) => Anchors.Remove(__instance.GetInstanceID());
         }
     }
 }

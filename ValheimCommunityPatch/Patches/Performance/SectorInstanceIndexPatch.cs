@@ -74,15 +74,23 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // vanilla's own sector stores hold, updated at the same write sites. ZoneDiffRemovalPatch
         // iterates this instead of the whole instance dictionary to find what left the loaded
         // rings. Slots carries each view's zone AND its position in that zone's list, keyed by
-        // view because removal paths null the ZDO before OnDestroy runs; the index makes every
-        // move/removal an O(1) swap-remove even in five-thousand-piece base zones.
+        // the view's INSTANCE ID rather than the view because removal paths null the ZDO before
+        // OnDestroy runs; the index makes every move/removal an O(1) swap-remove even in
+        // five-thousand-piece base zones.
+        //
+        // The key is an int, not the ZNetView, and that is a measured decision rather than a
+        // stylistic one: a Dictionary keyed on a UnityEngine.Object pays a native
+        // CompareBaseObjects call on every probe, and this dictionary is probed three times per
+        // destroyed object and three more per added one. It was the single largest item on the
+        // teardown path. See TeardownHooks for the full rationale and the liveness invariant an
+        // int key depends on.
         internal struct Slot {
             public Vector2i m_zone;
             public int m_index;
         }
 
         internal static readonly Dictionary<Vector2i, List<ZNetView>> ByZone = new Dictionary<Vector2i, List<ZNetView>>();
-        internal static readonly Dictionary<ZNetView, Slot> Slots = new Dictionary<ZNetView, Slot>();
+        internal static readonly Dictionary<int, Slot> Slots = new Dictionary<int, Slot>();
 
         private static bool _hooksChecked;
         private static bool _hooksHealthy;
@@ -104,28 +112,28 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (count > 0) { NonDistantCount[sector] = count; } else { NonDistantCount.Remove(sector); }
         }
 
-        private static void IndexAdd(ZNetView view, Vector2i zone) {
+        private static void IndexAdd(ZNetView view, int id, Vector2i zone) {
             if (!ByZone.TryGetValue(zone, out List<ZNetView> list)) {
                 list = new List<ZNetView>();
                 ByZone.Add(zone, list);
             }
 
             list.Add(view);
-            Slots[view] = new Slot { m_zone = zone, m_index = list.Count - 1 };
+            Slots[id] = new Slot { m_zone = zone, m_index = list.Count - 1 };
 
             if (!view.m_distant) { Bump(zone, 1); }
         }
 
-        private static void IndexRemove(ZNetView view) {
-            if (!Slots.TryGetValue(view, out Slot slot)) { return; }
-            Slots.Remove(view);
+        private static void IndexRemove(ZNetView view, int id) {
+            if (!Slots.TryGetValue(id, out Slot slot)) { return; }
+            Slots.Remove(id);
 
             if (ByZone.TryGetValue(slot.m_zone, out List<ZNetView> list)) {
                 int last = list.Count - 1;
                 if (slot.m_index < last) {
                     ZNetView moved = list[last];
                     list[slot.m_index] = moved;
-                    Slots[moved] = new Slot { m_zone = slot.m_zone, m_index = slot.m_index };
+                    Slots[moved.GetInstanceID()] = new Slot { m_zone = slot.m_zone, m_index = slot.m_index };
                 }
 
                 list.RemoveAt(last);
@@ -135,22 +143,29 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (!view.m_distant) { Bump(slot.m_zone, -1); }
         }
 
+        /// <summary>
+        /// The destroy half of the index, called from this mod's one ZNetView.OnDestroy postfix.
+        /// </summary>
+        internal static void OnViewDestroyed(ZNetView view) => IndexRemove(view, view.GetInstanceID());
+
         [HarmonyPostfix]
         [HarmonyPatch("AddInstance")]
         private static void AddInstancePostfix(ZDO zdo, ZNetView nview) {
             if (ReferenceEquals(nview, null)) { return; }
 
+            // Ghost views are never in m_instances (ZNetView.Awake returns before AddInstance when
+            // m_ghostInit is set), so they have no business in the index either. Refusing them here
+            // is what lets TeardownHooks skip the destroy lookup for the several hundred ghosts a
+            // pre-generated zone creates and destroys in one frame - the invariant is enforced at
+            // both ends rather than assumed from vanilla's control flow.
+            if (nview.m_ghost) { return; }
+
+            int id = nview.GetInstanceID();
+
             // A re-added view (should not happen, but m_instances[zdo] = nview tolerates it)
             // must not be double-indexed.
-            IndexRemove(nview);
-            IndexAdd(nview, zdo.GetSector());
-        }
-
-        [HarmonyPatch(typeof(ZNetView))]
-        internal static class ViewDestroyHook {
-            [HarmonyPostfix]
-            [HarmonyPatch("OnDestroy")]
-            private static void OnDestroyPostfix(ZNetView __instance) => IndexRemove(__instance);
+            IndexRemove(nview, id);
+            IndexAdd(nview, id, zdo.GetSector());
         }
 
         [HarmonyPatch(typeof(ZDOMan))]
@@ -161,10 +176,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ZNetScene scene = ZNetScene.instance;
                 if (ReferenceEquals(scene, null)) { return; }
                 if (!scene.m_instances.TryGetValue(zdo, out ZNetView view)) { return; }
-                if (!Slots.TryGetValue(view, out Slot slot) || slot.m_zone == sector) { return; }
 
-                IndexRemove(view);
-                IndexAdd(view, sector);
+                int id = view.GetInstanceID();
+                if (!Slots.TryGetValue(id, out Slot slot) || slot.m_zone == sector) { return; }
+
+                IndexRemove(view, id);
+                IndexAdd(view, id, sector);
             }
         }
 
@@ -251,7 +268,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             _hooksHealthy =
                 HasOurPostfix(AccessTools.DeclaredMethod(typeof(ZNetScene), "AddInstance"), typeof(SectorInstanceIndexPatch))
-                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(ZNetView), "OnDestroy"), typeof(ViewDestroyHook))
+                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(ZNetView), "OnDestroy"), typeof(TeardownHooks.ViewHook))
                 && HasOurPostfix(AccessTools.DeclaredMethod(typeof(ZDOMan), "AddToSector"), typeof(SectorMoveHooks));
 
             if (!_hooksHealthy) {

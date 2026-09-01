@@ -37,7 +37,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //     its postfix, so a ZDO caught mid-deserialisation - the handler bounces every incoming
     //     ZDO out to a sentinel sector and back (ZDOMan.cs:634) - never enters the queue on the
     //     strength of a half-written sector. Not speculative: the idle-skip's ring hash hit this
-    //     exact hazard, and ontrigger's implementation hit it independently.
+    //     exact hazard, and ontrigger's implementation hit it independently
+    //     (ValheimPerformanceOptimizations, MIT - https://github.com/ontrigger/ValheimPerformanceOptimizations).
     //  4. ZDO.set_Created. True dequeues. False on an in-ring ZDO RE-enqueues, which preserves
     //     vanilla's recreate-what-something-destroyed behaviour: ZNetScene.Destroy resets a
     //     non-owned ZDO and vanilla respawns it on the next pass.

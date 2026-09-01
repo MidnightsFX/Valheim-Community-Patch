@@ -109,6 +109,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static ConfigEntry<bool> WearEnabled;
         internal static ConfigEntry<bool> WearVerify;
         internal static ConfigEntry<float> WakeEpsilon;
+        internal static ConfigEntry<int> QuietBackoff;
         internal static ConfigEntry<bool> WakeStats;
 
         internal static void BindConfig() {
@@ -172,6 +173,21 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 valMin: 0f,
                 valMax: 1f);
 
+            QuietBackoff = ValConfig.BindServerConfig(
+                ValConfig.SectionPerformance,
+                "Settled Piece Patience",
+                3,
+                "How many times in a row a building piece must re-check its support and get the " +
+                "same answer before it is allowed to take a slower look when only a neighbour's " +
+                "value drifted. In a large base the re-check signal is almost always on, so " +
+                "without this the skip never happens; a piece that has proven it is not moving " +
+                "can afford to see a small neighbouring drift a little late. Anything structural " +
+                "- building, destroying, damage, repairs, terrain edits - is always immediate, " +
+                "and any real change resets the piece's patience to zero. 0 turns this off.",
+                advanced: true,
+                valMin: 0,
+                valMax: 10);
+
             WakeStats = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Log Support Wake Stats",
@@ -189,6 +205,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // models (see header). At a saturated updater cycle this bounds unnoticed staleness to a
         // few minutes, on a value that only goes stale if a mod moves built pieces.
         private const int MaxSkipStreak = 9;
+
+        // No point counting quiet runs past the threshold's ceiling.
+        private const int QuietRunsCap = 16;
 
         // Coarse world grid of support envelopes, XZ plane. 8 m cells: a piece's envelope spans
         // 1-4 cells, so waking a neighbourhood touches a handful of short lists.
@@ -208,6 +227,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
             // the truth the stored support should hold; see the stamp repair in UpdateWearPostfix.
             public bool m_hasRealSupport;
             public float m_realSupport;
+
+            // Backoff bookkeeping. m_quietRuns counts consecutive RAN recomputes that produced
+            // the same value - empirical evidence the piece is not moving - and m_strongWake
+            // records that the wake it is carrying was a structural event rather than a
+            // neighbour's value drifting. See MayDeferWeakWake.
+            public int m_quietRuns;
+            public bool m_strongWake;
 
             // The grid cells this piece is registered in, so a dirty transition can adjust their
             // clean counts without a lookup. Null while unregistered.
@@ -284,9 +310,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
             public int m_x0, m_z0, m_x1, m_z1;
         }
 
-        private static readonly Dictionary<WearNTear, PieceState> States = new Dictionary<WearNTear, PieceState>();
+        // Both piece maps are keyed on GetInstanceID(), not on the WearNTear: a Dictionary keyed
+        // on a UnityEngine.Object pays a native CompareBaseObjects call on every probe, and this
+        // patch probed them twice per destroyed piece. See TeardownHooks for the liveness
+        // invariant an int key depends on.
+        private static readonly Dictionary<int, PieceState> States = new Dictionary<int, PieceState>();
         private static readonly Dictionary<long, Cell> Grid = new Dictionary<long, Cell>();
-        private static readonly Dictionary<WearNTear, Envelope> Registered = new Dictionary<WearNTear, Envelope>();
+        private static readonly Dictionary<int, Envelope> Registered = new Dictionary<int, Envelope>();
 
         // This frame's destroy wakes, and the per-cell scratch the flush buckets them into.
         // The lists are pooled rather than reallocated: a storm's cell count is a high-water
@@ -318,6 +348,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // pieces as the player moves, so if this is the wave's engine these three counters are
         // where it shows: stamps written, recomputes leaving max, recomputes arriving at max.
         private static long _statOutOfAreaStamp, _statLeftMax, _statReachedMax;
+        private static long _statWeakDeferred;
 
         // Hypothesis 1 - the overlap buffer. Vanilla samples each bound box into a fixed
         // 128-collider array (WearNTear.cs:59); past that PhysX truncates and the surviving
@@ -351,6 +382,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 $">10% {_statRelHuge} of max support. {_statWaves} wave(s) fanned out over " +
                 $"{_wakeCandidates} candidate(s), waking {_wakeWoken}; " +
                 $"{_wakeCellsSkipped} fully-awake cell(s) skipped. " +
+                $"Weak wakes deferred by settled pieces: {_statWeakDeferred}. " +
                 $"Out-of-area max-support stamps {_statOutOfAreaStamp}; changes leaving max " +
                 $"{_statLeftMax}, reaching max {_statReachedMax}. " +
                 $"Overlap probe (1 in {ProbeInterval}): {_probeBoxes} box(es), {_probeSaturated} " +
@@ -393,6 +425,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _wakeWoken = 0;
             _wakeCellsSkipped = 0;
             _statOutOfAreaStamp = 0;
+            _statWeakDeferred = 0;
             _statLeftMax = 0;
             _statReachedMax = 0;
             _probeBoxes = 0;
@@ -416,7 +449,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         /// The ONLY place m_dirty is written. The per-cell clean counts are exact only if every
         /// transition passes through here.
-        private static void SetDirty(PieceState state, bool dirty) {
+        private static void SetDirty(PieceState state, bool dirty, bool strong = false) {
+            // Before the early-out on purpose: a strong wake arriving at an already-dirty piece
+            // still has to upgrade it, or a destroy landing on a piece a neighbour's drift had
+            // already flagged would be deferred as if it were the drift.
+            if (dirty && strong) { state.m_strongWake = true; }
+
             if (state.m_dirty == dirty) { return; }
             state.m_dirty = dirty;
 
@@ -428,9 +466,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         private static PieceState GetState(WearNTear piece) {
-            if (!States.TryGetValue(piece, out PieceState state)) {
+            int id = piece.GetInstanceID();
+            if (!States.TryGetValue(id, out PieceState state)) {
                 state = new PieceState();
-                States.Add(piece, state);
+                States.Add(id, state);
             }
 
             return state;
@@ -442,17 +481,47 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // condition. The sibling wear predicate has always reported its reasons; this one did
         // not, and a soak that reported "would have skipped 0 of 229431" with no reasons was
         // undiagnosable - which is the whole argument for having them.
+        // "dirty" is split, because the two halves need completely different answers: a strong
+        // wake means something really happened and the piece must run, while an unsettled piece
+        // is one the backoff would release if only its history were flatter.
         private static readonly string[] SupportBlockNames = {
-            "sleepable", "support-cold", "support-dirty", "streak-cap", "unsupported",
+            "sleepable", "support-cold", "dirty-structural", "streak-cap", "unsupported",
+            "dirty-unsettled",
         };
-        private static readonly long[] SupportBlockCounts = new long[5];
+        private static readonly long[] SupportBlockCounts = new long[6];
 
         private static int SupportBlockReason(WearNTear piece, PieceState state) {
             if (!state.m_computed) { return 1; }
-            if (state.m_dirty) { return 2; }
+            if (state.m_dirty && !MayDeferWeakWake(state)) { return state.m_strongWake ? 2 : 5; }
             if (state.m_skips >= MaxSkipStreak) { return 3; }
             if (piece.m_support < piece.GetMinSupport()) { return 4; }
             return 0;
+        }
+
+        /// The one HEURISTIC in this class, and deliberately the narrowest one that pays.
+        ///
+        /// Everything else here is event-exact: a piece sleeps only while nothing that could
+        /// change it has happened. Measured in a large base that predicate never fires - 85% of
+        /// visits find the piece already flagged - because the wave of support recalculation
+        /// through a big structure is continuous while anything streams. But "flagged" is not
+        /// "will change": a quarter of the recomputes that flag produces land on exactly the same
+        /// value, and another fifth move by under 1% of the piece's material maximum.
+        ///
+        /// So a piece that has produced the same value on several consecutive recomputes is
+        /// allowed to DEFER a wake, but only a weak one - a neighbour's value drifted. Every
+        /// structural event stays immediate: something built, destroyed, damaged, repaired, the
+        /// terrain edited, a piece arriving or leaving the active area. Those set m_strongWake
+        /// and are never deferred, which is what keeps a collapse from being delayed by this.
+        ///
+        /// The staleness is bounded twice over: MaxSkipStreak caps consecutive skips whatever
+        /// their reason, and any recompute that DOES produce a change spends the whole quiet run,
+        /// so a piece has to re-earn the backoff from scratch. Set the threshold to 0 to turn it
+        /// off and get the exact predicate back.
+        private static bool MayDeferWeakWake(PieceState state) {
+            if (state.m_strongWake) { return false; }
+
+            int threshold = QuietBackoff != null ? QuietBackoff.Value : 0;
+            return threshold > 0 && state.m_quietRuns >= threshold;
         }
 
         [HarmonyPrefix]
@@ -511,6 +580,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (wouldSkip) {
                 state.m_skips++;
                 __state.m_skipped = true;
+                if (_statsOn && state.m_dirty) { _statWeakDeferred++; }
                 return false;
             }
 
@@ -570,12 +640,22 @@ namespace ValheimCommunityPatch.Patches.Performance {
             state.m_realSupport = __instance.m_support;
             state.m_hasRealSupport = true;
             SetDirty(state, false);
+            state.m_strongWake = false;
             state.m_skips = 0;
+
+            // A ran recompute that moved nothing is what earns the backoff; any real change
+            // spends the whole run, so the evidence has to be rebuilt from scratch.
+            if (changed) { state.m_quietRuns = 0; }
+            else if (state.m_quietRuns < QuietRunsCap) { state.m_quietRuns++; }
 
             // The relaxation wave: a changed value is exactly the event neighbours must see.
             if (changed) {
                 if (_statsOn) { _statWaves++; }
-                DirtyNeighbours(__instance, state);
+
+                // A neighbour's value moving is the WEAK signal: it is what the backoff above is
+                // allowed to defer, precisely because it is the one wake that a piece with a flat
+                // history can afford to see late.
+                DirtyNeighbours(__instance, state, false);
             }
         }
 
@@ -583,7 +663,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPostfix]
         [HarmonyPatch("ClearCachedSupport")]
         private static void ClearCachedSupportPostfix(WearNTear __instance) {
-            if (States.TryGetValue(__instance, out PieceState state)) { SetDirty(state, true); }
+            // Every vanilla invalidation - terrain edits, the cross-client RPC, the broadcast a
+            // freshly placed piece performs, remote damage - funnels through here, and all of
+            // them are structural.
+            if (States.TryGetValue(__instance.GetInstanceID(), out PieceState state)) { SetDirty(state, true, true); }
         }
 
         // Set by UpdateSupportPostfix within an UpdateWear call; a support value that changed
@@ -715,7 +798,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             // support-quiet by definition.
             if (piece.m_noSupportWear) {
                 if (!state.m_computed) { return 3; }
-                if (state.m_dirty) { return 8; }
+                // Same backoff the support predicate applies - without it the wear visit runs in
+                // full for a piece whose support half would have slept, which is most of the cost.
+                if (state.m_dirty && !MayDeferWeakWake(state)) { return 8; }
                 if (piece.m_support < piece.GetMinSupport()) { return 10; }
             }
 
@@ -833,7 +918,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             // Deliberately not __state.m_state: that is only populated when the wear fix is on,
             // and this repair belongs to the support fix, whose gate is above.
-            States.TryGetValue(__instance, out PieceState tracked);
+            States.TryGetValue(__instance.GetInstanceID(), out PieceState tracked);
             RepairStampedSupport(__instance, tracked);
 
             if (__instance.m_support.Equals(__state.m_prevSupport)) { return; }
@@ -843,8 +928,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (_statsOn) { _statOutOfAreaStamp++; }
 
             PieceState changedState = GetState(__instance);
-            SetDirty(changedState, true);
-            DirtyNeighbours(__instance, changedState);
+            SetDirty(changedState, true, true);
+            DirtyNeighbours(__instance, changedState, true);
         }
 
         /// UpdateWear stamps m_support = GetMaxSupport() for pieces outside the active area AND
@@ -890,7 +975,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("UpdateCover")]
         private static void UpdateCoverPostfix(WearNTear __instance, bool __state) {
             if (__instance.m_haveRoof == __state) { return; }
-            if (States.TryGetValue(__instance, out PieceState state)) { state.m_wearWake = true; }
+            if (States.TryGetValue(__instance.GetInstanceID(), out PieceState state)) { state.m_wearWake = true; }
         }
 
         // Damage and repair are the two owner-side events that change what UpdateVisual shows;
@@ -898,18 +983,29 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPostfix]
         [HarmonyPatch("ApplyDamage")]
         private static void ApplyDamagePostfix(WearNTear __instance) {
-            if (States.TryGetValue(__instance, out PieceState state)) { state.m_wearWake = true; }
+            if (States.TryGetValue(__instance.GetInstanceID(), out PieceState state)) { state.m_wearWake = true; }
         }
 
         [HarmonyPostfix]
         [HarmonyPatch("RPC_Repair")]
         private static void RPC_RepairPostfix(WearNTear __instance) {
-            if (States.TryGetValue(__instance, out PieceState state)) { state.m_wearWake = true; }
+            if (States.TryGetValue(__instance.GetInstanceID(), out PieceState state)) { state.m_wearWake = true; }
         }
 
         // A new piece's colliders join the support world here, long before its lazy
         // SetupColliders registers an envelope - wake the sleepers around it so they re-detect
         // arriving support exactly as vanilla's fast path would (see header).
+        //
+        // This wake is WEAK, and that distinction is load bearing. Awake fires for every piece
+        // that streams in, which while moving is hundreds a second, and marking those
+        // neighbourhoods structural made almost every dirty piece undeferrable - the reason the
+        // support predicate still reported zero skips after the backoff landed. A piece arriving
+        // by streaming is not a change to the world: it was always there, and its support was
+        // already baked into the values its neighbours hold. The genuinely structural case, a
+        // player BUILDING something, has its own strong path and does not rely on this one -
+        // OnPlaced sets m_clearCachedSupport, and the first UpdateSupport broadcasts
+        // ClearCachedSupport to every overlapping piece (WearNTear.cs:467-484), which arrives as
+        // a strong wake through ClearCachedSupportPostfix above.
         [HarmonyPostfix]
         [HarmonyPatch("Awake")]
         private static void AwakePostfix(WearNTear __instance) {
@@ -935,13 +1031,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
             // A piece is never in the grid at Awake - registration is lazy, from UpdateSupport -
             // so it cannot be a candidate for its own arrival wake and needs no exclude beyond
             // whatever state it already has.
-            States.TryGetValue(__instance, out PieceState state);
+            States.TryGetValue(__instance.GetInstanceID(), out PieceState state);
 
             Vector3 position = __instance.transform.position;
             WakeOverlapping(
                 position.x - FallbackWakeRadius, position.z - FallbackWakeRadius,
                 position.x + FallbackWakeRadius, position.z + FallbackWakeRadius,
-                position.y - FallbackWakeRadius, position.y + FallbackWakeRadius, state);
+                position.y - FallbackWakeRadius, position.y + FallbackWakeRadius, state, false);
         }
 
         // ---- the envelope grid ---------------------------------------------------------------
@@ -953,7 +1049,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static void SetupCollidersPostfix(WearNTear __instance) {
             List<WearNTear.BoundData> bounds = __instance.m_bounds;
             if (bounds == null || bounds.Count == 0) { return; }
-            if (Registered.ContainsKey(__instance)) { Unregister(__instance); }
+            Unregister(__instance.GetInstanceID());
 
             float minX = float.MaxValue, minZ = float.MaxValue, minY = float.MaxValue;
             float maxX = float.MinValue, maxZ = float.MinValue, maxY = float.MinValue;
@@ -1021,11 +1117,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             state.m_cells = cells;
-            Registered[__instance] = envelope;
+            Registered[__instance.GetInstanceID()] = envelope;
         }
 
-        private static void Unregister(WearNTear piece) {
-            if (!Registered.TryGetValue(piece, out Envelope envelope)) { return; }
+        private static void Unregister(int pieceId) {
+            if (!Registered.TryGetValue(pieceId, out Envelope envelope)) { return; }
 
             for (int x = envelope.m_x0; x <= envelope.m_x1; x++) {
                 for (int z = envelope.m_z0; z <= envelope.m_z1; z++) {
@@ -1045,14 +1141,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             envelope.m_state.m_cells = null;
-            Registered.Remove(piece);
+            Registered.Remove(pieceId);
         }
 
         // The caller passes the state it already has in hand; the whole point of the entries
         // carrying their state is that this path never probes the state map.
-        private static void DirtyNeighbours(WearNTear piece, PieceState state) {
-            if (Registered.TryGetValue(piece, out Envelope e)) {
-                WakeOverlapping(e.m_minX, e.m_minZ, e.m_maxX, e.m_maxZ, e.m_minY, e.m_maxY, state);
+        private static void DirtyNeighbours(WearNTear piece, PieceState state, bool strong) {
+            if (Registered.TryGetValue(piece.GetInstanceID(), out Envelope e)) {
+                WakeOverlapping(e.m_minX, e.m_minZ, e.m_maxX, e.m_maxZ, e.m_minY, e.m_maxY, state, strong);
                 return;
             }
 
@@ -1062,7 +1158,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             WakeOverlapping(
                 position.x - FallbackWakeRadius, position.z - FallbackWakeRadius,
                 position.x + FallbackWakeRadius, position.z + FallbackWakeRadius,
-                position.y - FallbackWakeRadius, position.y + FallbackWakeRadius, state);
+                position.y - FallbackWakeRadius, position.y + FallbackWakeRadius, state, strong);
         }
 
         // The cell grid is XZ only - cells are cheap and a column of them is a short lookup - but
@@ -1071,7 +1167,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // is most of the building: the exact "wakes hundreds instead of the handful that actually
         // touch" failure this test was introduced to fix in XZ, never applied to the vertical.
         private static void WakeOverlapping(
-            float minX, float minZ, float maxX, float maxZ, float minY, float maxY, PieceState exclude) {
+            float minX, float minZ, float maxX, float maxZ, float minY, float maxY,
+            PieceState exclude, bool strong) {
             int x0 = Mathf.FloorToInt(minX / CellSize), x1 = Mathf.FloorToInt(maxX / CellSize);
             int z0 = Mathf.FloorToInt(minZ / CellSize), z1 = Mathf.FloorToInt(maxZ / CellSize);
 
@@ -1106,7 +1203,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
                         if (ReferenceEquals(state, exclude)) { continue; }
 
-                        SetDirty(state, true);
+                        SetDirty(state, true, strong);
                         if (_statsOn) { _wakeWoken++; }
                     }
                 }
@@ -1115,21 +1212,23 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- batched destroy wakes -----------------------------------------------------------
 
-        [HarmonyPostfix]
-        [HarmonyPatch("OnDestroy")]
-        private static void OnDestroyPostfix(WearNTear __instance) {
+        /// <summary>
+        /// The destroy half of the grid and state map, called from this mod's one
+        /// WearNTear.OnDestroy postfix.
+        /// </summary>
+        internal static void OnPieceDestroyed(WearNTear piece, int pieceId) {
             // Capture the wake box BEFORE unregistering - the envelope and the transform are
             // both gone after this - then forget the piece entirely. The sweep runs at the flush
             // below, by which point this piece is out of the grid and so cannot be a candidate
             // for its own wake; that is why the box carries no exclude.
-            QueueDestroyWake(__instance);
-            Unregister(__instance);
-            States.Remove(__instance);
+            QueueDestroyWake(piece, pieceId);
+            Unregister(pieceId);
+            States.Remove(pieceId);
         }
 
-        private static void QueueDestroyWake(WearNTear piece) {
+        private static void QueueDestroyWake(WearNTear piece, int pieceId) {
             float minX, minZ, maxX, maxZ, minY, maxY;
-            if (Registered.TryGetValue(piece, out Envelope e)) {
+            if (Registered.TryGetValue(pieceId, out Envelope e)) {
                 minX = e.m_minX; minZ = e.m_minZ; maxX = e.m_maxX; maxZ = e.m_maxZ;
                 minY = e.m_minY; maxY = e.m_maxY;
             } else {
@@ -1161,7 +1260,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 WakeBox only = PendingWakes[0];
                 WakeOverlapping(
                     only.m_minX, only.m_minZ, only.m_maxX, only.m_maxZ,
-                    only.m_minY, only.m_maxY, null);
+                    only.m_minY, only.m_maxY, null, true);
                 PendingWakes.Clear();
                 return;
             }
@@ -1210,7 +1309,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                             || entries[i].m_minZ > box.m_maxZ || entries[i].m_maxZ < box.m_minZ
                             || entries[i].m_minY > box.m_maxY || entries[i].m_maxY < box.m_minY) { continue; }
 
-                        SetDirty(state, true);
+                        // A death is structural, so it is never deferrable.
+                        SetDirty(state, true, true);
                         if (_statsOn) { _wakeWoken++; }
                         break;
                     }
@@ -1282,7 +1382,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             _hooksHealthy =
                 HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "ClearCachedSupport"))
-                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"))
+                && HasOurHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook))
                 && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "SetupColliders"))
                 && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "UpdateSupport"))
                 && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "Awake"))

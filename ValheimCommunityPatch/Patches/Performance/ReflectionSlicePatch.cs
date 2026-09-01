@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -26,12 +27,22 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // pays for the face, never what is displayed. Deferring stretches a cycle by a few frames,
     // which starts the 3 s crossfade a few percent further along; invisible at this cadence.
     //
-    // The starvation guard is load-bearing rather than hygiene: without it a machine that never
-    // makes budget would never publish its first cubemap at all. Forcing a face every
-    // (MaxConsecutiveDefers + 1) frames bounds a full six-face cycle to ~24 frames even then -
-    // still comfortably inside the 3 s refresh interval.
+    // Reading the previous frame is not enough on its own, because it cannot see a face that is
+    // itself expensive. Measured in a large base, a face is usually ~4 ms but occasionally
+    // 100-150 ms inside Camera.RenderToCubemap, and those land on frames that looked perfectly
+    // healthy a moment earlier. So each face is TIMED, and one that blew the budget arms a short
+    // cooldown - the same two-signal pacing ZoneGenPacingPatch uses, for the same reason: the
+    // expensive renders cluster (same camera position, same heavy scene), so spacing the rest of
+    // that cycle out is exactly what is wanted.
     //
-    // Provenance: technique from ontrigger's ValheimPerformanceOptimizations (MIT), reworked
+    // The starvation guard is load-bearing rather than hygiene: without it a machine that never
+    // makes budget would never publish its first cubemap at all. It bounds the cooldown too, so
+    // a permanently expensive scene still finishes its cubemap - a face every
+    // (MaxConsecutiveDefers + 1) frames, ~24 frames for a full cycle, still comfortably inside
+    // the 3 s refresh interval.
+    //
+    // Provenance: technique from ontrigger's ValheimPerformanceOptimizations (MIT),
+    // https://github.com/ontrigger/ValheimPerformanceOptimizations - reworked
     // from a component swap into this mod's prefix style so the toggle works at runtime: on
     // toggle-off the probes' realtimeTexture is handed back and vanilla's RenderProbe path
     // resumes on its own timer.
@@ -87,11 +98,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // After this many consecutive defers the face renders regardless (see header).
         private const int MaxConsecutiveDefers = 3;
 
+        // Frames to hold off after a face that blew the budget on its own.
+        private const int CooldownFrames = 4;
+
         private static Camera _camera;
         private static RenderTexture _cube1;
         private static RenderTexture _cube2;
         private static int _nextFace = FaceIdle;
         private static int _deferStreak;
+        private static int _cooldownFrames;
         private static bool _finished;
         private static Vector3 _renderPosition;
         private static bool _tookOver;
@@ -117,7 +132,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (_nextFace >= 0 && !DeferFace()) {
+                long started = Stopwatch.GetTimestamp();
                 RenderFace(__instance, _nextFace);
+
+                // A face that cost more than the whole frame budget on its own arms the cooldown;
+                // the next few frames hold off so the rest of this cycle spreads out.
+                double elapsedMs = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
+                int spent = FrameBudgetMs != null ? FrameBudgetMs.Value : 0;
+                if (spent > 0 && elapsedMs > spent) { _cooldownFrames = CooldownFrames; }
+
                 _nextFace++;
                 if (_nextFace > (int)CubemapFace.NegativeZ) {
                     _nextFace = FaceIdle;
@@ -185,6 +208,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _nextFace = (int)CubemapFace.PositiveX;
             _finished = false;
             _deferStreak = 0;
+            _cooldownFrames = 0;
         }
 
         private static void EnsureResources(ReflectionUpdate update) {
@@ -223,12 +247,20 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool DeferFace() {
             int budget = FrameBudgetMs != null ? FrameBudgetMs.Value : 0;
 
-            if (budget <= 0 || _deferStreak >= MaxConsecutiveDefers
-                || Time.unscaledDeltaTime * 1000f <= budget) {
+            // The guard outranks both signals, so the cubemap always finishes.
+            if (budget <= 0 || _deferStreak >= MaxConsecutiveDefers) {
+                _deferStreak = 0;
+                _cooldownFrames = 0;
+                return false;
+            }
+
+            bool wantDefer = Time.unscaledDeltaTime * 1000f > budget || _cooldownFrames > 0;
+            if (!wantDefer) {
                 _deferStreak = 0;
                 return false;
             }
 
+            if (_cooldownFrames > 0) { _cooldownFrames--; }
             _deferStreak++;
             return true;
         }

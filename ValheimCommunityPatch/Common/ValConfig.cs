@@ -79,6 +79,7 @@ namespace ValheimCommunityPatch {
         // Each fix owns its toggle and its description; they are bound here so every entry exists
         // before the single save flush in ValheimCommunityPatch.Awake.
         private static void BindFixToggles() {
+            TeardownHooks.BindConfig();
             Patches.Performance.LiquidVolumeLeakPatch.BindConfig();
             Patches.Performance.PortalConnectionPatch.BindConfig();
             Patches.Performance.ZdoConnectionIndexPatch.BindConfig();
@@ -99,6 +100,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.WearSupportLookupPatch.BindConfig();
             Patches.Performance.SceneIdleSkipPatch.BindConfig();
             Patches.Performance.LightCostPatch.BindConfig();
+            Patches.Performance.LightSettingsEventPatch.BindConfig();
             Patches.Performance.WearCacheEventPatch.BindConfig();
             Patches.Performance.RemoveSweepPacingPatch.BindConfig();
             Patches.Performance.SpawnQueueCachePatch.BindConfig();
@@ -109,8 +111,13 @@ namespace ValheimCommunityPatch {
             Patches.Performance.ZoneDiffRemovalPatch.BindConfig();
             Patches.Performance.ReflectionSlicePatch.BindConfig();
             Patches.Performance.PhysicsCatchupPatch.BindConfig();
-            Patches.Performance.MinimapCachePatch.BindConfig();
             Patches.Performance.SpawnEventQueuePatch.BindConfig();
+            Patches.Performance.LocationBiomeAreaCachePatch.BindConfig();
+            Patches.Performance.ZdoValueWriteAllocPatch.BindConfig();
+            Patches.Performance.ZdoReadLookupPatch.BindConfig();
+            Patches.Performance.CollisionContactsAllocPatch.BindConfig();
+            Patches.Performance.CollisionCallbackReusePatch.BindConfig();
+            Patches.Performance.VisEquipmentRefreshPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();
