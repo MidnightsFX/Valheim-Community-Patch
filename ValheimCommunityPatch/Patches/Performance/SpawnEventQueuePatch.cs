@@ -1,86 +1,40 @@
 using System.Collections.Generic;
-using System.Reflection;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: ZNetScene.CreateDestroyObjects rediscovers its own candidate set thirty
-    // times a second. Every pass clears both temp lists and calls ZDOMan.FindSectorObjects, which
-    // walks every sector in the streamed ring and copies every ZDO out of the sector stores
-    // (ZDOMan.cs:693-728); CreateObjectsSorted then re-filters that whole list on Created and
-    // re-sorts it by distance (ZNetScene.cs:152-189), only to consume its head. None of that
-    // depends on anything having changed - the ring's contents are the same set they were 33 ms
-    // ago, minus what was just spawned.
+    // Fix Object Stream Rescan: the set of objects waiting to spawn is kept as a running queue
+    // fed by the events that change it, instead of being rediscovered thirty times a second.
     //
-    // Measured in a crossing-heavy session, per second of frame time, spiky seconds vs calm:
-    // the ring scan 24.3 / 13.7, the sort 28.3 / 20.0, the re-filter 9.1 / 7.1 - against 36.5 /
-    // 30.4 for the Instantiate calls that are the actual work. Worst single seconds put the sort
-    // at 214 ms and the scan at 200 ms. That is the zone-boundary hitch: not the spawning, but
-    // the pipeline re-deriving what to spawn while the candidate set is at its largest.
+    // Every ZNetScene.CreateDestroyObjects pass calls ZDOMan.FindSectorObjects, which walks every
+    // sector in the streamed ring and copies every ZDO out, and CreateObjectsSorted then
+    // re-filters that list on Created and re-sorts it by distance, only to consume its head. That
+    // rediscovery is the zone-boundary hitch: it is most expensive exactly when the candidate set
+    // is largest.
     //
-    // Fix: hold the candidate set as a persistent QUEUE of exactly the in-ring, uncreated ZDOs,
-    // maintained by the events that can change it, and make the per-pass work "consume the head".
-    // FindSectorObjects is never called. Four feeds, three of them on hooks this mod already
-    // owns for other indexes:
+    // A Priority.First prefix replaces the pass with "consume the head" of two persistent queues
+    // (near and distant) holding exactly the in-ring, uncreated ZDOs. Four feeds keep them
+    // correct: a zone-set diff when the reference zone or a ring radius changes (entering zones
+    // enqueue their sector's contents, leaving zones dequeue theirs); ZDOMan.AddToSector and
+    // RemoveFromSector, the only mutators of the sector stores; enqueues raised during
+    // RPC_ZDOData, buffered to its postfix because that handler bounces every incoming ZDO through
+    // a sentinel sector mid-deserialisation; and ZDO.set_Created in both directions, so an object
+    // something else destroyed is recreated as vanilla would. Consumption keeps vanilla's budget,
+    // order and server-side invalid-prefab branch. The sort is lazy (re-run when the player has
+    // moved 8 m or enough arrivals have piled up at the tail), consumed slots are tombstoned
+    // rather than spliced out, and not-ready or unresolvable entries park on a deferred list
+    // instead of being re-tested every pass. The queues are keyed by ZDOID, and a parallel id
+    // list catches a pooled ZDO recycled into a different object at consume time.
     //
-    //  1. Zone-set diff. Persistent near and distant zone sets; when the reference zone moves -
-    //     or either ring radius changes, which is how a radius edit from another mod self-heals,
-    //     the same snapshot-compare SceneIdleSkipPatch uses - entering zones enqueue their sector
-    //     store's contents and departing zones dequeue theirs. A crossing therefore enqueues one
-    //     new zone column as an event instead of rescanning the world.
-    //  2. ZDOMan.AddToSector / RemoveFromSector. Verified elsewhere in this mod as the only
-    //     mutators of both sector stores (including the outside-sector map): every creation on
-    //     every path, every destroy, every sector crossing and InvalidateSector pass through
-    //     them. A ZDO arriving in an in-ring sector uncreated enqueues; leaving dequeues.
-    //  3. ZDOMan.RPC_ZDOData. Enqueues raised while that handler runs are BUFFERED and flushed in
-    //     its postfix, so a ZDO caught mid-deserialisation - the handler bounces every incoming
-    //     ZDO out to a sentinel sector and back (ZDOMan.cs:634) - never enters the queue on the
-    //     strength of a half-written sector. Not speculative: the idle-skip's ring hash hit this
-    //     exact hazard, and ontrigger's implementation hit it independently
-    //     (ValheimPerformanceOptimizations, MIT - https://github.com/ontrigger/ValheimPerformanceOptimizations).
-    //  4. ZDO.set_Created. True dequeues. False on an in-ring ZDO RE-enqueues, which preserves
-    //     vanilla's recreate-what-something-destroyed behaviour: ZNetScene.Destroy resets a
-    //     non-owned ZDO and vanilla respawns it on the next pass.
+    // Hard precondition: replacing the pass leaves vanilla's two temp lists empty, and
+    // ZNetScene.RemoveObjects treats them as its keep-set, so this stands down entirely unless
+    // ZoneDiffRemovalPatch's index is healthy, because that fix answers RemoveObjects from the
+    // index instead.
     //
-    // Consumption keeps vanilla's shape: the same budget formula against the queue's length, the
-    // same nearest-first order, the same IsActiveAreaLoaded gate, the same server-side
-    // invalid-prefab branch. What changes is that the sort is LAZY - re-run only when the queue
-    // is dirty or the player has moved 8 m, the distance at which the ordering meaningfully
-    // changes - and that consumption tombstones slots rather than reindexing, so a pass costs
-    // what it creates rather than what is waiting.
-    //
-    // Two degeneration guards, both learned the hard way here:
-    //  - Entries whose zone is not ready yet are moved to a DEFERRED list and spliced back every
-    //    few passes, instead of being re-tested every pass. Vanilla re-tests all of them thirty
-    //    times a second; while a region generates, that is the whole queue. The retry latency
-    //    this trades is the ~100 ms SpawnQueueCachePatch already established as invisible at
-    //    zone-generation granularity. A client whose CreateObject returns null (an orphaned
-    //    modded ZDO with no prefab) defers on the same list rather than being walked forever.
-    //  - Removal is O(1). A mid-queue removal that reindexes the tail is O(n) per entry and
-    //    O(n^2) across a fully gated queue, which is precisely the regime the deferred list
-    //    exists for.
-    //
-    // The queue is keyed by ZDOID, not by ZDO. ZDO overrides GetHashCode to hash its m_uid but
-    // does not override Equals (ZDO.cs:46), so a ZDO used as a dictionary key whose uid changes
-    // under the ZDO pool lands in the wrong bucket and becomes unreachable. ZDOID is a value key
-    // and cannot rot that way; the parallel id list then catches a pooled recycle at consume
-    // time, exactly as SpawnQueueCachePatch's guard does, before a recycled slot can be
-    // instantiated off-ring or fed to the server-side destroy branch.
-    //
-    // HARD PRECONDITION - the reason this class checks more than its own hooks. Replacing the
-    // pass means m_tempCurrentObjects and m_tempCurrentDistantObjects stay EMPTY, and
-    // ZNetScene.RemoveObjects treats those two lists as its keep-set: vanilla's earmark discovery
-    // handed two empty lists would unload every object in the world. ZoneDiffRemovalPatch ignores
-    // both arguments and answers from the per-zone instance index, which is why the two compose -
-    // so this class stands down entirely unless that fix's index is healthy.
-    //
-    // "Verify Spawn Queue" runs vanilla's FindSectorObjects and filter on every pass, compares
-    // the candidate set against the queue, ACTS ON VANILLA'S, and reports engagement plus any
-    // divergence with its reason. This has the largest hook-enumeration surface of anything in
-    // this mod and the wake-signal history says the first verify session finds a missed feed.
-    //
-    // Both: a dedicated server streams objects for connected players through this same pass.
+    // Both: a dedicated server streams objects through this same pass. Provenance: ontrigger's
+    // ValheimPerformanceOptimizations (MIT) for the event-fed queue, the zone-set diff and the
+    // 8 m re-sort threshold.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SpawnEventQueuePatch {
@@ -271,8 +225,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool _inZdoData;
         private static readonly List<ZDO> PendingRpc = new List<ZDO>();
 
-        private static bool _hooksChecked;
-        private static bool _hooksHealthy;
+        // The queue is only correct if every feed is attached; any missing one and this class
+        // stands down to the idle-skip and spawn-cache stack it sits above.
+        private static readonly HookHealth Hooks = new HookHealth(
+            "Spawn event queue",
+            () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "AddToSector"), typeof(AddToSectorHook))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "RemoveFromSector"), typeof(RemoveFromSectorHook))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "RPC_ZDOData"), typeof(ZdoDataHook))
+               && PatchHelper.HasHook(AccessTools.PropertySetter(typeof(ZDO), "Created"), typeof(CreatedSetterHook))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZNetScene), "CreateObjectsSorted"), typeof(SpawnEventQueuePatch))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZNetScene), "CreateDistantObjects"), typeof(SpawnEventQueuePatch)));
 
         // ---- the pass ----------------------------------------------------------------------
 
@@ -637,13 +599,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
         /// interlock is the load-bearing one: see the header.
         private static bool Engaged() {
             if (ZNet.instance == null || ZoneSystem.instance == null || ZDOMan.instance == null) { return false; }
-            if (!HooksHealthy()) { return false; }
+            if (!Hooks.Healthy) { return false; }
 
-            if (!SectorInstanceIndexPatch.MaintenanceHealthy()) { return false; }
+            if (!SectorInstanceIndexPatch.MaintenanceHealthy) { return false; }
 
-            // That fix's own verify reconstructs vanilla's keep-set from the two lists this
-            // class leaves empty, so the two diagnostics do not compose - stand aside and let it
-            // measure against the vanilla pass it is written against.
+            // That fix's verify reconstructs vanilla's keep-set from the two lists this class
+            // leaves empty, so the two diagnostics do not compose.
             if (ZoneDiffRemovalPatch.Verify != null && ZoneDiffRemovalPatch.Verify.Value) { return false; }
 
             return true;
@@ -667,50 +628,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static class ShutdownHook {
             [HarmonyPostfix]
             private static void Postfix() => ResetSession(null);
-        }
-
-        /// The queue is only correct if every feed is attached; any missing one and this class
-        /// stands down to the idle-skip and spawn-cache stack it sits above.
-        private static bool HooksHealthy() {
-            if (_hooksChecked) { return _hooksHealthy; }
-            _hooksChecked = true;
-
-            _hooksHealthy =
-                HasOurHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "AddToSector"), typeof(AddToSectorHook))
-                && HasOurHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "RemoveFromSector"), typeof(RemoveFromSectorHook))
-                && HasOurHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "RPC_ZDOData"), typeof(ZdoDataHook))
-                && HasOurHook(AccessTools.PropertySetter(typeof(ZDO), "Created"), typeof(CreatedSetterHook))
-                && HasOurHook(AccessTools.DeclaredMethod(typeof(ZNetScene), "CreateObjectsSorted"), typeof(SpawnEventQueuePatch))
-                && HasOurHook(AccessTools.DeclaredMethod(typeof(ZNetScene), "CreateDistantObjects"), typeof(SpawnEventQueuePatch));
-
-            if (!_hooksHealthy) {
-                Logger.LogError(
-                    "Spawn event queue: a feed hook is not attached, so the queue cannot be kept " +
-                    "correct and object streaming is running the previous path for this session. " +
-                    "This usually means a Valheim update changed those methods - look for the " +
-                    "patch failure logged at startup.");
-            }
-
-            return _hooksHealthy;
-        }
-
-        private static bool HasOurHook(MethodBase target, System.Type hookClass) {
-            HarmonyLib.Patches info = target == null ? null : Harmony.GetPatchInfo(target);
-            if (info == null) { return false; }
-
-            foreach (Patch patch in info.Postfixes) {
-                if (patch.owner != ValheimCommunityPatch.PluginGUID) { continue; }
-                if (patch.PatchMethod == null || patch.PatchMethod.DeclaringType != hookClass) { continue; }
-                return true;
-            }
-
-            foreach (Patch patch in info.Prefixes) {
-                if (patch.owner != ValheimCommunityPatch.PluginGUID) { continue; }
-                if (patch.PatchMethod == null || patch.PatchMethod.DeclaringType != hookClass) { continue; }
-                return true;
-            }
-
-            return false;
         }
 
         // ---- verify ---------------------------------------------------------------------------

@@ -1,39 +1,27 @@
 using System.Collections.Generic;
-using System.Reflection;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: Heightmap.FindHeightmap(point) is a linear scan of every loaded zone heightmap,
-    // and the IsPointInside test it runs per candidate reads transform.position - a native interop
-    // call - each time:
+    // Fix Heightmap Lookup Scan: "which terrain tile is this point on" is a zone-keyed lookup
+    // instead of a scan of every loaded tile with a native position read per candidate.
     //
-    //   foreach (Heightmap heightmap in Heightmap.s_heightmaps)
-    //     if (heightmap.IsPointInside(point)) return heightmap;
+    // Heightmap.FindHeightmap(point) loops over s_heightmaps calling IsPointInside, which reads
+    // transform.position each time, and HaveQueuedRebuild(point, radius) has the same shape.
+    // With the 50-100 heightmaps of a busy area that is thousands of native reads a second for
+    // answers that never change: a zone heightmap is instantiated at its zone centre and never
+    // moves.
     //
-    // The static HaveQueuedRebuild(point, radius) has the same shape through the radius overload, and
-    // ClutterSystem.IsHeightmapReady runs it every LateUpdate. With the ~50-100 heightmaps of a busy
-    // area that is thousands of interop calls per second for lookups whose answer is a pure function
-    // of geometry that never changes: a zone heightmap is instantiated at its zone centre and never
-    // moves (only the distant-LOD maps move, and vanilla itself excludes those from s_heightmaps,
-    // Heightmap.cs:117-120).
+    // A registry mirrors s_heightmaps with cached centres, filed by zone. FindHeightmap becomes
+    // one ZoneSystem.GetZone plus a dictionary hit, with a scan over cached floats as the fallback
+    // for mod-created maps that are not zone-aligned, in s_heightmaps order so the first match is
+    // vanilla's. HaveQueuedRebuild becomes pure math. The radius overload of FindHeightmap is
+    // left vanilla because terrain-op fan-out writes terrain data through it. For a point exactly
+    // on a shared edge vanilla returns whichever map registered first and this returns the zone's
+    // own map; both contain the point and share identical edge vertices.
     //
-    // Fix: mirror the registry with cached centres and a zone-keyed dictionary. FindHeightmap becomes
-    // one ZoneSystem.GetZone plus a dictionary hit in the common case, and the fallback scan runs on
-    // cached floats instead of transform reads. HaveQueuedRebuild(point, radius) becomes a pure-math
-    // scan. The radius overload of FindHeightmap is deliberately left vanilla: terrain-op fan-out
-    // writes terrain data through it, and this fix does not get to trade that risk for microseconds.
-    //
-    // Known divergence, by design: for a point exactly on a shared zone edge - which both zones'
-    // inclusive bounds contain - vanilla returns whichever qualifying map registered first, an order
-    // accident; the fast path returns the map of the zone GetZone assigns the point to. Both contain
-    // the point, and shared-edge vertices are identical between neighbouring maps (see
-    // SeamlessNormalsPatch's header), so no caller can tell the difference. The Verify toggle exists
-    // to prove that empirically on a live game.
-    //
-    // Both: FindHeightmap runs on dedicated servers too, via ZoneSystem ground queries and
-    // StaticPhysics.
+    // Both: FindHeightmap runs on a dedicated server through ground queries and StaticPhysics.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class HeightmapLookupPatch {
@@ -58,13 +46,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
             public float m_half;
         }
 
-        // Mirrors s_heightmaps: same membership, same order, so the fallback scan preserves
-        // vanilla's first-match answer. ByZone is the fast path on top.
+        // Same membership and order as s_heightmaps; ByZone is the fast path on top.
         private static readonly List<Entry> Registered = new List<Entry>();
         private static readonly Dictionary<Vector2i, Entry> ByZone = new Dictionary<Vector2i, Entry>();
 
-        private static bool _hooksChecked;
-        private static bool _hooksHealthy;
+        // A missing hook means the registry diverges from s_heightmaps and a wrong FindHeightmap
+        // answer feeds terrain queries game-wide, so the answer gates the fix entirely.
+        private static readonly HookHealth Hooks = new HookHealth(
+            "Heightmap registry",
+            () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "Awake"), typeof(AwakeHook))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "OnDestroy"), typeof(DestroyHook))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), nameof(Heightmap.Regenerate)), typeof(RegenerateHook)));
 
         // ---- registry maintenance ----------------------------------------------------------
 
@@ -81,19 +73,18 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         /// <summary>
         /// Registry-served lookup with the cached transform origin, for in-mod callers that would
-        /// otherwise pay a native transform read per query (HeightmapSampling's data paths).
+        /// otherwise pay a native transform read per query.
         /// </summary>
         /// <remarks>
-        /// Returns false only when the registry cannot serve (hooks unhealthy) - the
-        /// caller then falls back to Heightmap.FindHeightmap plus a live transform read. A true
-        /// return with a null <paramref name="hmap"/> is a definitive miss: no registered map
-        /// contains the point, exactly as vanilla's scan would conclude.
+        /// Returns false only when the registry cannot serve; the caller then falls back to
+        /// Heightmap.FindHeightmap plus a live transform read. True with a null
+        /// <paramref name="hmap"/> is a definitive miss.
         /// </remarks>
         internal static bool TryGetCached(Vector3 point, out Heightmap hmap, out Vector3 origin) {
             hmap = null;
             origin = default;
 
-            if (!HooksHealthy()) { return false; }
+            if (!Hooks.Healthy) { return false; }
 
             if (ByZone.TryGetValue(ZoneSystem.GetZone(point), out Entry entry) && Contains(entry, point)) {
                 hmap = entry.m_hmap;
@@ -115,9 +106,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static void FileByZone(Entry entry) {
             Vector2i zone = ZoneSystem.GetZone(new Vector3(entry.m_cx, 0f, entry.m_cz));
 
-            // Two maps claiming one zone should not happen for zone terrain - UpdateTTL destroys a
-            // zone before PokeLocalZone recreates it on a later tick - but a mod-created heightmap
-            // could. Last writer wins; the containment check and scan fallback keep lookups correct.
+            // Two maps claiming one zone should not happen for zone terrain, but a mod-created
+            // heightmap could. Last writer wins; the containment check and scan keep lookups right.
             if (ByZone.TryGetValue(zone, out Entry existing) && !ReferenceEquals(existing.m_hmap, entry.m_hmap)) {
                 Logger.LogDebug($"Two heightmaps registered for zone {zone}; keeping the newest.");
             }
@@ -132,7 +122,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // Mirrors vanilla's registration condition exactly (Heightmap.Awake, Heightmap.cs:117-120).
+        // Mirrors vanilla's registration condition in Heightmap.Awake.
         [HarmonyPatch(typeof(Heightmap), "Awake")]
         internal static class AwakeHook {
             [HarmonyPostfix]
@@ -159,10 +149,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // Zone heightmaps never move, so this refresh should always be a no-op re-file. It exists
-        // so that if anything ever does relocate a registered map, the next Regenerate - which any
-        // meaningful move must trigger to be visible at all - re-syncs the cache instead of leaving
-        // it silently wrong.
+        // Zone heightmaps never move, so this is normally a no-op. It exists so that if anything
+        // ever relocates a registered map, the Regenerate any visible move must trigger re-syncs
+        // the cache instead of leaving it wrong.
         [HarmonyPatch(typeof(Heightmap), nameof(Heightmap.Regenerate))]
         internal static class RegenerateHook {
             [HarmonyPrefix]
@@ -187,8 +176,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- lookups -----------------------------------------------------------------------
 
+        // Vanilla's IsPointInside with radius 0, on the cached centre: inclusive on all edges.
         private static bool Contains(in Entry entry, Vector3 point) {
-            // Vanilla's IsPointInside with radius 0, on the cached centre: inclusive on all edges.
             return point.x >= entry.m_cx - entry.m_half && point.x <= entry.m_cx + entry.m_half
                 && point.z >= entry.m_cz - entry.m_half && point.z <= entry.m_cz + entry.m_half;
         }
@@ -198,8 +187,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return entry.m_hmap;
             }
 
-            // Mod-created maps that are not zone-aligned, and the brief window between spawn ticks.
-            // Same order as s_heightmaps, so the first match is the same map vanilla's scan finds.
             for (int i = 0; i < Registered.Count; i++) {
                 if (Contains(Registered[i], point)) { return Registered[i].m_hmap; }
             }
@@ -210,7 +197,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Heightmap.FindHeightmap), typeof(Vector3))]
         private static bool FindHeightmapPrefix(Vector3 point, ref Heightmap __result) {
-            if (!HooksHealthy()) { return true; }
+            if (!Hooks.Healthy) { return true; }
 
             Heightmap fast = FastFind(point);
 
@@ -218,8 +205,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 Heightmap vanilla = VanillaFind(point);
 
                 if (!ReferenceEquals(fast, vanilla)) {
-                    // Different instances that both contain the point is the documented shared-edge
-                    // tie, not a defect. Anything else is.
+                    // Two maps that both contain the point is the shared-edge tie, not a defect.
                     bool tie = fast != null && vanilla != null && fast.IsPointInside(point) && vanilla.IsPointInside(point);
                     if (tie) {
                         Logger.LogDebug($"Heightmap registry verify: shared-edge tie at {point}.");
@@ -250,13 +236,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return null;
         }
 
-        // The ClutterSystem hot path: called every LateUpdate to decide whether grass may generate.
-        // Vanilla materialises the radius overload's list just to ask a yes/no question; this is the
-        // same inclusive bounds test and the same m_doLateUpdate read, minus the interop.
+        // The ClutterSystem hot path: the same inclusive bounds test and the same
+        // m_doLateUpdate read, minus the native reads and the list vanilla materialises.
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Heightmap.HaveQueuedRebuild), typeof(Vector3), typeof(float))]
         private static bool HaveQueuedRebuildPrefix(Vector3 point, float radius, ref bool __result) {
-            if (!HooksHealthy()) { return true; }
+            if (!Hooks.Healthy) { return true; }
 
             __result = false;
             for (int i = 0; i < Registered.Count; i++) {
@@ -270,59 +255,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             return false;
-        }
-
-        // ---- hook health -------------------------------------------------------------------
-
-        /// True only when every maintenance hook is attached by us. A missing one means the registry
-        /// silently diverges from s_heightmaps, and a wrong FindHeightmap answer feeds terrain
-        /// queries game-wide - so the answer gates the fix entirely.
-        private static bool HooksHealthy() {
-            if (_hooksChecked) { return _hooksHealthy; }
-            _hooksChecked = true;
-
-            string missing = null;
-            NoteIfUnhooked(AccessTools.DeclaredMethod(typeof(Heightmap), "Awake"), "Heightmap.Awake", ref missing);
-            NoteIfUnhooked(AccessTools.DeclaredMethod(typeof(Heightmap), "OnDestroy"), "Heightmap.OnDestroy", ref missing);
-            NoteIfUnhooked(AccessTools.DeclaredMethod(typeof(Heightmap), nameof(Heightmap.Regenerate)), "Heightmap.Regenerate", ref missing);
-
-            _hooksHealthy = missing == null;
-
-            if (!_hooksHealthy) {
-                Logger.LogError(
-                    $"Heightmap registry: the hook on {missing} is not attached, so the registry " +
-                    "cannot be trusted and terrain tile lookups have fallen back to vanilla's scan " +
-                    "for this session. This usually means a Valheim update changed that method - " +
-                    "look for the patch failure logged at startup.");
-            }
-
-            return _hooksHealthy;
-        }
-
-        private static void NoteIfUnhooked(MethodBase target, string label, ref string missing) {
-            bool ours = false;
-            // Fully qualified: HarmonyLib.Patches collides with this mod's own Patches namespace.
-            HarmonyLib.Patches info = target == null ? null : Harmony.GetPatchInfo(target);
-
-            if (info != null) {
-                foreach (Patch patch in info.Postfixes) {
-                    if (patch.owner != ValheimCommunityPatch.PluginGUID) { continue; }
-                    ours = true;
-                    break;
-                }
-
-                if (!ours) {
-                    foreach (Patch patch in info.Prefixes) {
-                        if (patch.owner != ValheimCommunityPatch.PluginGUID) { continue; }
-                        ours = true;
-                        break;
-                    }
-                }
-            }
-
-            if (ours) { return; }
-
-            missing = missing == null ? label : missing + " and " + label;
         }
     }
 }

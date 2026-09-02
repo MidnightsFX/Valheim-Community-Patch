@@ -3,32 +3,21 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: StaticPhysics - the component on every tree, rock and placed prop that checks
-    // whether the ground under it disappeared - re-reads this.transform and this.transform.position
-    // around six times per check across SUpdate/CheckFall/GetFallHeight/PushUp, each a native
-    // interop call, and answers "how high is the terrain here" with a 10 km Physics.Raycast
-    // (ZoneSystem.GetGroundHeight) even though for the common no-solids case the answer is a pure
-    // data lookup in the heightmap the ray would hit.
+    // Fix Static Object Ground Checks: a tree or rock's ground check reads its transform once
+    // instead of about six times, and can answer the terrain height from heightmap data.
     //
-    // SlowUpdater drives 100 SUpdate calls per frame continuously (SlowUpdater.cs:28), and every
-    // StaticPhysics schedules its first check 20 seconds after Awake - so a zone-generation burst
-    // turns into a delayed wave of raycasts. Profiling attributed ~81 seconds of a day-long session
-    // to these checks, concentrated after fresh generation.
+    // StaticPhysics.SUpdate and the methods it calls re-read this.transform and
+    // transform.position about six times per check, each a native call, and answer "how high is
+    // the terrain here" with a 10 km Physics.Raycast through ZoneSystem.GetGroundHeight.
+    // SlowUpdater drives 100 of these checks per frame continuously.
     //
-    // Fix, part one (always on): reimplement SUpdate with the transform fetched once
-    // and its position read once, threaded through the same logic. Order, thresholds and side
-    // effects mirror vanilla exactly, including PushUp still running in the tick whose CheckFall
-    // just started a fall.
+    // A prefix replaces SUpdate with the same logic, order and thresholds, with the transform and
+    // position fetched once. An advanced, default-off toggle further answers the terrain height
+    // for objects that do not check solids from heightmap data (HeightmapSampling evaluates the
+    // same surface the ray would hit). Objects with m_checkSolids keep the raycast, because
+    // GetSolidHeight has to see rocks and buildings. The falling path is untouched.
     //
-    // Fix, part two (advanced, off by default): for m_checkSolids == false objects, replace the
-    // GetGroundHeight raycast with the height of the collision surface computed from heightmap data:
-    // same triangle split as RebuildCollisionMesh (the quad's B-D anti-diagonal, Heightmap.cs:
-    // 487-502), so it evaluates the same surface the ray would hit, without PhysX. m_checkSolids
-    // objects keep the raycast - GetSolidHeight genuinely needs to see rocks and buildings. The
-    // falling path (FallUpdate) is untouched either way; it is movement, not a check.
-    //
-    // Both: dedicated servers run StaticPhysics for the objects around world origin and for whatever
-    // vanilla simulates server-side; the check cost is the same wherever it runs.
+    // Both: a dedicated server runs StaticPhysics for its own active area.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(StaticPhysics))]
     internal static class StaticPhysicsCachePatch {
@@ -48,7 +37,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(StaticPhysics.SUpdate))]
         private static bool SUpdatePrefix(StaticPhysics __instance, float time, Vector2i referenceZone) {
-            // Vanilla's gate order: falling, ShouldUpdate (time > m_updateTime), active area.
+            // Vanilla's gate order: falling, ShouldUpdate, active area.
             if (__instance.m_falling || time <= __instance.m_updateTime) { return false; }
 
             Transform transform = __instance.transform;
@@ -66,7 +55,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static void CheckFall(StaticPhysics sp, Transform transform, Vector3 position) {
             if (position.y <= GetFallHeight(sp, transform, position) + 0.05f) { return; }
 
-            // Vanilla's Fall(): sets m_falling and starts the FallUpdate InvokeRepeating loop.
             sp.Fall();
         }
 
@@ -97,13 +85,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
             nview.GetZDO().SetPosition(position);
         }
 
-        // The terrain-height question, answered vanilla's way or from data per the advanced toggle.
         private static bool GroundHeight(Vector3 position, out float height) {
             if (UseHeightmapData == null || !UseHeightmapData.Value) {
                 return ZoneSystem.instance.GetGroundHeight(position, out height);
             }
 
-            // Registry path first: cached origin, no native reads. Fallback when it cannot serve.
             Heightmap hmap;
             Vector3 origin;
             if (!HeightmapLookupPatch.TryGetCached(position, out hmap, out origin)) {
@@ -111,14 +97,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 origin = hmap != null ? hmap.transform.position : Vector3.zero;
             }
 
+            // No loaded heightmap is where the raycast would also have missed.
             if (hmap == null) {
-                // No loaded heightmap is also where the raycast would have found no terrain
-                // collider; mirror vanilla's miss result.
                 height = 0f;
                 return false;
             }
 
-            // Same surface the raycast would hit - see HeightmapSampling for the triangulation.
             return HeightmapSampling.TryGetHeight(hmap, origin, position, out height);
         }
     }

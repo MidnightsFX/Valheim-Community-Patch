@@ -2,31 +2,21 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: every 256 m of travel, TerrainLod rebuilds its whole distant-terrain ring -
-    // nine 81x81-vertex heightmaps - in a single frame (TerrainLod.RebuildAllHeightmaps,
-    // TerrainLod.cs:79-84). Each rebuild runs the full Heightmap.Regenerate chain, including a
-    // per-vertex WorldGenerator.GetBiome on the main thread in RebuildRenderMesh (distant-LOD
-    // maps colour vertices by live biome lookup, Heightmap.cs:538). The result is a reliable
-    // hitch on a fixed travel cadence - most noticeable sailing.
+    // Fix Distant Terrain Hitch: the far-terrain ring rebuilds a few tiles per frame instead of
+    // all nine at once.
     //
-    // Fix: rebuild at most N of the nine per frame (default 3). The state machine cooperates:
-    // while any map is still pending, the global state stays NeedsRebuild, so UpdateHeightmaps
-    // re-enters next frame, and NeedsRebuild() short-circuits on that state without re-targeting
-    // m_lastPoint mid-cycle (TerrainLod.cs:119). One companion hook is load-bearing: vanilla's
-    // per-map IsTerrainReady treats anything not ReadyToRebuild as "ask the build thread"
-    // (TerrainLod.cs:101-106), and a map already rebuilt this cycle has had its build data
-    // consumed - without the short-circuit below, IsAllTerrainReady would re-enqueue finished
-    // maps on the build thread, flip them back to ReadyToRebuild when the redundant build lands,
-    // and rebuild them again. Vanilla never evaluates a Done map mid-cycle (the global Done state
-    // short-circuits first), so the hook is behaviour-neutral for vanilla flow.
+    // Every 256 m of travel TerrainLod.RebuildAllHeightmaps regenerates its nine 81x81 distant
+    // heightmaps in one frame, each with a per-vertex biome lookup on the main thread. That is a
+    // reliable hitch on a fixed travel cadence, most noticeable while sailing.
     //
-    // Trade-off, documented rather than hidden: during the spread (three frames at the default
-    // budget) the 3x3 ring is positionally torn - rebuilt tiles sit at the new centre, pending
-    // ones at the old. At 800+ metres under distance fog that is far less visible than the hitch;
-    // the budget is configurable and 9 restores vanilla exactly.
+    // A prefix rebuilds at most Budget tiles per call and leaves the global state at NeedsRebuild
+    // until the ring is complete, so UpdateHeightmaps re-enters next frame. A companion prefix on
+    // IsTerrainReady reports a tile already rebuilt this cycle as ready; without it vanilla would
+    // re-enqueue that tile on the build thread and rebuild it again. During the spread the ring is
+    // briefly torn between the old and new centre, which under distance fog is far less visible
+    // than the hitch. A budget of 9 is exactly vanilla.
     //
-    // Client: the whole system is camera-driven (NeedsRebuild requires a main camera); nothing
-    // headless ever rebuilds distant terrain.
+    // Client: the system needs a camera.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(TerrainLod))]
     internal static class TerrainLodSpreadPatch {
@@ -61,21 +51,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     break;
                 }
 
-                // Vanilla's per-map rebuild: repositions to the new centre and Regenerates,
-                // marking the map Done.
                 __instance.RebuildHeightmap(entry);
                 rebuilt++;
             }
 
-            // Global Done only when the ring is complete; otherwise the state stays NeedsRebuild
-            // and UpdateHeightmaps re-enters next frame.
             if (!remaining) { __instance.m_heightmapState = TerrainLod.HeightmapState.Done; }
 
             return false;
         }
 
-        // A map rebuilt earlier in this cycle is ready by definition - see the header for why
-        // letting vanilla ask the build thread about it causes redundant rebuilds.
         [HarmonyPrefix]
         [HarmonyPatch("IsTerrainReady", typeof(TerrainLod.HeightmapWithOffset))]
         private static bool IsTerrainReadyPrefix(TerrainLod.HeightmapWithOffset heightmapWithOffset, ref bool __result) {

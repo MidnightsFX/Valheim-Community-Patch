@@ -126,7 +126,7 @@ that session, about 1.5 s was this mod. Two fixes here, plus a diagnostic.
   the game, guarding work that cost 0.07 ms/s across the whole session — the fix was two orders of
   magnitude more expensive than the defect. It is deleted, not toggled off: vanilla's eager default
   is simply cheaper than any per-call interception of a method that hot. Recorded in the source so
-  it does not come back as a prefix. See `Investigations/2026-09-01-wearntear-support-round.md`.
+  it does not come back as a prefix.
 
 - **The support sleep and support lookup were put on trial and validated** — no behaviour change,
   recorded because the measurements were close enough that deletion was on the table. A first A/B
@@ -136,8 +136,7 @@ that session, about 1.5 s was this mod. Two fixes here, plus a diagnostic.
   constant invalidation and a 2.6x win in its normal regime. The collider lookup swaps ~10 ms/s of
   dictionary probes for ~10 ms/s of hierarchy walks in absolute terms, but serves ~40% more call
   volume per unit cost and removes an allocating enumerator per overlap hit; normalized it is ~30%
-  cheaper per call and scales with base size. Both stay, now with the evidence attached
-  (`Investigations/2026-09-01-wearntear-support-round.md`).
+  cheaper per call and scales with base size. Both stay.
 
 - **Log Destroy Storm Stats** *(diagnostic, admin-only, default off)* — buckets every frame by how
   many networked objects were torn down in it and reports the frame time each bucket ran at, next to

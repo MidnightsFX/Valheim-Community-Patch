@@ -7,14 +7,10 @@ using Jotunn.Utils;
 
 namespace ValheimCommunityPatch
 {
-    // Not EveryoneMustHaveMod: every fix here is safe one-sided. The mod adds no prefabs, recipes or
-    // save data, and its one custom RPC is ignored by peers that do not know it, so a modded client
-    // can join a vanilla server and a modded server can accept vanilla clients. Roughly half the
-    // fixes only do anything on one side; the README tags each one.
-    //
-    // VersionCheckOnly still enforces VersionStrictness when both sides do have it, which is the case
-    // that matters: a client and server on different versions of this mod can disagree about
-    // behaviour, and that should be refused up front rather than debugged later.
+    // Not EveryoneMustHaveMod: every fix is safe one-sided. The mod adds no prefabs, recipes or
+    // save data, and its one custom RPC is ignored by peers without it. VersionCheckOnly still
+    // refuses a client and server on different versions of this mod, which is the one case where
+    // the two sides could disagree about behaviour.
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [BepInDependency(Jotunn.Main.ModGuid)]
     [NetworkCompatibility(CompatibilityLevel.VersionCheckOnly, VersionStrictness.Minor)]
@@ -25,63 +21,37 @@ namespace ValheimCommunityPatch
         public const string PluginVersion = "0.21.0";
 
         internal static ManualLogSource Log;
-        internal ValConfig cfg;
 
         private readonly Harmony harmony = new Harmony(PluginGUID);
 
         public void Awake() {
-            Log = this.Logger;
-            cfg = new ValConfig(Config);
+            Log = Logger;
+            ValConfig.Bind(Config);
 
-            // Engine-flag fixes with no Harmony patch and no config apply here.
+            // An engine flag with no Harmony patch behind it.
             Patches.Performance.CollisionCallbackReusePatch.Apply();
 
-            // All startup hooks should go after the config & Logger have been wired up.
             ApplyPatches();
-
-            // Configs are not written until after they are all wired up, they exist in memory before this.
-            // Flushing all of the configs at once is a significant speedup in mod load time
-            ValConfig.SaveOnSet(true);
         }
 
-        // Deliberately not Harmony.PatchAll: this mod ships many independent fixes, and PatchAll aborts
-        // the whole batch the moment one target fails to resolve. After a game update that renames or
-        // removes a single vanilla method, we want the other fixes to keep working and one clear error
-        // in the log - not a mod that silently does nothing.
+        // Each patch class is applied on its own rather than through Harmony.PatchAll, so a game
+        // update that breaks one target logs one error and leaves every other fix working.
         //
-        // Correctness and terrain fixes check their own config toggle at runtime, so a fix switched
-        // off in the config is a cheap bool check, not an unpatched method. The exceptions are
-        // transpilers, which read their toggle at patch time and therefore need a restart to change.
-        // Performance fixes have no toggle - they are always on.
+        // Two rules every patch class follows:
         //
-        // Every transpiler in this mod is declared [HarmonyPriority(Priority.Last)], and that is a
-        // compatibility rule rather than a preference. Harmony rebuilds a method from its original IL
-        // each time a patch is added and applies all transpilers in descending priority order, so
-        // priority - not BepInEx load order - decides who sees vanilla IL. Ours rewrite call operands
-        // in place, which is exactly what a mod using CodeMatcher.ThrowIfNotMatch is matching on: if we
-        // go first, their matcher misses, they throw, and HarmonyX drops the whole method - losing both
-        // mods' fixes and anyone else's patches on it. Ours are the tolerant side, since every one of
-        // them counts what it rewrote and returns the instructions untouched when the count is wrong,
-        // so ours are the ones that yield. This is what lets us share Container.RPC_RequestOpen,
-        // ZSteamSocket.SendQueuedPackages and Projectile.FixedUpdate with ComfyMods' BetterZeeLog.
+        //  - Transpilers run at Priority.Last. Harmony applies transpilers in priority order, so
+        //    ours see IL that other mods have already rewritten. Each of ours counts what it
+        //    changed and stands down when the count is wrong, so where another mod has fixed the
+        //    same defect its version wins instead of both mods breaking the method.
         //
-        // The one hole left: a mod that also uses Priority.Last and hard-matches IL puts us back on
-        // registration order. Nothing to do about that from here, but it is where to look first if
-        // this class of breakage ever shows up again.
-        //
-        // The one thing decided here rather than at runtime is the side. Every patch class declares a
-        // [PatchSide], and the client-only ones are not applied at all on a dedicated server, where
-        // nothing could ever reach them. Headless-ness is the only environment question answerable
-        // this early - ZNet does not exist yet - and it is fixed for the life of the process, which is
-        // what makes it safe to patch against. Server-side fixes are never skipped for exactly that
-        // reason in reverse: this process may start hosting a world later in the same run.
+        //  - Client-only fixes (see PatchSide) are not applied on a dedicated server. Whether the
+        //    process is headless is the only environment fact known this early, and it never
+        //    changes, so it is safe to decide at patch time. Server fixes are always applied
+        //    because this process may start hosting a world later.
         private void ApplyPatches() {
             int applied = 0, failed = 0, skipped = 0;
             int client = 0, server = 0, both = 0;
 
-            // Read once. ValConfig is constructed before this runs so the entry exists, but the null
-            // check matches how every fix reads its own toggle and keeps the ordering from being load
-            // bearing.
             bool patchEverySide = ValConfig.PatchEverySide != null && ValConfig.PatchEverySide.Value;
 
             foreach (Type type in Assembly.GetExecutingAssembly().GetTypes()) {
@@ -89,14 +59,13 @@ namespace ValheimCommunityPatch
 
                 Side side = PatchSideAttribute.Of(type);
 
-                // A fix is one top-level patch class. Some own nested hook classes, which reach this
-                // loop as types in their own right and are patched normally, but counting them would
-                // inflate the totals below past what the README lists.
+                // A fix is one top-level patch class. Nested hook classes are patched too, but
+                // counting them would inflate the totals past what the README lists.
                 bool isFix = type.DeclaringType == null;
 
                 if (side == Side.Client && RunMode.IsHeadless && !patchEverySide) {
                     if (isFix) { skipped++; }
-                    Logger.LogDebug($"Skipped {type.Name}: client-only, and this process is headless.");
+                    Log.LogDebug($"Skipped {type.Name}: client-only, and this process is headless.");
                     continue;
                 }
 
@@ -110,15 +79,14 @@ namespace ValheimCommunityPatch
                             default: both++; break;
                         }
                     }
-                    Logger.LogDebug($"Applied {type.Name} {PatchSideAttribute.Tag(side)}.");
+                    Log.LogDebug($"Applied {type.Name} {PatchSideAttribute.Tag(side)}.");
                 } catch (Exception ex) {
                     failed++;
                     Log.LogError($"Could not apply {type.Name}: {ex}");
                 }
             }
 
-            // Always break the count down by side: on a one-sided install this line is what tells an
-            // admin what they actually got, without having to cross-reference the README.
+            // Broken down by side so a one-sided install can see what it actually got.
             Log.LogInfo($"{applied} fix(es) applied: {server} server, {both} both, {client} client.");
 
             if (skipped > 0) {

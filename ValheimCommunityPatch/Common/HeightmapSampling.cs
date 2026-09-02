@@ -10,14 +10,11 @@ namespace ValheimCommunityPatch {
     /// <remarks>
     /// Heightmap.RebuildCollisionMesh builds each grid cell as two triangles split along the
     /// B-D anti-diagonal: (A, D, B) then (B, D, C), where A=(x,y), B=(x+1,y), C=(x+1,y+1),
-    /// D=(x,y+1) (Heightmap.cs:487-502). These helpers interpolate height and take the triangle
-    /// plane normal using that exact split, so they evaluate the same surface a terrain-layer
-    /// raycast hits and return the same geometric normal - modulo one deliberate difference:
-    /// a raycast sees the last *baked* collider while this reads the current data, and the data
-    /// is never staler than the collider.
+    /// D=(x,y+1). These helpers interpolate height and take the triangle normal using that same
+    /// split, so they answer what a terrain-layer raycast would hit. One difference: a raycast
+    /// sees the last baked collider, while this reads the current data, which is never staler.
     ///
-    /// Used by StaticPhysicsCachePatch (ground checks) and ClutterGroundDataPatch (grass
-    /// placement). Shared here so the triangulation knowledge lives in one place.
+    /// Used by the ground-check and grass-placement fixes, so the triangulation lives in one place.
     /// </remarks>
     internal static class HeightmapSampling {
         /// <summary>Height of the collision surface at (position.x, position.z), world space.</summary>
@@ -25,13 +22,12 @@ namespace ValheimCommunityPatch {
             return Sample(hmap, hmap.transform.position, position, out height, out _, false);
         }
 
-        /// <summary>Same, with the heightmap origin already in hand (e.g. from the lookup registry),
-        /// saving the native transform read per query.</summary>
+        /// <summary>Same, with the heightmap origin already in hand, saving the transform read.</summary>
         internal static bool TryGetHeight(Heightmap hmap, Vector3 origin, Vector3 position, out float height) {
             return Sample(hmap, origin, position, out height, out _, false);
         }
 
-        /// <summary>Height and geometric (triangle) normal of the collision surface.</summary>
+        /// <summary>Height and triangle normal of the collision surface.</summary>
         internal static bool TryGetSurface(Heightmap hmap, Vector3 position, out float height, out Vector3 normal) {
             return Sample(hmap, hmap.transform.position, position, out height, out normal, true);
         }

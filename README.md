@@ -364,10 +364,8 @@ The two log fixes redirect rather than delete: turn on `EnableDebugMode` and the
 
 This mod fixes vanilla defects, and other modders found — and in several cases already fixed — a good
 number of them first. Where that is true it is recorded below, and in a comment at the top of the
-patch file. [CREDITS.md][credits] has the detail: exactly what was taken, what was deliberately left
-out, and how our implementation differs and why.
+patch file.
 
-[credits]: https://github.com/MidnightsFX/Valheim-Community-Patch/blob/master/CREDITS.md
 [vpo]: https://github.com/ontrigger/ValheimPerformanceOptimizations
 
 The mods involved:
@@ -454,7 +452,7 @@ The mods involved:
 | Fix Projectile Rotation Spam | ComfyMods — BetterZeeLog | The same fix |
 | Fix Send Failure Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the call, this one redirects it |
 | Fix Container Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the calls, this one redirects them |
-| Fix Item Icon Crash | ComfyMods — LetMePlay | The defect; deliberately a smaller fix here, see CREDITS.md |
+| Fix Item Icon Crash | ComfyMods — LetMePlay | The defect; a smaller fix here that leaves the shared item data alone |
 | Fix Negative Stamina | MidnightsFX | — |
 | Fix Dungeon Load Stall | MidnightsFX | — |
 

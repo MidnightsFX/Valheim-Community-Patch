@@ -1,28 +1,21 @@
-using System;
 using System.Collections.Generic;
 using System.Reflection;
-using System.Reflection.Emit;
 using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Vanilla defect: ZDOMan.Load indexes every loaded ZDO with Dictionary.Add:
+    // Tolerate Duplicate ZDOs On Load: a save containing two ZDOs with the same id loads instead
+    // of aborting.
     //
-    //   foreach (ZDO zdo in zdos) {
-    //     this.m_objectsByID.Add(zdo.m_uid, zdo);
-    //     ...
-    //   }
+    // ZDOMan.Load indexes every ZDO with Dictionary.Add, which throws on a duplicate key. A save
+    // damaged by a crash mid-write, a botched world merge or a mod minting its own ids then refuses
+    // to load at all.
     //
-    // Add throws on a duplicate key. A save file containing two ZDOs with the same ZDOID - which
-    // happens after a crash mid-save, a botched world merge, or a mod that mints its own IDs - takes
-    // the whole world load down with an ArgumentException, and the world becomes unloadable.
+    // A transpiler swaps that Add for an indexer write that keeps the later entry and logs a
+    // warning. One of the two was already unreachable in vanilla's index, so recovering the world
+    // is strictly better than refusing it.
     //
-    // Fix: keep the last occurrence and log, rather than aborting. A duplicated ZDOID means one of the
-    // two is already unreachable in vanilla's own index; recovering the world is strictly better than
-    // refusing to open it.
-    //
-    // Server: ZDOMan.Load only runs on the host, via ZNet.Start's if (m_isServer) branch. A runtime
-    // gate would be impossible here anyway - this is a transpiler.
+    // Server: ZDOMan.Load only runs on the host. Provenance: ComfyMods/Atlas (GPL-3.0, redseiko).
     [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoLoadDuplicatePatch {
@@ -43,6 +36,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly MethodInfo AddOrReplaceMethod =
             AccessTools.Method(typeof(ZdoLoadDuplicatePatch), nameof(AddOrReplace));
 
+        // Same stack as the instance Add it replaces: (dictionary, key, value).
         private static void AddOrReplace(Dictionary<ZDOID, ZDO> objectsById, ZDOID uid, ZDO zdo) {
             if (objectsById.ContainsKey(uid)) {
                 Logger.LogWarning(
@@ -53,34 +47,14 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             objectsById[uid] = zdo;
         }
 
-        // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(ZDOMan.Load))]
         private static IEnumerable<CodeInstruction> LoadTranspiler(IEnumerable<CodeInstruction> instructions) {
-            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
+            if (Enabled == null || !Enabled.Value) { return instructions; }
 
-            int patched = 0;
-            for (int i = 0; i < codes.Count; i++) {
-                if (!codes[i].Calls(DictionaryAddMethod)) { continue; }
-
-                // Signature matches the instance call being replaced: (dictionary, key, value) are
-                // already on the stack in that order.
-                codes[i].opcode = OpCodes.Call;
-                codes[i].operand = AddOrReplaceMethod;
-                patched++;
-            }
-
-            if (patched != 1) {
-                Logger.LogWarning(
-                    $"ZDOMan.Load: expected 1 ZDO dictionary insert, found {patched}, so this fix is " +
-                    "inactive. Another mod has most likely already rewritten the method - if so, nothing " +
-                    "is wrong.");
-                return instructions;
-            }
-
-            return codes;
+            return PatchHelper.ReplaceCalls(instructions, DictionaryAddMethod, AddOrReplaceMethod, "ZDOMan.Load", expected: 1);
         }
     }
 }

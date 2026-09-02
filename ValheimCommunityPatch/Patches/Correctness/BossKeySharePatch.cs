@@ -3,35 +3,21 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Vanilla defect: a boss's defeat key is only recorded for one player in the group.
+    // Share Boss Defeat Keys: every nearby player gets credit for a boss kill, not only the one
+    // whose client owned the boss.
     //
-    // Character.OnDeath queues the *per-player* unique key:
+    // Character.OnDeath queues the per-player defeat key into Player.m_addUniqueKeyQueue, but
+    // OnDeath only runs on the client that owns the dying character. The world-wide global key
+    // replicates; the per-player one does not, so in a group only one player records it. Most
+    // visible with Hildir's quest bosses, which track completion by the per-player key.
     //
-    //   if (!string.IsNullOrEmpty(this.m_defeatSetGlobalKey))
-    //     Player.m_addUniqueKeyQueue.Add(this.m_defeatSetGlobalKey);
+    // The owner broadcasts the key through a routed RPC and every client that was within range
+    // applies it locally. AddUniqueKey is a HashSet add, so the owner re-applying its own broadcast
+    // is harmless.
     //
-    // and later sets the world-wide key via ZoneSystem.SetGlobalKey, which does replicate. But OnDeath
-    // is reached from CheckDeath, and Character.CustomUpdate only runs that whole block when the ZDO is
-    // owned locally - so the unique key is added on exactly one client: whoever happened to own the
-    // boss. Everyone else in the fight gets no credit.
-    //
-    // Player-visible symptom: kill a boss as a group and only one player has it recorded. Most visible
-    // with Hildir's quest bosses, whose completion tracking is keyed off the per-player unique key
-    // rather than the global one.
-    //
-    // Fix: the owner broadcasts the key to everyone, and each client applies it locally if it was near
-    // enough to have taken part. AddUniqueKey is backed by a HashSet, so the owner re-applying its own
-    // broadcast is harmless.
-    //
-    // Provenance: same defect and approach as Zen.ModLib's FixAddPlayerKeyOnBossDeath; reimplemented
-    // here against a single globally-registered routed RPC rather than one registered per Character,
-    // which avoids adding a handler to every creature ZNetView in the world.
-    //
-    // Client on both ends, which is why this works against a vanilla server. The sender side needs
-    // the boss GameObject, which only exists on the clients fighting it; the receiver side needs a
-    // local player. And a server without this mod still relays the message: an unrecognised RPC hash
-    // makes ZRoutedRpc.HandleRoutedRPC return silently, after which RouteRPC forwards it to every
-    // peer as normal. So the server genuinely does not need it.
+    // Client on both ends. A vanilla server still relays the RPC: an unknown hash makes
+    // ZRoutedRpc.HandleRoutedRPC return quietly and the message is forwarded as normal.
+    // Provenance: Zen.ModLib (catalogue), reimplemented with one globally registered RPC.
     [PatchSide(Side.Client)]
     [HarmonyPatch]
     internal static class BossKeySharePatch {
@@ -58,9 +44,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 false, 0f, 2000f);
         }
 
-        // Game.Start is where vanilla registers its own routed RPCs, so ZRoutedRpc exists by now and is
-        // freshly built for this session. Registration is guarded because ZRoutedRpc.Register uses
-        // Dictionary.Add and would throw on a second call - which would take Game.Start down with it.
+        // Game.Start is where vanilla registers its own routed RPCs. Guarded because
+        // ZRoutedRpc.Register throws on a second registration.
         [HarmonyPostfix]
         [HarmonyPatch(typeof(Game), nameof(Game.Start))]
         private static void GameStartPostfix() {
@@ -83,9 +68,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             localPlayer.AddUniqueKey(key);
         }
 
-        // Character.OnDeath already ran the owner-only local add by this point; this fans the same key
-        // out to everyone else. Player overrides OnDeath, and players have no m_defeatSetGlobalKey, so
-        // patching the base is both sufficient and inert for player deaths.
+        // Players have no m_defeatSetGlobalKey, so this is inert for player deaths.
         [HarmonyPostfix]
         [HarmonyPatch(typeof(Character), "OnDeath")]
         private static void OnDeathPostfix(Character __instance) {

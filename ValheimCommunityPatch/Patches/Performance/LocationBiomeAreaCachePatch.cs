@@ -6,44 +6,25 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: location placement asks the same question tens of millions of times to get
-    // about eighty thousand distinct answers. ZoneSystem.GenerateLocationsTimeSliced
-    // (ZoneSystem.cs:957-1141) runs 100,000 attempts per location type - 200,000 for a
-    // prioritized one - and every attempt picks a fresh random zone and gates it on
-    // (ZoneSystem.cs:1005):
+    // Fix Location Biome Area Rescan: location generation remembers each zone's biome-area answer
+    // instead of recomputing it tens of millions of times.
     //
-    //   if ((location.m_biomeArea & WorldGenerator.instance.GetBiomeArea(ZoneSystem.GetZonePos(zoneID))) == 0)
+    // ZoneSystem.GenerateLocationsTimeSliced makes 100,000 placement attempts per location type
+    // and gates every attempt on WorldGenerator.GetBiomeArea(zone centre), which is nine
+    // GetBiome calls through the multi-octave noise chain. The positions are zone centres, about
+    // 78,000 on a vanilla world, so across ~150 location types that is on the order of 10^8 noise
+    // evaluations to derive 78,000 distinct values, repeated on every genloc.
     //
-    // GetBiomeArea (WorldGenerator.cs:576-588) is nine GetBiome calls - the sample point and its
-    // eight neighbours at +/-64m - and each GetBiome runs the multi-octave Perlin chain in
-    // GetBaseHeight (WorldGenerator.cs:620-651). It is a pure function of the position, and the
-    // positions are zone centres: a vanilla 10km world has ~78,000 of them. Across the ~150
-    // enabled location types that is on the order of 10^8 noise evaluations spent re-deriving
-    // ~78,000 values, and it is paid again on every genloc and whenever a mod adds locations.
+    // A prefix answers repeats from a cache keyed on exact (x, z); a postfix records what vanilla
+    // computed on a miss. The value handed back is the one vanilla itself produced for that input
+    // and the random stream is untouched, so worlds come out identical and this is safe on an
+    // existing save. GetBiomeArea has exactly one caller, a main-thread coroutine, which is why the
+    // cache sits here and not on GetBiome, which the terrain build thread also calls. The cache is
+    // owned by the WorldGenerator instance that filled it, so a new world invalidates it.
     //
-    // Fix: memoise GetBiomeArea by exact (x, z). A prefix answers repeats, a postfix records what
-    // vanilla computed on a miss. Output is identical by construction rather than by argument -
-    // the value handed back is the one vanilla itself produced for that exact input, no branch is
-    // taken that vanilla would not take, and the UnityEngine.Random stream is never touched. Same
-    // seed, same world, and safe to turn on for an existing save.
-    //
-    // Two properties of the target make this cheap to be sure about, both checked against the
-    // decompiled source. WorldGenerator.GetBiomeArea(Vector3) has exactly one call site in the
-    // whole game - the line above (Heightmap.GetBiomeArea() at Heightmap.cs:345 is an unrelated
-    // instance method) - so there is no second caller to keep correct and no unbounded key space.
-    // And that call site is a coroutine, so it is main thread only. GetBiome by contrast IS
-    // called off-thread from HeightmapBuilder.BuildThread (HeightmapBuilder.cs:103-143), which is
-    // exactly why the cache sits on GetBiomeArea and not one level down on GetBiome.
-    //
-    // This does not make location generation an order of magnitude faster. Per attempt vanilla
-    // spends ~9 GetBiome on this gate and, when the gate passes, up to ~20 more on the per-point
-    // biome checks inside the zone. Removing the 9 is most of what can be removed without
-    // changing which points get sampled - and changing that is what moves every dungeon in the
-    // world, which is not a trade a patch mod should make silently.
-    //
-    // Server: only the machine that owns the world generates locations. GenerateLocations is
-    // reached from ZNet.ServerLoadWorld (ZNet.cs:193) and from the genloc console command, which
-    // is declared onlyServer.
+    // Server: only the world owner generates locations.
+    // Provenance: the observation, not the code, from worldGenAccelerator (jneb802 / warpalicious,
+    // MIT), which trades vanilla world layout for more speed; that trade is declined here.
     [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(WorldGenerator))]
     internal static class LocationBiomeAreaCachePatch {
@@ -65,22 +46,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _mainThreadId = Thread.CurrentThread.ManagedThreadId;
         }
 
-        // Only exists so that a third-party caller passing arbitrary points - vanilla passes zone
-        // centres and nothing else - cannot grow this without bound. A vanilla world needs ~78k
-        // entries and a 20km ExpandWorldSize map ~311k, both well under the cap.
+        // Only so a third-party caller passing arbitrary points cannot grow the cache without
+        // bound. A vanilla world needs ~78k entries, a 20 km world ~311k.
         private const int MaxEntries = 1 << 20;
 
         /// <summary>
-        /// Exact (x, z). GetBiomeArea reads only those two components (WorldGenerator.cs:578-586),
-        /// so dropping y is exact rather than an approximation.
+        /// Exact (x, z). GetBiomeArea reads only those two components, so dropping y is exact.
+        /// Not rounded to a zone, which would hand one zone's answer to any caller that does not
+        /// pass zone centres. float.Equals rather than == so NaN matches itself.
         /// </summary>
-        /// <remarks>
-        /// Deliberately not keyed on a zone id. Rounding a position to the zone containing it
-        /// would hand one zone's answer to any caller that does not pass zone centres, which is a
-        /// wrong answer rather than a slow one. Exact float equality can only ever miss.
-        /// float.Equals, not ==, so a NaN coordinate matches itself and stays consistent with
-        /// GetHashCode instead of silently accumulating unreachable entries.
-        /// </remarks>
         internal readonly struct Key : IEquatable<Key> {
             private readonly float m_x;
             private readonly float m_z;
@@ -99,7 +73,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             public override string ToString() => $"({m_x}, {m_z})";
         }
 
-        /// <summary>What the prefix looked up, handed to the postfix.</summary>
         internal struct Probe {
             internal Key m_key;
             internal bool m_active;
@@ -110,9 +83,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly Dictionary<Key, Heightmap.BiomeArea> Cache =
             new Dictionary<Key, Heightmap.BiomeArea>();
 
-        // The WorldGenerator that filled the cache. Same trick as RunMode.Resolve: the instance
-        // IS the invalidation. A new world means a new WorldGenerator with different noise
-        // offsets, and there is no hook to remember to add and nothing to forget.
         private static WorldGenerator _owner;
 
         private static int _mainThreadId;
@@ -130,9 +100,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 out Probe __state) {
             __state = default;
 
-            // A plain Dictionary, because vanilla's only caller is the main-thread location
-            // coroutine. Anything calling this from a worker thread gets vanilla rather than a
-            // torn read - the check costs an int compare against nine Perlin chains.
+            // A plain Dictionary is safe because vanilla's only caller is the main thread; anything
+            // else gets vanilla rather than a torn read.
             if (Thread.CurrentThread.ManagedThreadId != _mainThreadId) { return true; }
 
             if (!ReferenceEquals(__instance, _owner)) {
@@ -165,8 +134,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (!__state.m_active) { return; }
 
             if (__state.m_hit) {
-                // With verify off the prefix already answered from the cache and skipped the
-                // original, so __result IS m_cached here and comparing them proves nothing.
                 if (Verify == null || !Verify.Value) { return; }
 
                 if (__state.m_cached != __result) {
@@ -197,8 +164,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             Cache[__state.m_key] = __result;
         }
 
-        // Vanilla flips this once when placement finishes (ZoneSystem.cs:939). The cache does
-        // nothing for the rest of the session, so this is where it is worth reporting.
+        // Vanilla flips this once when placement finishes, which is where the numbers are worth
+        // reporting. The cache stays valid for this world; only the counters restart.
         [HarmonyPatch(typeof(ZoneSystem), "set_LocationsGenerated")]
         internal static class GenerationCompleteHook {
             [HarmonyPostfix]
@@ -218,8 +185,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                         "divergence(s).");
                 }
 
-                // The cache stays - it is still valid for this world - but the counters restart,
-                // so a later genloc reports its own run rather than a running total.
                 ResetCounters();
             }
         }

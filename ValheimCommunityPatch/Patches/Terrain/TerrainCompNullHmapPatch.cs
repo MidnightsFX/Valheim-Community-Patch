@@ -4,57 +4,22 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Vanilla defect: TerrainComp.Awake gives up when it cannot find its heightmap, but Update carries
-    // on regardless.
+    // Fix Terrain Compiler Init Race: a terrain compiler that loaded before its zone's heightmap
+    // existed recovers once the heightmap appears, instead of throwing every frame.
     //
-    //   private void Awake() {
-    //     this.m_nview = this.GetComponent<ZNetView>();
-    //     this.m_hmap = Heightmap.FindHeightmap(this.transform.position);
-    //     if (this.m_hmap == null) { ZLog.LogWarning("Terrain compiler could not find hmap"); }
-    //     else { ...register RPC, Initialize(), CheckLoad()... }
-    //   }
+    // TerrainComp.Awake gives up when Heightmap.FindHeightmap returns null: no Initialize, no
+    // ApplyOperation RPC registration, no entry in s_instances. Update then calls CheckLoad every
+    // frame regardless, which dereferences the null heightmap. The zone's terrain edits are inert
+    // from then on because nothing can find or drive the compiler.
     //
-    //   private void Update() { if (!this.m_nview.IsValid()) return; this.CheckLoad(); }
+    // A prefix on Update skips the frame while the compiler is unusable and, once a heightmap
+    // exists, re-runs the branch Awake skipped in Awake's order: find and destroy any rival
+    // compiler for the zone (the deduplication Awake would have done, without which two compilers
+    // hold diverging edits for one zone), register in s_instances, register the RPC, Initialize,
+    // CheckLoad. A compiler whose recovery throws is abandoned rather than retried every frame.
     //
-    // When the heightmap is missing, Awake never runs Initialize, never registers the ApplyOperation
-    // RPC, and never adds the compiler to s_instances. Update then calls CheckLoad every frame, which
-    // dereferences the null m_modifiedHeight in Load and then the null m_hmap in Poke. The player sees
-    // NullReferenceException spam, and that zone's terrain edits are permanently inert because nothing
-    // can find or drive the compiler any more.
-    //
-    // This happens when a TerrainComp instantiates before the zone's heightmap has registered - a
-    // race that gets more likely on a loaded server or a slow disk.
-    //
-    // Fix: skip the frame when we are not in a usable state, and retry the initialisation Awake
-    // skipped once the heightmap does show up. Recovering the zone is the point; silencing the
-    // exception alone would leave the terrain data just as dead.
-    //
-    // The recovery has to reproduce Awake's *whole* branch, deduplication included, and that is the
-    // subtle part. Heightmap.GetAndCreateTerrainCompiler (Heightmap.cs:992) is vanilla's only guard
-    // against a second compiler for one zone, and it searches s_instances - which a compiler that
-    // lost the race is not in. So the next terrain op happily instantiates a second compiler, which
-    // awakes normally and takes over. Unpatched, the stranded one stays invisible and inert forever:
-    // wasteful, but harmless, because the survivor is the single source of truth.
-    //
-    // Recovering it without deduplicating would end that. Initialize() sets m_size, which is what
-    // makes FindTerrainCompiler able to match a compiler at all, so the moment the stranded one is
-    // recovered both are live for the same zone. Heightmap.ApplyModifiers (Heightmap.cs:372) resolves
-    // through FindTerrainCompiler, which returns the *first* list match - so one compiler's saved
-    // s_TCData silently wins and the other's terrain and paint are discarded. New edits route to the
-    // same first match while the loser keeps diverging data that can win back after a zone reload,
-    // since list order follows ZNetScene.CreateObject order and is not stable. That is terrain
-    // flip-flopping, which is the exact failure the other terrain fixes here exist to remove.
-    //
-    // So TryRecover does what Awake does, in Awake's order: find the rival, destroy it, then
-    // register. The alternative - abandon the recovery and leave the incumbent alone - was rejected
-    // because it leaves this compiler's ZDO alive with stale data that can still win a later reload,
-    // and re-checks on every frame forever. Vanilla's answer to two compilers in one zone is to
-    // resolve it immediately, and a recovery that is indistinguishable from a clean Awake is the one
-    // with no new behaviour to reason about.
-    //
-    // Both: TerrainComp.Update runs wherever the component exists, and the recovery re-registers the
-    // ApplyOperation RPC, without which that zone can never accept or save an edit. Reachable on a
-    // dedicated server for its own zones, and the race is more likely on a loaded one.
+    // Both: the race is more likely on a loaded server, and the RPC it re-registers is what lets
+    // that zone accept edits at all.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(TerrainComp))]
     internal static class TerrainCompNullHmapPatch {
@@ -71,12 +36,9 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 "accepting terrain edits entirely.");
         }
 
-        // Compilers whose recovery threw. Without this the failure repeats on the next Update and
-        // every Update after it, so one broken compiler writes a stack trace to the log sixty times
-        // a second. A throw here means the state is not recoverable by retrying - a duplicate RPC
-        // registration or a failed allocation - so the compiler is abandoned instead. It stays inert
-        // rather than half-live: ApplyToHeightmap returns early on !m_initialized (TerrainComp.cs:216)
-        // and FindTerrainCompiler cannot match m_size == 0, so nothing downstream can see it.
+        // Compilers whose recovery threw. An abandoned compiler stays inert rather than half-live:
+        // ApplyToHeightmap returns early on !m_initialized and FindTerrainCompiler cannot match
+        // m_size == 0.
         private static readonly HashSet<TerrainComp> RecoveryFailed = new HashSet<TerrainComp>();
 
         [HarmonyPrefix]
@@ -87,9 +49,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
             if (RecoveryFailed.Count > 0 && RecoveryFailed.Contains(__instance)) { return false; }
 
-            if (!TryRecover(__instance)) { return false; }
-
-            // Recovered this frame; CheckLoad already ran as part of re-initialisation.
+            // A successful recovery already ran CheckLoad, so vanilla's Update is skipped either way.
+            TryRecover(__instance);
             return false;
         }
 
@@ -98,23 +59,17 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ? comp.m_hmap
                 : Heightmap.FindHeightmap(comp.transform.position);
 
-            // Still no heightmap for this zone - nothing to do but stay quiet until one appears.
             if (hmap == null) { return false; }
-
             if (comp.m_nview == null || !comp.m_nview.IsValid()) { return false; }
 
             comp.m_hmap = hmap;
 
             try {
-                // Mirrors the branch Awake skipped, in Awake's own order (TerrainComp.cs:41-50).
-                //
-                // Only when the compiler was never initialised, because that is exactly the case
-                // where Awake's deduplication never ran. If m_initialized is already set, Awake did
-                // dedupe and this is the far milder path of re-attaching a heightmap after the zone
-                // reloaded - there is no rival to resolve and no RPC to register a second time.
+                // Only a never-initialised compiler needs the deduplication and RPC registration;
+                // one that is initialised is just re-attaching a heightmap after a zone reload.
                 if (!comp.m_initialized) {
-                    // Before Initialize, deliberately: FindTerrainCompiler matches on m_size, which
-                    // is still 0 here, so it cannot return `comp` and can only return a real rival.
+                    // Before Initialize: FindTerrainCompiler matches on m_size, still 0 here, so
+                    // it cannot return this compiler and can only return a real rival.
                     TerrainComp other = TerrainComp.FindTerrainCompiler(comp.transform.position);
                     if (other != null && other != comp && ZNetScene.instance != null) {
                         Logger.LogWarning(
@@ -124,8 +79,6 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                         ZNetScene.instance.Destroy(other.gameObject);
                     }
 
-                    // s_instances is what FindTerrainCompiler and Heightmap.ApplyModifiers search, so
-                    // without this the compiler stays invisible.
                     if (!TerrainComp.s_instances.Contains(comp)) { TerrainComp.s_instances.Add(comp); }
 
                     comp.m_nview.Register<ZPackage>(
@@ -137,7 +90,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
                 comp.CheckLoad();
             } catch (Exception ex) {
-                PruneFailed();
+                RecoveryFailed.RemoveWhere(failed => failed == null);
                 RecoveryFailed.Add(comp);
                 Logger.LogError(
                     $"Failed to recover terrain compiler at {comp.transform.position}, and it will not " +
@@ -147,14 +100,6 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
             Logger.LogInfo($"Recovered terrain compiler at {comp.transform.position} after its heightmap loaded.");
             return true;
-        }
-
-        /// Drops compilers Unity has since destroyed, so the latch cannot grow across a session.
-        /// Realistically this set holds nothing at all, so the sweep is only ever paid on the throw.
-        private static void PruneFailed() {
-            if (RecoveryFailed.Count == 0) { return; }
-
-            RecoveryFailed.RemoveWhere(comp => comp == null);
         }
     }
 }

@@ -1,104 +1,42 @@
 using System.Collections.Generic;
-using System.Reflection;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: WearNTear.UpdateSupport already has a cache fast path, but it RE-VALIDATES
-    // the cache on every visit - for each cached support collider it re-resolves the owning piece,
-    // reads its transform position and re-reads its support value, all native or near-native calls
-    // (WearNTear.cs:421-452). WearNTearUpdater visits pieces continuously (a nominal 1-second
-    // sweep, capped at 100 pieces per frame, so a 60-90k-piece base runs it saturated at a
-    // ~20-second cycle), which makes the validation itself the cost: ~100 ms of every second
-    // standing in a large base, spent re-proving that nothing changed.
+    // Fix Idle Support Checks and Fix Idle Wear Visits: a building piece skips its structural
+    // support re-check, and when everything else is provably quiet its whole wear visit, until
+    // an event that could change the answer fires.
     //
-    // Fix: sleep the check instead of re-running it. A piece's support is a pure function of its
-    // neighbourhood - the pieces whose colliders its overlap boxes see, their support values, and
-    // the terrain - so a piece whose support was computed once may skip UpdateSupport entirely
-    // until one of the events that can change that neighbourhood fires:
+    // WearNTear.UpdateSupport has a cache fast path but re-validates the cache on every visit:
+    // for each cached support collider it re-resolves the owning piece, reads its position and
+    // re-reads its support value. WearNTearUpdater visits every loaded piece continuously, so in
+    // a large base the validation itself is the cost, spent re-proving that nothing changed.
     //
-    //  - ClearCachedSupport ran on it. This is the funnel for every vanilla invalidation signal:
-    //    terrain rebuilds (via the heightmap registry or vanilla's event), the cross-client RPC,
-    //    and the m_clearCachedSupport broadcast a freshly PLACED piece performs on its first
-    //    UpdateSupport (OnPlaced sets the flag; WearNTear.cs:467-485 delivers it to every
-    //    overlapping piece as a direct ClearCachedSupport call).
-    //  - A neighbouring piece was destroyed. Vanilla notices this by tripping over the dead
-    //    collider during validation; a sleeping piece cannot, so OnDestroy wakes everything whose
-    //    support region overlaps the dead piece. Candidates come from a coarse world-grid of
-    //    registered support envelopes, then an exact envelope-overlap test picks the true
-    //    neighbours - measured before that test existed, a single wake in a dense base dirtied
-    //    every piece sharing a cell (hundreds) instead of the handful that actually touch, and
-    //    the spurious recomputes plus their bookkeeping were ~30 ms of every second on their own.
-    //    Deaths arrive in STORMS - a streamed-out zone column, a collapsing structure - so the
-    //    wake boxes are collected and swept once per frame instead of per piece: every grid cell
-    //    the storm reaches is scanned exactly once against the boxes that reach it, and a piece
-    //    the first box woke costs one branch for each later box rather than a fresh overlap
-    //    test. The dirty set is identical either way - dirty is set-only, and nothing reads it
-    //    between the deaths in one frame's destruction phase - only the sweep is deduplicated.
-    //  - A neighbour's support VALUE changed. Support propagates as a relaxation wave - each
-    //    piece's value feeds its neighbours' - so whenever a non-skipped UpdateSupport produces a
-    //    different m_support than before, its grid neighbours are woken. Waves therefore travel
-    //    exactly as far as they would in vanilla, and a structure at equilibrium goes fully
-    //    quiet. This is the same fixpoint vanilla converges to; only the redundant confirmations
-    //    of already-converged values are gone.
+    // Support is a pure function of a piece's neighbourhood, so a piece whose support was
+    // computed once skips UpdateSupport until one of these wakes it:
+    //  - ClearCachedSupport ran on it, the funnel for every vanilla invalidation (terrain edits,
+    //    the cross-client RPC, a freshly placed piece's broadcast).
+    //  - A neighbour was destroyed. Deaths are queued and swept once per frame against a coarse
+    //    XZ grid of support envelopes, with an exact 3D envelope-overlap test picking the true
+    //    neighbours. Cells whose every piece is already awake are skipped whole.
+    //  - A neighbour's support value changed by more than Support Change Threshold, so the
+    //    relaxation wave travels exactly as far as vanilla's and a settled structure goes quiet.
+    //  - A new piece arrived: Awake wakes the envelope-overlapping sleepers around it, as
+    //    vanilla's fast path would re-detect returning support within a sweep.
+    //  - UpdateWear's out-of-area path stamped a new support value behind UpdateSupport's back.
+    // Pieces that never computed under this tracking, and pieces below their material minimum,
+    // run vanilla, and every piece revalidates after MaxSkipStreak consecutive skips as a net for
+    // anything unforeseen. Two repairs stop arrivals looking like changes: Awake restores the
+    // persisted support in place of vanilla's max-support placeholder, and the placeholder the
+    // out-of-area path persists is put back to the last real value. The one heuristic: a piece
+    // that has produced the same value several times running (Settled Piece Patience) may defer
+    // a wake that came only from a neighbour's value drifting; structural wakes never wait.
     //
-    //    "Different" is a small TOLERANCE rather than an exact float compare, and the reason
-    //    originally given for it is now known to be wrong. The claim was that
-    //    Physics.OverlapBoxNonAlloc's fixed 128-collider buffer (WearNTear.cs:59) truncates in a
-    //    dense base and returns an unstable subset, so a recompute could wobble with nothing
-    //    having changed. Instrumented directly - the same boxes re-run into a buffer four times
-    //    the size - that never happened once: zero of ~18700 sampled boxes reached 128, the
-    //    worst was 82, and the typical box holds around 60. The truncation story is dead in both
-    //    its forms. What the wave actually carries is real changes, seeded by arrivals (see the
-    //    first-compute note in UpdateSupportPrefix). The tolerance is kept because it is free and
-    //    bounded, not because it is the cure: each propagation hop multiplies by at most one
-    //    (a = max(support - loss * distance * support)), so a suppressed delta of at most
-    //    epsilon stays at most epsilon downstream instead of accumulating per hop; the piece
-    //    still stores the exact recomputed m_support, so only the NOTIFICATION is gated;
-    //    collapse decisions compare against GetMinSupport() on values in the hundreds-to-1000
-    //    range, orders of magnitude above the default; and MaxSkipStreak forces every piece
-    //    through a full revalidation regardless. Set it to 0 for the exact compare.
-    //
-    //    What the fan-out cost actually was: the SCAN, not the wake count. Measured 613
-    //    candidates examined per wave to wake 1.6 pieces - a 392:1 reject ratio - because in a
-    //    running wave nearly everything a wake reaches is already dirty. Each cell therefore
-    //    tracks how many of its entries belong to a piece that is NOT dirty, and a cell at zero
-    //    is skipped whole. That count is exact only because SetDirty below is the single writer
-    //    of m_dirty; every wake source goes through it.
-    //
-    // Pieces that never computed under this tracking run vanilla until they have; pieces without
-    // support (below their material minimum - failing, about to collapse) are never slept, which
-    // matches vanilla keeping them on the full path (WearNTear.cs:572-574). As a final net under
-    // anything unforeseen (a mod moving built pieces - vanilla's position check would notice,
-    // sleep would not), a piece revalidates through vanilla after at most MaxSkipStreak
-    // consecutive skips.
-    //
-    // Two further wake sources close holes found through live verify divergences (five in 575k
-    // visits, every one at the streaming ring's edge):
-    //  - A piece's colliders join the support world at Awake, but the envelope grid only learns
-    //    it at its lazy SetupColliders (owner-only, 30 s after spawn at the earliest). So deaths
-    //    and value changes of never-registered pieces wake through a conservative box around
-    //    their position instead of an envelope - and every Awake wakes the envelope-overlapping
-    //    sleepers around the new piece. The arrival wake is parity, not paranoia: vanilla's fast
-    //    path falls through to a full recompute for any piece whose own support tops its cached
-    //    neighbours' (WearNTear.cs:449), so vanilla re-detects returning support within a sweep.
-    //    Measured signature of the miss: a slept stair frozen at 627 while vanilla re-found
-    //    terrain contact worth its material max of 1000.
-    //  - UpdateWear writes m_support = GetMaxSupport() directly for pieces outside the active
-    //    area (WearNTear.cs:309), bypassing UpdateSupport and this class's bookkeeping entirely.
-    //    A before/after compare around UpdateWear catches any support write UpdateSupport did
-    //    not perform and treats it as the value-change event it is.
-    //
-    // "Verify Support Sleep" runs vanilla on every visit while predicting what sleep would have
-    // skipped, and flags any visit where the prediction said quiet but vanilla's recompute
-    // changed the value - the one way this fix could be wrong.
-    //
-    // This class also carries the second sleep tier, "Fix Idle Wear Visits": skipping the WHOLE
-    // UpdateWear visit - not just its support half - for pieces where every remaining input is
-    // provably quiet too. The predicate, its weather-epoch machinery and its own verify live at
-    // the wear-visit section below; it shares this class because it is built on the same
-    // per-piece state and wake infrastructure.
+    // The wear-visit sleep skips the whole UpdateWear visit for pieces where every remaining
+    // input is quiet too: owned locally, dry or roofed while wet, above the waterline, outside
+    // the Ashlands, inside the active area, and no damage or repair since the last visit. Its
+    // predicate lives in the wear-visit section below.
     //
     // Both: a dedicated server owns and updates the pieces in its active area.
     [PatchSide(Side.Both)]
@@ -137,10 +75,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 "Support Change Threshold",
                 0.01f,
                 "How much a piece's structural support must change before its neighbours are " +
-                "re-checked. The support calculation samples its surroundings through a " +
-                "fixed-size buffer that the game truncates in dense builds, so a recomputed " +
-                "value can wobble in its last decimals with nothing having changed - and an " +
-                "exact comparison turns that wobble into an endless chain of re-checks. " +
+                "re-checked. Support propagates through a structure as a wave, and re-checking " +
+                "neighbours on every last-decimal drift keeps the whole structure awake; a " +
+                "difference this small never accumulates, because each hop can only shrink it. " +
                 "Support values run to a thousand, so the default is far below anything that " +
                 "affects whether a build stands. 0 restores the exact comparison.",
                 advanced: true,
@@ -232,32 +169,23 @@ namespace ValheimCommunityPatch.Patches.Performance {
             public float m_minY, m_maxY;
         }
 
-        // Grid entries carry the envelope so the overlap test below reads four floats straight
-        // out of the candidate array - no per-candidate dictionary probe, which is exactly the
-        // cost the test exists to avoid - and the piece's state object for the same reason, so a
-        // wake sets a bool through a reference the entry already holds and a wake storm never
-        // touches the state map at all. The state doubles as the entry's identity: registration
-        // below is the only site that builds an entry, and a piece leaves the map and the grid in
-        // the same breath (OnDestroy below), so the reference can neither outlive its dictionary
-        // slot nor be shared with another piece.
+        // Entries carry the envelope and the piece's state object so a wake reads floats and sets
+        // a bool straight from the cell array, with no dictionary probe per candidate. The state
+        // reference doubles as the entry's identity for removal.
         internal struct GridEntry {
             public PieceState m_state;
             public float m_minX, m_minZ, m_maxX, m_maxZ;
             public float m_minY, m_maxY;
         }
 
-        // A cell holds its entries as a bare array plus a count rather than a List: the wake scan
-        // walks these in their thousands, and List's indexer copies the whole struct out through
-        // a bounds-checked property call - measured at 14 ms of every second in the indexer
-        // alone, more than the wake logic it was feeding.
+        // A bare array plus a count rather than a List: the wake scan walks these in their
+        // thousands, and List's indexer copies the struct out through a bounds-checked call.
         internal sealed class Cell {
             public GridEntry[] m_entries = new GridEntry[4];
             public int m_count;
 
-            // How many of those entries belong to a piece that is NOT already dirty. A wake can
-            // only ever change a clean piece, so a cell at zero is skipped whole - which is the
-            // common case once a wave is running: measured 613 candidates examined per wave to
-            // wake 1.6 pieces, because almost everything a wake reaches is awake already.
+            // How many entries belong to a piece that is not already dirty. A wake can only
+            // change a clean piece, so a cell at zero is skipped whole.
             public int m_clean;
 
             public void Add(GridEntry entry) {
@@ -284,52 +212,54 @@ namespace ValheimCommunityPatch.Patches.Performance {
             public int m_x0, m_z0, m_x1, m_z1;
         }
 
-        // Both piece maps are keyed on GetInstanceID(), not on the WearNTear: a Dictionary keyed
-        // on a UnityEngine.Object pays a native CompareBaseObjects call on every probe, and this
-        // patch probed them twice per destroyed piece. See TeardownHooks for the liveness
-        // invariant an int key depends on.
+        // Both piece maps are keyed on GetInstanceID(); see TeardownHooks for the rationale and
+        // the liveness invariant an int key depends on.
         private static readonly Dictionary<int, PieceState> States = new Dictionary<int, PieceState>();
         private static readonly Dictionary<long, Cell> Grid = new Dictionary<long, Cell>();
         private static readonly Dictionary<int, Envelope> Registered = new Dictionary<int, Envelope>();
 
-        // This frame's destroy wakes, and the per-cell scratch the flush buckets them into.
-        // The lists are pooled rather than reallocated: a storm's cell count is a high-water
-        // mark reached once, and the flush runs on every frame a death happened.
+        // This frame's destroy wakes, and the pooled per-cell scratch the flush buckets them into.
         private static readonly List<WakeBox> PendingWakes = new List<WakeBox>();
         private static readonly Dictionary<long, List<int>> WakeCells = new Dictionary<long, List<int>>();
         private static readonly Stack<List<int>> WakeCellPool = new Stack<List<int>>();
 
-        private static bool _hooksChecked;
-        private static bool _hooksHealthy;
+        // A sleeping piece is woken only by the hooks in this class, so the sleep decision stands
+        // down to vanilla's revalidation if any of them is missing.
+        private static readonly HookHealth Hooks = new HookHealth(
+            "Support sleep",
+            () => HasOwnHook("ClearCachedSupport")
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook))
+               && HasOwnHook("SetupColliders")
+               && HasOwnHook("UpdateSupport")
+               && HasOwnHook("Awake")
+               && HasOwnHook("UpdateWear")
+               && HasOwnHook("ApplyDamage")
+               && HasOwnHook("RPC_Repair")
+               && HasOwnHook("UpdateCover")
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTearUpdater), "Update"), typeof(UpdaterHook)));
 
-        // Wake traffic breakdown. Sampled only while "Log Support Wake Stats" is on - the flag is
-        // refreshed once a frame so the hot paths read a field, not a config entry.
+        private static bool HasOwnHook(string wearNTearMethod) =>
+            PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), wearNTearMethod), typeof(SupportSleepPatch));
+
+        // "Log Support Wake Stats" counters. The flag is refreshed once a frame so the hot paths
+        // read a field, not a config entry.
         private static bool _statsOn;
         private static float _statsSince;
         private static long _statVisits, _statFirstCompute, _statIdentical;
 
-        // Changes bucketed RELATIVE to the piece's material maximum, because that is the only
-        // form a threshold could take: maxSupport runs from 100 (wood) to 2000 (ashstone), so one
-        // absolute number does not mean the same thing on both. These buckets are what a relative
-        // "Support Change Threshold" would be sized from.
+        // Changes bucketed relative to the piece's material maximum, which runs from 100 (wood)
+        // to 2000 (ashstone), so one absolute number would not mean the same thing on both.
         private static long _statRelTenth, _statRelOne, _statRelTen, _statRelHuge;
         private static long _statWaves, _wakeCandidates, _wakeWoken, _wakeCellsSkipped;
 
-        // Hypothesis 2 - the out-of-area max-support stamp. UpdateWear writes
-        // m_support = GetMaxSupport() for pieces outside the active area (WearNTear.cs:309),
-        // bypassing UpdateSupport entirely; when the piece comes back the recompute restores its
-        // real value. Both writes are large changes, and the ring boundary sweeps thousands of
-        // pieces as the player moves, so if this is the wave's engine these three counters are
-        // where it shows: stamps written, recomputes leaving max, recomputes arriving at max.
+        // The out-of-area max-support stamp (see UpdateWearPostfix): stamps written, recomputes
+        // leaving max, recomputes arriving at max.
         private static long _statOutOfAreaStamp, _statLeftMax, _statReachedMax;
         private static long _statWeakDeferred;
 
-        // Hypothesis 1 - the overlap buffer. Vanilla samples each bound box into a fixed
-        // 128-collider array (WearNTear.cs:59); past that PhysX truncates and the surviving
-        // subset is not guaranteed stable, so a recompute can lose a dominant supporter outright
-        // and swing by a lot rather than by a little. The count is a LOCAL inside vanilla's
-        // method, so it is re-measured here into a bigger buffer - which costs a real physics
-        // query, hence one recompute in ProbeInterval rather than all of them.
+        // Re-runs one recompute in ProbeInterval's bound boxes into a larger buffer to report how
+        // often vanilla's fixed 128-collider overlap buffer would have truncated. Costs a real
+        // physics query, hence the sampling.
         private const int ProbeInterval = 32;
         private static readonly Collider[] ProbeBuffer = new Collider[512];
         private static int _probeCountdown;
@@ -451,13 +381,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- the sleep decision --------------------------------------------------------------
 
-        // Returns 0 when the support check may sleep, else the index of the FIRST failing
-        // condition. The sibling wear predicate has always reported its reasons; this one did
-        // not, and a soak that reported "would have skipped 0 of 229431" with no reasons was
-        // undiagnosable - which is the whole argument for having them.
-        // "dirty" is split, because the two halves need completely different answers: a strong
-        // wake means something really happened and the piece must run, while an unsettled piece
-        // is one the backoff would release if only its history were flatter.
+        // Returns 0 when the support check may sleep, else the index of the first failing
+        // condition, so the verify summary can say why skips did not happen. "dirty" is split
+        // because a strong wake means the piece must run, while an unsettled piece is one the
+        // backoff would release if only its history were flatter.
         private static readonly string[] SupportBlockNames = {
             "sleepable", "support-cold", "dirty-structural", "streak-cap", "unsupported",
             "dirty-unsettled",
@@ -472,25 +399,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return 0;
         }
 
-        /// The one HEURISTIC in this class, and deliberately the narrowest one that pays.
-        ///
-        /// Everything else here is event-exact: a piece sleeps only while nothing that could
-        /// change it has happened. Measured in a large base that predicate never fires - 85% of
-        /// visits find the piece already flagged - because the wave of support recalculation
-        /// through a big structure is continuous while anything streams. But "flagged" is not
-        /// "will change": a quarter of the recomputes that flag produces land on exactly the same
-        /// value, and another fifth move by under 1% of the piece's material maximum.
-        ///
-        /// So a piece that has produced the same value on several consecutive recomputes is
-        /// allowed to DEFER a wake, but only a weak one - a neighbour's value drifted. Every
-        /// structural event stays immediate: something built, destroyed, damaged, repaired, the
-        /// terrain edited, a piece arriving or leaving the active area. Those set m_strongWake
-        /// and are never deferred, which is what keeps a collapse from being delayed by this.
-        ///
-        /// The staleness is bounded twice over: MaxSkipStreak caps consecutive skips whatever
-        /// their reason, and any recompute that DOES produce a change spends the whole quiet run,
-        /// so a piece has to re-earn the backoff from scratch. Set the threshold to 0 to turn it
-        /// off and get the exact predicate back.
+        /// The one heuristic in this class. In a large base the recalculation wave is continuous
+        /// while anything streams, so the exact predicate almost never fires, yet most of the
+        /// recomputes it forces land on the same value. A piece that has produced the same value
+        /// several times running may defer a weak wake (a neighbour's value drifted). Structural
+        /// wakes set m_strongWake and are never deferred, MaxSkipStreak caps the staleness, and
+        /// any real change resets the quiet run. Threshold 0 restores the exact predicate.
         private static bool MayDeferWeakWake(PieceState state) {
             if (state.m_strongWake) { return false; }
 
@@ -503,20 +417,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool UpdateSupportPrefix(WearNTear __instance, out Snapshot __state) {
             __state = default;
             FlushDestroyWakes();
-            if (!HooksHealthy()) { return true; }
+            if (!Hooks.Healthy) { return true; }
 
             PieceState state = GetState(__instance);
             __state.m_state = state;
             __state.m_prevSupport = __instance.m_support;
 
-            // A piece that has never computed under this tracking may still be sitting on the
-            // Awake placeholder - the restore in AwakePostfix covers pieces that woke while this
-            // fix was on, this covers everything else - so a first compute measures "changed"
-            // against the persisted value rather than against GetMaxSupport(). Measured before
-            // both: ~450 pieces a second enter tracking while streaming, and treating each
-            // arrival's placeholder-to-real drop as a change seeded a near-critical relaxation
-            // cascade at ~5.5 recomputes per arrival, which is why the support sleep could never
-            // engage - 85% of visits found the piece already dirty.
+            // A piece that never computed under this tracking may still hold the Awake
+            // placeholder, so a first compute measures "changed" against the persisted value
+            // rather than against GetMaxSupport(); otherwise every arrival seeds a wave.
             if (!state.m_computed && __instance.m_nview != null && __instance.m_nview.IsValid()
                 && __instance.m_nview.GetZDO().GetFloat(ZDOVars.s_support, out float stored)) {
                 __state.m_prevSupport = stored;
@@ -573,8 +482,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             float delta = __instance.m_support - __state.m_prevSupport;
             if (delta < 0f) { delta = -delta; }
 
-            // See the header: an exact compare does not converge, because the recompute's own
-            // sampling wobbles in a dense base.
+            // A tolerance so a neighbour's last-decimal drift does not keep the wave alive; the
+            // piece still stores the exact value, only the notification is gated.
             float epsilon = WakeEpsilon != null ? WakeEpsilon.Value : 0f;
             bool changed = epsilon > 0f ? delta > epsilon : delta != 0f;
 
@@ -801,7 +710,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _supportHandledFor = null;
             FlushDestroyWakes();
 
-            if (!HooksHealthy()) { return true; }
+            if (!Hooks.Healthy) { return true; }
 
             PieceState state = GetState(__instance);
             __state.m_state = state;
@@ -905,22 +814,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
             DirtyNeighbours(__instance, changedState, true);
         }
 
-        /// UpdateWear stamps m_support = GetMaxSupport() for pieces outside the active area AND
-        /// PERSISTS it (WearNTear.cs:308-310), so the stored support - the only thing a non-owner
-        /// ever reads, and what a returning piece restores from at Awake - is overwritten with a
-        /// placeholder every time the ring edge sweeps past. That is what made the arrival repair
-        /// ineffective for exactly the pieces that needed it: they came back holding a maximum,
-        /// recomputed down to their real value, and woke their neighbourhood for it.
-        ///
-        /// The in-memory stamp is left alone - it is what keeps an unwatched structure from
-        /// failing its support check - and only the stored copy is put back to the last value a
-        /// real recompute produced. A non-owner then reads the truth instead of a placeholder,
-        /// which is strictly better information, and no damage or collapse decision changes
-        /// because those are taken by the owner from m_support.
-        ///
-        /// Runs only on visits where UpdateSupport did not, which for an out-of-area piece is all
-        /// of them, and writes only when the stored value is actually the placeholder - so a
-        /// repeated stamp is repaired once rather than churning the ZDO every visit.
+        /// UpdateWear stamps m_support = GetMaxSupport() for pieces outside the active area and
+        /// persists it, so the stored support (what a non-owner reads, and what a returning piece
+        /// restores from at Awake) is overwritten with a placeholder every time the ring edge
+        /// sweeps past. The in-memory stamp is left alone, since it keeps an unwatched structure
+        /// from failing its support check; only the stored copy is put back to the last real
+        /// value, and only when it actually holds the placeholder.
         private static void RepairStampedSupport(WearNTear piece, PieceState state) {
             if (state == null || !state.m_hasRealSupport) { return; }
             if (piece.m_nview == null || !piece.m_nview.IsValid()) { return; }
@@ -966,34 +865,21 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // A new piece's colliders join the support world here, long before its lazy
-        // SetupColliders registers an envelope - wake the sleepers around it so they re-detect
-        // arriving support exactly as vanilla's fast path would (see header).
-        //
-        // This wake is WEAK, and that distinction is load bearing. Awake fires for every piece
-        // that streams in, which while moving is hundreds a second, and marking those
-        // neighbourhoods structural made almost every dirty piece undeferrable - the reason the
-        // support predicate still reported zero skips after the backoff landed. A piece arriving
-        // by streaming is not a change to the world: it was always there, and its support was
-        // already baked into the values its neighbours hold. The genuinely structural case, a
-        // player BUILDING something, has its own strong path and does not rely on this one -
-        // OnPlaced sets m_clearCachedSupport, and the first UpdateSupport broadcasts
-        // ClearCachedSupport to every overlapping piece (WearNTear.cs:467-484), which arrives as
-        // a strong wake through ClearCachedSupportPostfix above.
+        // SetupColliders registers an envelope, so the sleepers around it are woken to re-detect
+        // arriving support as vanilla's fast path would. The wake is weak on purpose: a piece
+        // arriving by streaming was always there, and its support is already baked into its
+        // neighbours' values. A player building something has its own strong path, the
+        // ClearCachedSupport broadcast on the piece's first UpdateSupport.
         [HarmonyPostfix]
         [HarmonyPatch("Awake")]
         private static void AwakePostfix(WearNTear __instance) {
             // Vanilla's Awake stamps m_support = GetMaxSupport() as a placeholder and never
-            // restores the persisted value: it writes ZDOVars.s_support in four places and reads
-            // it in exactly one, the NON-owner branch of GetSupport (WearNTear.cs:207). So an
-            // owned piece advertises an optimistic maximum to every neighbour that recomputes
-            // between its Awake and its first UpdateSupport, and then drops to the real value -
-            // a change out of nowhere that wakes the neighbourhood. Restoring the stored value
-            // here closes both halves: neighbours read what the piece actually last computed
-            // (strictly better information than a placeholder, and exactly what a non-owner
-            // would have read for the same piece), and the first recompute lands on the value it
-            // started from, so a piece returning to an unchanged base seeds no wave at all.
-            // UpdateWear consults HaveSupport only AFTER UpdateSupport has overwritten this, so
-            // no collapse or damage decision is taken on the restored value.
+            // restores the persisted value, so an owned piece advertises an optimistic maximum
+            // until its first UpdateSupport and then drops to the real value, waking the
+            // neighbourhood for a change that never happened. Restoring the stored value here
+            // means neighbours read what the piece last computed and the first recompute lands
+            // where it started. No collapse or damage decision is taken on the restored value:
+            // UpdateWear consults HaveSupport only after UpdateSupport has overwritten it.
             if (__instance.m_nview != null && __instance.m_nview.IsValid()
                 && __instance.m_nview.GetZDO().GetFloat(ZDOVars.s_support, out float stored)) {
                 __instance.m_support = stored;
@@ -1027,14 +913,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
             for (int i = 0; i < bounds.Count; i++) {
                 WearNTear.BoundData bound = bounds[i];
 
-                // The oriented box's true axis-aligned extent, not a sphere around it. The
-                // previous m_size.magnitude was a worst-case radius that assumed the box's
-                // diagonal could point along any axis, which for the flat pieces most of a base
-                // is made of over-covers enormously in Y: a floor with half-extents (1, 0.1, 1)
-                // got a vertical reach of 1.42 instead of 0.1, so its envelope swallowed the
-                // floors above and below it and the Y test could not tell them apart. Projecting
-                // the half-extents through the absolute rotation is exact for the axis-aligned
-                // and quarter-turned pieces that dominate, and never smaller than the truth.
+                // The oriented box's axis-aligned extent, projected through the absolute
+                // rotation: exact for the axis-aligned and quarter-turned pieces that dominate
+                // and never smaller than the truth. A sphere around the box would swallow the
+                // floors above and below a flat piece.
                 Matrix4x4 rotation = Matrix4x4.Rotate(bound.m_rot);
                 Vector3 half = bound.m_size;
                 float ex = Mathf.Abs(rotation.m00) * half.x + Mathf.Abs(rotation.m01) * half.y + Mathf.Abs(rotation.m02) * half.z;
@@ -1132,11 +1014,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 position.y - FallbackWakeRadius, position.y + FallbackWakeRadius, state, strong);
         }
 
-        // The cell grid is XZ only - cells are cheap and a column of them is a short lookup - but
-        // the overlap test is 3D. Without the Y test a change on one floor woke every piece in
-        // the same XZ footprint on every floor above and below it, which in a multi-storey base
-        // is most of the building: the exact "wakes hundreds instead of the handful that actually
-        // touch" failure this test was introduced to fix in XZ, never applied to the vertical.
+        // The cell grid is XZ only, but the overlap test is 3D: without the Y test a change on one
+        // floor woke every piece in the same footprint on every floor above and below it.
         private static void WakeOverlapping(
             float minX, float minZ, float maxX, float maxZ, float minY, float maxY,
             PieceState exclude, bool strong) {
@@ -1343,57 +1222,5 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 $"Blocked by: {(reasons.Length > 0 ? reasons.ToString() : "nothing")}.");
         }
 
-        // ---- hook health ---------------------------------------------------------------------
-
-        /// A sleeping piece is woken ONLY by the hooks in this class, so the sleep decision
-        /// stands down to vanilla's revalidation if any of them is missing.
-        private static bool HooksHealthy() {
-            if (_hooksChecked) { return _hooksHealthy; }
-            _hooksChecked = true;
-
-            _hooksHealthy =
-                HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "ClearCachedSupport"))
-                && HasOurHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook))
-                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "SetupColliders"))
-                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "UpdateSupport"))
-                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "Awake"))
-                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "UpdateWear"))
-                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "ApplyDamage"))
-                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "RPC_Repair"))
-                && HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "UpdateCover"))
-                && HasOurHook(AccessTools.DeclaredMethod(typeof(WearNTearUpdater), "Update"), typeof(UpdaterHook));
-
-            if (!_hooksHealthy) {
-                Logger.LogError(
-                    "Support sleep: a wake hook is not attached, so pieces cannot sleep safely " +
-                    "and support checks are running vanilla for this session. This usually " +
-                    "means a Valheim update changed those methods - look for the patch failure " +
-                    "logged at startup.");
-            }
-
-            return _hooksHealthy;
-        }
-
-        private static bool HasOurPostfix(MethodBase target) => HasOurHook(target, typeof(SupportSleepPatch));
-
-        private static bool HasOurHook(MethodBase target, System.Type hookClass) {
-            // Fully qualified: HarmonyLib.Patches collides with this mod's own Patches namespace.
-            HarmonyLib.Patches info = target == null ? null : Harmony.GetPatchInfo(target);
-            if (info == null) { return false; }
-
-            foreach (Patch patch in info.Postfixes) {
-                if (patch.owner != ValheimCommunityPatch.PluginGUID) { continue; }
-                if (patch.PatchMethod == null || patch.PatchMethod.DeclaringType != hookClass) { continue; }
-                return true;
-            }
-
-            foreach (Patch patch in info.Prefixes) {
-                if (patch.owner != ValheimCommunityPatch.PluginGUID) { continue; }
-                if (patch.PatchMethod == null || patch.PatchMethod.DeclaringType != hookClass) { continue; }
-                return true;
-            }
-
-            return false;
-        }
     }
 }

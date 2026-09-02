@@ -6,23 +6,18 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: Player.AutoPickup runs every frame and allocates a fresh Collider[] every time:
+    // Fix Auto Pickup Allocation: the per-frame auto-pickup check reuses one collider buffer
+    // instead of allocating an array every frame.
     //
-    //   foreach (Collider collider in Physics.OverlapSphere(vector3_1, this.m_autoPickupRange, this.m_autoPickupMask))
+    // Player.AutoPickup runs every frame and calls the allocating Physics.OverlapSphere overload:
+    // one fresh Collider[] per player per frame, feeding GC pauses.
     //
-    // Physics.OverlapSphere is the allocating overload. One array per player per frame is constant
-    // garbage for no benefit, and the resulting GC pressure shows up as periodic micro-stutter.
+    // A transpiler swaps it for OverlapSphereNonAlloc against a static buffer. The compiled
+    // foreach bounds itself on the array's length and the buffer is longer than the hit count, so
+    // the ldlen is rewritten to return the hit count too. Both edits are required, so the
+    // transpiler backs out unless it can make both.
     //
-    // Fix: swap it for OverlapSphereNonAlloc against a reused buffer. The subtlety is that the compiled
-    // foreach iterates the returned array by its *length*, and the buffer is longer than the hit count,
-    // so the Ldlen has to be replaced too or the loop walks past the real results into stale entries
-    // from previous frames. Both edits are required; applying one without the other is worse than
-    // vanilla, so the transpiler backs out entirely unless it can make both.
-    //
-    // Provenance: same technique as Zen.ModLib's FixAutoPickupMemAlloc.
-    //
-    // Client: Player.FixedUpdate only reaches AutoPickup inside the branch where this Player is
-    // m_localPlayer, and a dedicated server has none.
+    // Client: AutoPickup only runs for the local player. Provenance: Zen.ModLib (catalogue).
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Player))]
     internal static class AutoPickupAllocPatch {
@@ -44,11 +39,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return Buffer;
         }
 
-        // The buffer is longer than the hit count, so the loop bound has to be the hit count. The
-        // identity check keeps this correct if another transpiler ever routes a different array here.
+        // The identity check keeps this correct if another transpiler routes a different array here.
         private static int ResultCount(Array array) => ReferenceEquals(array, Buffer) ? _hitCount : array.Length;
 
-        // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("AutoPickup")]
@@ -65,8 +59,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 }
 
                 if (codes[i].opcode == OpCodes.Ldlen) {
-                    // Ldlen pushes a native int; the following Conv.I4 becomes redundant once a method
-                    // returning int takes its place, so drop it rather than leave a no-op conversion.
+                    // Ldlen pushes a native int and is followed by Conv.I4; a method returning int
+                    // makes that conversion redundant, so it becomes a Nop.
                     codes[i].opcode = OpCodes.Call;
                     codes[i].operand = ResultCountMethod;
                     replacedLengths++;
@@ -82,7 +76,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 Logger.LogWarning(
                     $"Player.AutoPickup: expected 1 OverlapSphere call and 1 array length read, found " +
                     $"{replacedCalls} and {replacedLengths}, so this fix is inactive. Another mod has most " +
-                    "likely already rewrote the method.");
+                    "likely already rewritten the method - if so, nothing is wrong.");
                 return instructions;
             }
 

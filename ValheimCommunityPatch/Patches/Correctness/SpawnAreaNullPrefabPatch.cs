@@ -2,20 +2,18 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Vanilla defect: SpawnArea.m_prefabs (used by tar pits, greydwarf nests, draugr piles and every
-    // other spawner) can contain entries whose m_prefab is null - typically after a content update or
-    // when another mod removes a creature. Nothing filters them, so SelectWeightedPrefab can hand a
-    // null prefab to SpawnOne, and IsSpawnPrefab dereferences prefab.m_prefab.name while counting
-    // existing instances. Either throws, and the exception aborts that spawner permanently.
+    // Fix Spawner Null Prefabs: keeps a spawner working when its creature table has a null entry.
     //
-    // Fix: drop null entries once, on Awake. A spawner with a partially broken table then keeps working
-    // with the entries that are still valid instead of dying outright.
+    // SpawnArea.m_prefabs (tar pits, greydwarf nests, draugr piles and every other spawner) can
+    // hold entries whose prefab is null after a content update or a removed creature mod. Nothing
+    // filters them, so SelectWeightedPrefab or IsSpawnPrefab dereferences one and the exception
+    // permanently kills that spawner.
     //
-    // Provenance: same fix as ComfyMods/LetMePlay (GPL-3.0, redseiko).
+    // A postfix on SpawnArea.Awake removes the null entries once, so the spawner keeps working
+    // with whatever is still valid.
     //
-    // Both: Awake runs wherever the spawner prefab is instantiated, and the throwing paths are behind
-    // UpdateSpawn's owner check. Meadows spawners near world origin are inside a dedicated server's
-    // own active area, so it can own them.
+    // Both: spawners near world origin sit inside a dedicated server's own active area.
+    // Provenance: the same fix as ComfyMods/LetMePlay (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(SpawnArea))]
     internal static class SpawnAreaNullPrefabPatch {
@@ -32,7 +30,6 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "spawn selection and silently kills that spawner.");
         }
 
-        // Cached so the removal does not allocate a delegate per spawner.
         private static readonly System.Predicate<SpawnArea.SpawnData> IsNullPrefab = data => data == null || data.m_prefab == null;
 
         [HarmonyPostfix]

@@ -6,58 +6,27 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: every write of a ZDO field allocates, to answer a question that needs no
-    // allocation at all. BinarySearchDictionary<TKey, TValue>.SetValue (assembly_utils) opens with:
+    // Fix ZDO Value Write Allocation: writing a ZDO field no longer boxes the value to ask
+    // whether it changed.
     //
-    //   int keyIndex = this.BinaryFindKeyIndex(key, out bool exactMatch);
-    //   if (exactMatch) {
-    //     if (this.m_values[keyIndex].Equals((object) value)) { return false; }
-    //     ...
+    // BinarySearchDictionary<TKey, TValue>.SetValue (assembly_utils) compares the stored value
+    // with this.m_values[keyIndex].Equals((object) value). TValue is unconstrained, so that cast
+    // is a box: one heap allocation per write, compared and dropped on the same line. That method
+    // is the only way ZDO data is written (ZDO.Set -> ZDOExtraData.Set -> ZDOHelper.InitAndSet),
+    // so every velocity, animation, health, fuel and growth write in the world pays it.
     //
-    // That cast is a box. TValue is an unconstrained type parameter, so the compiler resolves
-    // Equals to object.Equals(object) and emits `box !TValue` for the argument - one heap
-    // allocation, 24-32 bytes, every time the method is asked "did this value change?".
+    // A transpiler on the five value-type instantiations (float, Vector3, Quaternion, int, long)
+    // rewrites `box; constrained.; callvirt object.Equals(object)` into `call TValue.Equals(TValue)`.
+    // The receiver is already a managed pointer from the preceding ldelema, so the stack shape is
+    // unchanged. The answer is identical, NaN-to-NaN included: each type's Equals(object) is a type
+    // test followed by the typed overload. string and byte[] are not patched: they never boxed, and
+    // Mono shares one compiled body across reference-type instantiations, so a patch aimed at one
+    // would land on the other.
     //
-    // And that method is the *only* way ZDO data is written. ZDO.Set(hash, value) ->
-    // ZDOExtraData.Set(zid, hash, value) (ZDOExtraData.cs:119-156) -> ZDOHelper.InitAndSet
-    // (ZDOHelper.cs:72-80) -> BinarySearchDictionary.SetValue. So the box is paid by every
-    // ZSyncTransform velocity write, every m_syncBodyVelocity pair (two Vector3 per rigidbody
-    // per FixedUpdate, unconditional - ZSyncTransform.cs:185-186), every animation parameter
-    // that moves, every health, fuel, growth and state write in the game. The allocation is
-    // pure waste: the boxed object is compared and dropped on the same line.
-    //
-    // Fix: call the value type's own strongly typed Equals overload instead, which every one of
-    // these types has. The transpiler drops the `box` and rewrites `constrained. !TValue` +
-    // `callvirt object::Equals(object)` into `call instance bool TValue::Equals(TValue)`. The
-    // receiver is already a managed pointer from the preceding ldelema, which is exactly the
-    // `this` a call on a value type wants, so the whole edit is three instructions and the stack
-    // shape does not change.
-    //
-    // Same answer, not merely a similar one, and that matters for float and Vector3. Single.Equals
-    // (Single) is NOT `==`: it reports NaN equal to NaN, exactly as Single.Equals(object) does for
-    // a float argument. Using `==` here would flip a NaN-to-NaN write from "unchanged" to
-    // "changed", marking the ZDO dirty and re-syncing it forever. Every type below defines
-    // Equals(object) as a type test followed by a call to the typed overload, so routing straight
-    // to the typed overload is the same comparison with the box removed.
-    //
-    // Only the five value-type instantiations are patched. string and byte[] do not box, so there
-    // is nothing to win there, and patching them would be actively unsafe: Mono shares one
-    // compiled body across all reference-type instantiations of a generic, so a patch aimed at
-    // <int, string> would land on <int, byte[]> as well. Value-type instantiations each get their
-    // own body, which is what makes this targetable at all.
-    //
-    // The removal is a three-instruction IL edit rather than a wholesale method replacement, so
-    // the growth policy, the binary search and the ordering all stay vanilla's and cannot drift
-    // from them on a game update.
-    //
-    // Both: this is the ZDO data layer with no GameObject anywhere near it. A dedicated server
-    // writes ZDO values on world load, on ownership changes and for everything it owns.
+    // Both: this is the ZDO data layer.
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class ZdoValueWriteAllocPatch {
-        // The value types ZDO data is held in - the five BinarySearchDictionary<int, T>
-        // instantiations behind ZDOExtraData's s_floats, s_vec3, s_quats, s_ints and s_longs
-        // (ZDOExtraData.cs:18-22). s_strings and s_byteArrays are deliberately absent; see header.
         private static readonly Type[] BoxedValueTypes = {
             typeof(float), typeof(Vector3), typeof(Quaternion), typeof(int), typeof(long),
         };
@@ -85,11 +54,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
-        //
-        // __originalMethod is what makes one transpiler serve all five instantiations: the value
-        // type comes off the declaring type's generic arguments, so the typed Equals overload is
-        // resolved per target rather than guessed.
+        // One transpiler serves all five targets: the value type comes off __originalMethod's
+        // declaring type. Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         private static IEnumerable<CodeInstruction> SetValueTranspiler(
@@ -101,8 +67,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             Type valueType = declaring.GetGenericArguments()[1];
 
-            // Belt and braces against the shared-generic hazard in the header: a reference type
-            // here would mean we are looking at a body Mono may also run for other instantiations.
+            // A reference type here would be a body Mono may share with other instantiations.
             if (!valueType.IsValueType) { return instructions; }
 
             MethodInfo typedEquals = AccessTools.Method(valueType, nameof(object.Equals), new[] { valueType });
@@ -115,14 +80,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             int rewritten = 0;
 
-            // Anchored on the call rather than the box, and walking back over the prefix, because
-            // the prefix is the part that varies. The compiled shape is
-            //
-            //   readonly. ldelema !TValue / ldarg.2 / box !TValue / constrained. !TValue /
-            //   callvirt bool object::Equals(object)
-            //
-            // but whether Harmony surfaces `constrained.` as an instruction of its own or folds it
-            // into the call is its business, not ours, and either layout is handled here.
+            // Anchored on the Equals call and walking back over `constrained.` (which Harmony may
+            // surface as its own instruction or fold into the call) to the `box`.
             for (int i = 1; i < codes.Count; i++) {
                 if (!codes[i].Calls(ObjectEquals)) { continue; }
 
@@ -130,15 +89,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 int box = prefix - 1;
                 if (box < 0 || codes[box].opcode != OpCodes.Box) { continue; }
 
-                // Resolved against the instantiation this body is being emitted for, so the operand
-                // is normally the concrete type; an unsubstituted type parameter is still this
-                // method's TValue and is equally fine to unbox from.
+                // The operand is normally the concrete type; an unsubstituted generic parameter is
+                // still this method's TValue.
                 if (codes[box].operand is Type boxed && boxed != valueType && !boxed.IsGenericParameter) {
                     continue;
                 }
 
-                // Nop rather than remove: either instruction may be carrying a branch label or an
-                // exception block boundary, and both survive an opcode swap.
+                // Nop rather than remove, so any label or exception block boundary survives.
                 codes[box].opcode = OpCodes.Nop;
                 codes[box].operand = null;
 
@@ -147,8 +104,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     codes[prefix].operand = null;
                 }
 
-                // The receiver is already a managed pointer from the ldelema above, which is what a
-                // call on a value type wants for `this`; only the boxed argument goes away.
                 codes[i].opcode = OpCodes.Call;
                 codes[i].operand = typedEquals;
 
@@ -163,7 +118,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return instructions;
             }
 
-            Logger.LogDebug($"BinarySearchDictionary<int, {valueType.Name}>.SetValue: boxed equality check removed.");
             return codes;
         }
     }

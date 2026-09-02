@@ -1,51 +1,27 @@
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: ZPackage.Write(ZPackage) copies the entire nested package onto the heap before
-    // writing a single byte of it:
+    // Fix ZDO Packet Allocation: writing one ZPackage into another no longer copies the whole
+    // payload onto the heap first.
     //
-    //   public void Write(ZPackage pkg) {
-    //     byte[] array = pkg.GetArray();       // GetArray() is m_stream.ToArray() - a full copy
-    //     this.m_writer.Write(array.Length);
-    //     this.m_writer.Write(array);
-    //   }
+    // ZPackage.Write(ZPackage) calls pkg.GetArray(), which is MemoryStream.ToArray(): a full copy
+    // of the nested package. That is the innermost step of ZDO synchronisation (ZDOMan.SendZDOs ->
+    // ZRpc.Invoke -> ZRpc.Serialize), so the whole ZDO payload is duplicated once per peer per send
+    // tick, and again for every routed RPC and every receive.
     //
-    // That is the innermost step of ZDO synchronisation. ZDOMan.SendZDOs builds a package and hands it
-    // to ZRpc.Invoke("ZDOData", pkg), which reaches ZRpc.Serialize -> m_pkg.Write(pkg) - so the whole
-    // ZDO payload is duplicated on the heap once per peer, per send tick, on top of the copy
-    // ZSteamSocket.Send already makes. Every routed RPC pays it too, and the receive path pays it
-    // again. On a populated server that is sustained GC pressure buying nothing.
+    // A prefix writes the length and then the bytes straight out of the source stream's backing
+    // buffer. The output is byte-identical. GetBuffer() cannot throw here: every ZPackage
+    // constructor writes into its own expandable stream rather than wrapping a caller's array.
     //
-    // Fix: write straight out of the source stream's backing buffer. The result is byte-identical -
-    // BinaryWriter.Write(byte[]) emits raw bytes with no length prefix of its own, so writing the
-    // length followed by buffer[0..length] produces exactly the same stream, and ToArray() already
-    // ignored Position and returned the whole 0..Length range.
-    //
-    // On GetBuffer(), which is the one thing that could make this unsound: MemoryStream.GetBuffer()
-    // throws UnauthorizedAccessException on a stream constructed over a caller-supplied array. It
-    // cannot happen here. ZPackage.m_stream is a field initialiser (ZPackage.cs:15) and every
-    // constructor - including ZPackage(byte[]) and ZPackage(string) - writes *into* that expandable
-    // stream rather than wrapping the array, as does Load(). No path hands a ZPackage a
-    // non-exposable buffer.
-    //
-    // Replacing the method outright rather than editing its IL: at three lines there is nothing left
-    // to anchor a transpiler on, and every one of those lines changes. Same call as
-    // PaintMaskStridePatch makes for the same reason.
-    //
-    // Provenance: same technique as the ZPackage.Write prefix in ComfyMods/Compress (GPL-3.0,
-    // redseiko), taken on its own - that mod's opt-in GZip compression of ZDO data is a protocol
-    // change needing both sides, and is deliberately not included.
-    //
-    // Both, and hottest on the server: this is pure serialisation with no GameObject involved, and
-    // it sits under every ZDO data send and every routed RPC - once per peer per send tick.
+    // Both, hottest on the server. Provenance: ComfyMods/Compress (GPL-3.0, redseiko), taken
+    // without that mod's GZip protocol change.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZPackage))]
     internal static class ZPackageWriteAllocPatch {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ZPackage.Write), new[] { typeof(ZPackage) })]
         private static bool WritePrefix(ZPackage __instance, ZPackage pkg) {
-            // GetArray() flushed both of these before taking its copy; the length has to be read
-            // after the flush or a buffered tail would be dropped.
+            // GetArray() flushed both before copying; the length must be read after the flush.
             pkg.m_writer.Flush();
             pkg.m_stream.Flush();
 

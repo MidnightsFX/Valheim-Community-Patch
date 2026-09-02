@@ -3,27 +3,20 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: grass generation is normally budgeted to one patch per frame - GeneratePatch
-    // bails once anything was generated (ClutterSystem.cs:154) - but the rebuildAll path skips that
-    // limiter entirely. rebuildAll is fired by ClearAll (graphics settings) and, the case that
-    // matters, by TerrainComp.CheckLoad -> ResetGrass with a whole-zone radius whenever a zone with
-    // saved terrain edits loads (TerrainComp.cs:125). That regenerates every marked patch in range
-    // in a single frame: up to ~64 patches, each of which raycasts per clutter instance in
-    // GenerateVegPatch - hundreds of raycasts per patch. It is a reliable frame spike on entering
-    // any built-up area.
+    // Fix Grass Rebuild Burst: a whole-area grass rebuild is spread over a few frames, nearest
+    // patches first.
     //
-    // Fix: budget the rebuildAll path. Instead of one unbudgeted sweep, run vanilla's own
-    // one-patch-per-pass ring walk (GeneratePatch with rebuildAll off) up to N times, which
-    // regenerates the N nearest missing or reset patches in vanilla's own center-out order, then
-    // re-arm m_forceRebuild so LateUpdate resumes next frame until nothing is left. No placement
-    // logic is copied - each pass is vanilla's, so what gets generated and how cannot drift.
+    // Grass generation is normally one patch per frame, but ClutterSystem.GeneratePatches'
+    // rebuildAll path skips that limiter. TerrainComp.CheckLoad triggers it with a whole-zone
+    // radius whenever a zone with saved terrain edits loads, regenerating up to ~64 patches at
+    // hundreds of raycasts each in one frame: a reliable stutter entering built-up areas.
     //
-    // The patches beyond the budget keep their old grass until their turn (or time out after 2 s,
-    // exactly as any out-of-range patch does) - worst case a few frames of stale grass where the
-    // spike used to be. The menu is unaffected: m_menuHack disables the per-pass limiter, so the
-    // first pass generates everything and the second finds nothing, same as vanilla.
+    // A prefix replaces the unbudgeted sweep with vanilla's own one-patch-per-pass ring walk, run
+    // up to Budget times, then re-arms m_forceRebuild so LateUpdate resumes next frame until
+    // nothing is left. No placement logic is copied; each pass is vanilla's. Patches beyond the
+    // budget keep their old grass for a few frames.
     //
-    // Client: ClutterSystem requires a main camera; nothing headless ever generates grass.
+    // Client: ClutterSystem needs a camera.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(ClutterSystem))]
     internal static class ClutterRebuildCapPatch {
@@ -44,7 +37,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("GeneratePatches")]
         private static bool GeneratePatchesPrefix(ClutterSystem __instance, bool rebuildAll, Vector3 center) {
-            // The steady-state path is already budgeted by vanilla; only the burst needs taming.
             if (!rebuildAll) { return true; }
 
             int budget = Budget != null ? Budget.Value : 8;
@@ -58,19 +50,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 if (!generated) { break; }
             }
 
-            // The budget ran out with work still being found: LateUpdate cleared m_forceRebuild
-            // before calling us (ClutterSystem.cs:77), so re-arm it to resume next frame. Worst
-            // case - the last pass generated the final patch - is one extra pass that finds
-            // nothing and disarms.
+            // LateUpdate cleared m_forceRebuild before calling us; re-arm it if work remains.
             if (lastPassGenerated) { __instance.m_forceRebuild = true; }
 
             return false;
         }
 
-        // Vanilla's GeneratePatches ring walk verbatim (ClutterSystem.cs:122-141), passing
-        // rebuildAll: false so GeneratePatch's own one-per-pass limiter applies. Each full pass
-        // over the ring regenerates exactly the nearest missing or reset patch; already-current
-        // patches are a dictionary hit and a timer reset, same as vanilla visits them.
+        // Vanilla's GeneratePatches ring walk with rebuildAll false, so GeneratePatch's own
+        // one-per-pass limiter applies. Each full pass regenerates the nearest missing patch.
         private static void RunRing(ClutterSystem clutter, Vector3 center, ref bool generated) {
             Vector2Int vegPatch = clutter.GetVegPatch(center);
             clutter.GeneratePatch(center, vegPatch, ref generated, false);

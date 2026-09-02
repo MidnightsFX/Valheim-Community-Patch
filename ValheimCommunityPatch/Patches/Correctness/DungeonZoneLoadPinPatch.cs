@@ -6,62 +6,25 @@ using SoftReferenceableAssets;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Vanilla defect: a dungeon whose room prefabs do not all load leaves its zone flagged as
-    // "loading" for good, and a zone in that state is one nobody can spawn or teleport into.
+    // Fix Dungeon Load Stall: a dungeon whose room assets fail to load no longer leaves its zone
+    // flagged as loading forever.
     //
-    // DungeonGenerator.Awake loads its saved rooms asynchronously (DungeonGenerator.cs:162). The
-    // first thing it does is claim the zone:
+    // DungeonGenerator.Awake marks its zone as loading, counts its rooms into m_roomsToLoad and
+    // loads each asynchronously. OnRoomLoaded returns early for any result other than Succeeded,
+    // so a failed room never decrements the counter: Spawn never runs, and ReleaseHeldReferences,
+    // the only caller of UnsetLoadingInZone, never runs either. A zone flagged as loading stops
+    // spawning objects, and anyone who spawns or teleports into it sits on the loading screen
+    // indefinitely. Missing room prefabs (a removed mod) are a different case vanilla already
+    // handles; this is a room that resolved but whose asset failed to load.
     //
-    //   this.m_zdoSetToBeLoadingInZone = this.m_nview.GetZDO();
-    //   ZoneSystem.instance.SetLoadingInZone(this.m_zdoSetToBeLoadingInZone);
-    //   this.m_roomsToLoad = this.m_loadedRooms.Length;
-    //   ... LoadAsync(new LoadedHandler(this.OnRoomLoaded)) per room ...
+    // Three prefixes: OnRoomLoaded counts a failed room as finished so the dungeon still spawns;
+    // Spawn drops rooms whose asset is not loaded, because PlaceRoom throws on one and a throw
+    // there pins the zone by another route; and UnsetLoadingInZone tolerates a ZDO whose sector no
+    // longer matches where it was registered, which happens when the ZDO was destroyed and pooled
+    // mid-load.
     //
-    // and the claim is only ever given back through OnRoomLoaded (:179):
-    //
-    //   private void OnRoomLoaded(AssetID assetID, LoadResult result) {
-    //     if (result != LoadResult.Succeeded || this == null || this.gameObject == null) return;
-    //     --this.m_roomsToLoad;
-    //     if (this.m_roomsToLoad > 0) return;
-    //     this.Spawn();
-    //     this.ReleaseHeldReferences();
-    //   }
-    //
-    // A room that comes back Failed or Aborted takes the early return, so it never decrements the
-    // counter it was counted into. m_roomsToLoad can then never reach zero: Spawn never runs, the
-    // dungeon interior never appears, and ReleaseHeldReferences - the only thing that calls
-    // UnsetLoadingInZone - never runs either. The zone stays in ZoneSystem.m_loadingObjectsInZones
-    // until the generator itself unloads, which will not happen while a player is standing in it.
-    //
-    // A pinned zone is not a cosmetic problem:
-    //
-    //   * ZoneSystem.IsZoneReadyForType (ZoneSystem.cs:1834) returns false, so
-    //     ZNetScene.CreateObjectsSorted stops creating that zone's objects.
-    //   * ZNetScene.IsAreaReady (ZNetScene.cs:122) returns false, so Game.UpdateRespawn
-    //     (Game.cs:316/343/366) and Player's teleport completion (Player.cs:4166) never finish.
-    //     Anyone spawning into or teleporting to that zone sits on the loading screen indefinitely.
-    //
-    // Note that missing *rooms* are already handled: Load compacts and then trims m_loadedRooms to
-    // the rooms DungeonDB could resolve (DungeonGenerator.cs:406-410), so uninstalling a room-adding
-    // mod is not this bug. This is specifically a room that resolved but whose asset failed to load.
-    //
-    // Fix, in three parts:
-    //
-    //   * Take over OnRoomLoaded's failure branch so it accounts for the room the same way a
-    //     successful load would. Vanilla's success path is left entirely alone.
-    //   * Drop rooms that did not load before Spawn walks them. PlaceRoom's first statement is
-    //     roomData.m_prefab.Asset.GetComponent<Room>() (:670), which throws on an unloaded asset -
-    //     and a throw there puts us straight back to a pinned zone by a different route. This is
-    //     also the part that matters when the failure is not the last callback to arrive, because
-    //     then it is vanilla's own success path that calls Spawn.
-    //   * Stop UnsetLoadingInZone throwing when the generator's cached ZDO no longer reports the
-    //     sector it was filed under. See the comment on that prefix.
-    //
-    // A dungeon missing a room or two is a poor outcome. It is a much better one than a zone the
-    // server can never finish loading.
-    //
-    // Both: DungeonGenerator.Awake runs wherever the generator is instantiated - on a client for the
-    // dungeon it is standing in, and on the host for its own active area.
+    // Both: the generator runs on a client for the dungeon it stands in and on the host for its
+    // own active area.
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class DungeonZoneLoadPinPatch {
@@ -78,18 +41,14 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "or teleports into it never leaves the loading screen.");
         }
 
-        // Takes over only the branch vanilla drops on the floor. A failed room still has to be
-        // accounted for, or the counter it was added to can never reach zero.
+        // Takes over only the failure branch; vanilla's success path is untouched.
         [HarmonyPrefix]
         [HarmonyPatch(typeof(DungeonGenerator), "OnRoomLoaded")]
         private static bool OnRoomLoadedPrefix(DungeonGenerator __instance, LoadResult result) {
             if (Enabled == null || !Enabled.Value) { return true; }
-
-            // Vanilla's own path, untouched.
             if (result == LoadResult.Succeeded) { return true; }
 
-            // The generator is going away regardless, and its OnDestroy releases the zone. Let
-            // vanilla take its identical early return rather than duplicate the decision here.
+            // A generator that is going away releases the zone from its own OnDestroy.
             if (__instance == null || __instance.gameObject == null) { return true; }
 
             Logger.LogWarning(
@@ -97,7 +56,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "Counting it as finished so the rest of the dungeon still spawns and the zone is not " +
                 "left flagged as loading.");
 
-            // The rest mirrors vanilla's tail exactly (DungeonGenerator.cs:183-187).
+            // Vanilla's tail.
             __instance.m_roomsToLoad--;
             if (__instance.m_roomsToLoad > 0) { return false; }
 
@@ -106,8 +65,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             return false;
         }
 
-        // Runs for every Spawn, not just the ones reached through the prefix above: when the failed
-        // room is not the last callback to arrive, it is vanilla's success path that gets here.
+        // Runs for every Spawn, because when the failed room is not the last callback to arrive it
+        // is vanilla's success path that gets here.
         [HarmonyPrefix]
         [HarmonyPatch(typeof(DungeonGenerator), "Spawn")]
         private static void SpawnPrefix(DungeonGenerator __instance) {
@@ -116,12 +75,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             var rooms = __instance.m_loadedRooms;
             if (rooms == null || rooms.Length == 0) { return; }
 
-            // Decided before anything moves, and recorded, so the compaction below cannot throw.
-            // Reading Asset reaches into the asset system; compacting in place as we went would
-            // leave the array half-shifted if it threw partway, and vanilla's Spawn would then walk
-            // duplicated entries - a worse outcome than the one being fixed. The try is here for the
-            // same reason: a throw escaping a prefix propagates out of an async load callback, gets
-            // swallowed by Unity, and pins the zone via the fix meant to prevent exactly that.
+            // Decide first, compact second: reading Asset reaches into the asset system, and a
+            // throw halfway through an in-place compaction would leave duplicated entries. A throw
+            // escaping this prefix would be swallowed by the async load callback and pin the zone.
             bool[] loaded = new bool[rooms.Length];
             int kept = 0;
             try {
@@ -146,7 +102,6 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "Placing them anyway throws inside PlaceRoom, which would leave this zone flagged as " +
                 "loading and unenterable.");
 
-            // Compaction proper, over the recorded verdicts only - no asset reads, nothing to throw.
             int next = 0;
             for (int i = 0; i < rooms.Length; i++) {
                 if (loaded[i]) { rooms[next++] = rooms[i]; }
@@ -156,42 +111,26 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             __instance.m_loadedRooms = rooms;
         }
 
-        // Vanilla indexes straight into the dictionary:
-        //
-        //   public void UnsetLoadingInZone(ZDO zdo) {
-        //     Vector2i sector = zdo.GetSector();
-        //     this.m_loadingObjectsInZones[sector].Remove(zdo);
-        //     ...
-        //
-        // DungeonGenerator holds the ZDO it registered in m_zdoSetToBeLoadingInZone and hands that
-        // same object back on OnDestroy (DungeonGenerator.cs:83-86). If the ZDO was destroyed in the
-        // meantime the object is no longer the one that was filed: ZDOMan.HandleDestroyedZDO calls
-        // ZDOPool.Release synchronously (ZDOMan.cs:548) and ZDO.Reset zeroes m_sector (ZDO.cs:60),
-        // while Object.Destroy defers OnDestroy to the end of the frame. So the lookup runs against
-        // sector (0,0) - or against whichever sector the pooled ZDO has since been re-issued into -
-        // and throws a KeyNotFoundException, or quietly edits an unrelated zone's list. Either way
-        // the entry that was really made is never removed, and the zone is pinned exactly as above.
-        //
-        // Falling back to a scan finds the entry wherever it actually is. The dictionary holds one
-        // key per zone currently loading something, which is a handful at most.
+        // Vanilla indexes m_loadingObjectsInZones straight by zdo.GetSector(). If the ZDO was
+        // destroyed mid-load it has been reset and pooled, so its sector is (0,0) or whatever it
+        // was re-issued as, the lookup throws KeyNotFoundException or edits the wrong zone, and
+        // the real entry is never removed. A scan finds the entry wherever it actually is.
         [HarmonyPrefix]
         [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.UnsetLoadingInZone))]
         private static bool UnsetLoadingInZonePrefix(ZoneSystem __instance, ZDO zdo) {
             if (Enabled == null || !Enabled.Value) { return true; }
 
-            // Not "return true": with no ZDO and no dictionary there is nothing to unregister, and
-            // vanilla's answer to both is a NullReferenceException out of OnDestroy.
+            // Nothing to unregister; vanilla's answer to either is a NullReferenceException.
             if (zdo == null || __instance.m_loadingObjectsInZones == null) { return false; }
 
             Dictionary<Vector2i, List<ZDO>> loading = __instance.m_loadingObjectsInZones;
 
-            // The common case: the ZDO is exactly where its own sector says it is.
             if (RemoveFrom(loading, zdo.GetSector(), zdo)) { return false; }
 
             foreach (KeyValuePair<Vector2i, List<ZDO>> pair in loading) {
                 if (pair.Value == null || !pair.Value.Contains(zdo)) { continue; }
 
-                // Deferred out of the enumeration: RemoveFrom can drop the key.
+                // Outside the enumeration, because RemoveFrom can drop the key.
                 Vector2i actual = pair.Key;
                 RemoveFrom(loading, actual, zdo);
                 Logger.LogWarning(
@@ -202,14 +141,12 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 return false;
             }
 
-            // Nothing registered anywhere. Vanilla would throw a KeyNotFoundException out of
-            // DungeonGenerator.OnDestroy and abandon the rest of it; there is nothing to clean up,
-            // so returning quietly is strictly better.
+            // Nothing registered anywhere: vanilla would throw out of OnDestroy for no gain.
             return false;
         }
 
-        /// Removes <paramref name="zdo"/> from one zone's list, dropping the zone when it empties -
-        /// which is what keeps m_loadingObjectsInZones.ContainsKey meaningful in IsZoneLoaded.
+        // Drops the zone when its list empties, which is what keeps ContainsKey meaningful in
+        // ZoneSystem.IsZoneLoaded.
         private static bool RemoveFrom(Dictionary<Vector2i, List<ZDO>> loading, Vector2i sector, ZDO zdo) {
             if (!loading.TryGetValue(sector, out List<ZDO> inZone)) { return false; }
             if (!inZone.Remove(zdo)) { return false; }

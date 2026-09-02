@@ -2,35 +2,21 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: ClutterSystem.GetGroundInfo answers "where is the ground here, and which way
-    // does it face" with a 1 km Physics.Raycast (ClutterSystem.cs:216-237) - and grass placement
-    // asks it for every clutter candidate: up to 80 candidates per clutter type per 8 m patch,
-    // one patch generated per frame while moving, and a multi-patch burst when zones load. That
-    // is hundreds of raycasts per frame in the steady state - profiling attributed ~4.2 seconds
-    // of a 5-minute window to patch generation, a large share of it these queries.
+    // Fix Grass Ground Raycasts: grass placement reads the ground height, normal and biome from
+    // heightmap data instead of casting a physics ray per blade.
     //
-    // The ray mask is exactly the "terrain" layer (ClutterSystem.cs:42), and the handler
-    // dereferences the hit collider's Heightmap unconditionally - so the only thing that ray can
-    // ever hit is a zone heightmap's collision mesh. Everything it returns is therefore a pure
-    // function of heightmap data: the surface height and triangle normal come from
-    // HeightmapSampling (the same triangulation the collider bakes), the heightmap from
-    // FindHeightmap (indexed by HeightmapLookupPatch), and the biome from the same GetBiome call.
+    // ClutterSystem.GetGroundInfo answers with a 1 km Physics.Raycast, and GenerateVegPatch calls
+    // it for every clutter candidate: up to 80 per clutter type per 8 m patch, one patch per frame
+    // while moving and a burst when zones load. The ray mask is exactly the terrain layer and the
+    // handler dereferences the hit's Heightmap, so the only thing it can hit is a zone heightmap's
+    // collision mesh, and everything it returns is a function of heightmap data.
     //
-    // Faithfulness notes:
-    //  - The vertical ray only reaches surfaces within +/-500 m of the query's y (origin +500,
-    //    length 1000). Replicated as an explicit window check; candidates are generated at y=0
-    //    and world terrain spans roughly -50..+450, so the window never cuts in practice.
-    //  - A raycast sees the last *baked* collider; this reads current data, which is never
-    //    staler. With the zone-collider bake deferred (Fix Zone Collider Stall) it is strictly
-    //    fresher.
-    //  - A borderline float difference in the normal can flip a single blade's tilt test.
-    //    Clutter is cosmetic, client-local, never saved, and regenerated on a 2-second timeout,
-    //    so there is no persistence or multiplayer surface.
+    // A prefix answers from that data: the heightmap from HeightmapLookupPatch, the height and
+    // triangle normal from HeightmapSampling (the same triangulation the collider bakes), and the
+    // biome from the same GetBiome call. The ray's +/-500 m vertical window is kept as an explicit
+    // check. Clutter is cosmetic, never saved, and regenerated constantly.
     //
-    // GetGroundInfo's only caller is GenerateVegPatch (verified across the assembly), but it is
-    // public, so the replacement keeps its exact contract for any mod that calls it.
-    //
-    // Client: ClutterSystem requires a main camera; nothing headless ever generates grass.
+    // Client: ClutterSystem needs a camera.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(ClutterSystem))]
     internal static class ClutterGroundDataPatch {
@@ -39,8 +25,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool GetGroundInfoPrefix(
             Vector3 p, out Vector3 point, out Vector3 normal, out Heightmap hmap,
             out Heightmap.Biome biome, ref bool __result) {
-            // The registry path answers with the cached transform origin - no native reads at all
-            // on the hot path. Falls back to the plain lookup when the registry cannot serve.
             Heightmap found;
             Vector3 origin;
             if (!HeightmapLookupPatch.TryGetCached(p, out found, out origin)) {
@@ -51,8 +35,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             float height = 0f;
             Vector3 surfaceNormal = Vector3.up;
 
-            // The vanilla ray starts 500 above the query and travels 1000 down; a surface outside
-            // that window is a miss there too.
             if (found != null
                 && HeightmapSampling.TryGetSurface(found, origin, p, out height, out surfaceNormal)
                 && height <= p.y + 500f && height >= p.y - 500f) {
@@ -64,7 +46,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return false;
             }
 
-            // Vanilla's miss result, verbatim (ClutterSystem.cs:232-236).
+            // Vanilla's miss result.
             point = p;
             normal = Vector3.up;
             hmap = null;

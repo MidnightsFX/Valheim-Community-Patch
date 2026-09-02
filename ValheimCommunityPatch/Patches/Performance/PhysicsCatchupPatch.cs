@@ -2,23 +2,18 @@ using BepInEx.Configuration;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: Unity's Time.maximumDeltaTime ships at 0.333 s, so a single long frame is
-    // followed by up to ~16 fixed physics steps of catch-up in the NEXT frame - which makes that
-    // frame long too. Every hitch this mod has chased is amplified by this spiral: a 300 ms
-    // stall (a zone crossing, a shader compile) buys a second frame of pure physics debt.
+    // Fix Physics Catchup Spiral: caps how many fixed physics steps one frame may run to catch up
+    // after a stall.
     //
-    // Fix: cap the debt. maximumDeltaTime = N * fixedDeltaTime bounds how many fixed steps one
-    // frame may run; time the simulation cannot cover is dropped, exactly as vanilla already
-    // drops it past its own (higher) cap. During a capped burst the world advances slightly
-    // slower than the wall clock for a few frames - the same trade vanilla makes, at a
-    // threshold low enough to matter.
+    // Unity's Time.maximumDeltaTime ships at 0.333 s, so a single long frame is followed by up to
+    // ~16 fixed physics steps of catch-up in the next frame, which makes that frame long too.
+    // Every hitch becomes two.
     //
-    // Not a Harmony patch: maximumDeltaTime is a global the engine never rewrites mid-session,
-    // so binding plus a SettingChanged reapply is the whole mechanism (the Point Light Limit
-    // precedent). Provenance: ontrigger's ValheimPerformanceOptimizations (MIT), same default -
-    // https://github.com/ontrigger/ValheimPerformanceOptimizations
+    // Time.maximumDeltaTime is set to N * fixedDeltaTime (default 8) at bind time and on every
+    // config change. Time the simulation cannot cover is dropped, exactly as vanilla drops it past
+    // its own higher cap. Not a Harmony patch: the engine never rewrites this global mid-session.
     //
-    // Both: a dedicated server pays the identical catch-up spiral after its own stalls.
+    // Both. Provenance: ontrigger's ValheimPerformanceOptimizations (MIT), same default.
     [PatchSide(Side.Both)]
     internal static class PhysicsCatchupPatch {
         internal static ConfigEntry<int> MaxSteps;

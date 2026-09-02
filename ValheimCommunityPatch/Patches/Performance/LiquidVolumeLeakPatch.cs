@@ -6,38 +6,22 @@ using HarmonyLib;
 using Unity.Collections;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: LiquidVolume (tar pits) allocates its two raycast NativeArrays with
-    // Allocator.TempJob, which is contractually a <=4-frame allocator:
+    // Fix Tar Pit Memory Leak: tar pit raycast buffers are allocated persistently and disposed
+    // safely.
     //
-    //   this.m_raycastResults  = new NativeArray<RaycastHit>(num * num, Allocator.TempJob);
-    //   this.m_raycastCommands = new NativeArray<RaycastCommand>(num * num, Allocator.TempJob);
+    // LiquidVolume.Awake allocates its two NativeArrays with Allocator.TempJob, a four-frame
+    // allocator, then keeps them for the object's whole life. Unity logs "JobTempAlloc has
+    // allocations that are more than 4 frames old" every time a tar pit loads, and the block is
+    // never returned to the pool. OnDestroy then calls Dispose unguarded, which throws if Awake
+    // never completed.
     //
-    // But the arrays live for the whole lifetime of the tar pit GameObject and are reused on every
-    // UpdateHeights(), scheduled about once a second from Update(). With m_width = 32 that is a
-    // persistent 1089-element pair per pit held for hours. Two consequences:
+    // Two transpilers: Awake's allocator constants become Allocator.Persistent, and OnDestroy's
+    // Dispose calls become IsCreated-guarded ones. They depend on each other, since Persistent
+    // memory is reclaimed only by an explicit Dispose. Both are anchored on the constructor and
+    // Dispose calls rather than replacing the methods.
     //
-    //   1. Unity logs "Internal: JobTempAlloc has allocations that are more than 4 frames old" every
-    //      time a tar pit streams in.
-    //   2. The temp-allocator block is never returned to the pool, so native (non-GC) memory climbs
-    //      steadily across a long session.
-    //
-    // OnDestroy then calls Dispose() unguarded, which throws if Awake never completed or the temp
-    // allocator already reclaimed the block.
-    //
-    // Fix: swap the allocator to Persistent, and guard both Dispose calls with IsCreated. These are
-    // interdependent - Persistent memory is reclaimed *only* by an explicit Dispose, so a throwing
-    // OnDestroy would turn a temp-pool leak into a permanent one. The guards matter more after the
-    // allocator change, not less.
-    //
-    // Both patches are transpilers anchored on the NativeArray constructor / Dispose call rather than
-    // whole-method replacements, so they survive unrelated changes to these methods and coexist with
-    // other mods patching them.
-    //
-    // Provenance: same root cause as Azumatt's MyPitsDontLeak (MIT), which replaces both methods
-    // wholesale. Reimplemented here as targeted IL edits.
-    // Client: LiquidVolume is a MonoBehaviour, so Awake only runs where ZNetScene actually
-    // instantiates the tar pit. A dedicated server only instantiates objects in its own active area,
-    // which never leaves world origin, and tar pits are Plains-only - so one can never wake there.
+    // Client: tar pits are Plains-only and never inside a dedicated server's active area.
+    // Provenance: Azumatt's MyPitsDontLeak (MIT), which replaces both methods wholesale.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(LiquidVolume))]
     internal static class LiquidVolumeLeakPatch {
@@ -51,11 +35,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool IsNativeArrayOf(Type type) =>
             type != null && type.IsGenericType && type.GetGenericTypeDefinition() == typeof(NativeArray<>);
 
-        // Rewrites every `new NativeArray<T>(n, Allocator.TempJob, ...)` in Awake to use
-        // Allocator.Persistent. Anchored on the constructor, then walking back for the allocator
-        // constant, so the surrounding code is free to change.
-        //
-        // Priority.Last on both transpilers here, for the reason in ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last on both: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("Awake")]
@@ -67,8 +47,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 if (codes[i].opcode != OpCodes.Newobj) { continue; }
                 if (!(codes[i].operand is ConstructorInfo ctor) || !IsNativeArrayOf(ctor.DeclaringType)) { continue; }
 
-                // The allocator is the second constructor argument, so it is within a few instructions
-                // behind the newobj regardless of how the length expression is written.
+                // The allocator is the second constructor argument, a few instructions back.
                 for (int j = i - 1; j >= 0 && j >= i - 6; j--) {
                     if (codes[j].opcode == OpCodes.Ldc_I4_3) {
                         codes[j].opcode = OpCodes.Ldc_I4_4;
@@ -84,20 +63,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (patched != 2) {
-                // Refuse to half-apply: leaving vanilla intact is strictly safer than allocating some
-                // buffers persistently and losing track of the rest.
                 Logger.LogWarning(
                     $"LiquidVolume.Awake: expected 2 TempJob allocations, rewrote {patched}. " +
                     "Leaving the method unpatched - the tar pit memory leak fix is inactive.");
                 return instructions;
             }
 
-            Logger.LogDebug("LiquidVolume.Awake: raycast buffers switched to Allocator.Persistent.");
             return codes;
         }
 
-        // Replaces `nativeArray.Dispose()` with a null-safe equivalent. The managed pointer to the
-        // field is already on the stack from the ldflda, so the signatures line up.
+        // The managed pointer to the field is already on the stack from the ldflda, so the
+        // signatures line up.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("OnDestroy")]
@@ -124,7 +100,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return instructions;
             }
 
-            Logger.LogDebug($"LiquidVolume.OnDestroy: guarded {patched} NativeArray disposals.");
             return codes;
         }
     }

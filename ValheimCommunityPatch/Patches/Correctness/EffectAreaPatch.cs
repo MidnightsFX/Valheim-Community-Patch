@@ -1,40 +1,28 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using System.Reflection.Emit;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Two independent vanilla defects in EffectArea, the component behind fire warmth, wetness, the
-    // no-monster radius around a workbench, and every other area status effect.
+    // Fix Effect Areas: two defects in the component behind fire warmth, wetness and the
+    // no-monster radius around a workbench.
     //
-    // 1. Truncated collider buffer.
-    //    EffectArea.m_tempColliders is a fixed 128-element static array, and both
-    //    IsPointInsideArea and GetBaseValue feed it to Physics.OverlapSphereNonAlloc, which silently
-    //    stops writing once it is full. In a dense build - a large base, a cluster of fireplaces, a
-    //    workbench surrounded by pieces - the area that actually matters can fall outside the first
-    //    128 hits, so warmth, wetness and burning checks simply miss. Grow the buffer instead.
+    // 1. EffectArea.m_tempColliders is a fixed 128-element buffer, and IsPointInsideArea and
+    //    GetBaseValue feed it to Physics.OverlapSphereNonAlloc, which silently stops writing when
+    //    it is full. In a dense base the area that matters can fall outside the first 128 hits,
+    //    so warmth and wetness checks miss. Transpilers route both calls through a wrapper that
+    //    grows the buffer and retries whenever it came back full.
     //
-    // 2. Dangling character references.
-    //    OnTriggerEnter adds a Character to m_collidedWithCharacter, and only OnTriggerExit removes it.
-    //    Unity does not fire OnTriggerExit for a collider that is destroyed inside the trigger, so a
-    //    character that dies or unloads while standing in the area stays in the list forever.
-    //    CustomFixedUpdate then dereferences it with no validity check:
+    // 2. OnTriggerEnter adds a Character to m_collidedWithCharacter and only OnTriggerExit removes
+    //    it, but Unity never fires OnTriggerExit for a collider destroyed inside the trigger. A
+    //    character that dies in the area stays in the list, and CustomFixedUpdate dereferences it
+    //    every physics step from then on. A Character.OnDestroy postfix removes the character from
+    //    every area, and a CustomFixedUpdate prefix drops any invalid entries that slipped through.
     //
-    //      foreach (Character character in this.m_collidedWithCharacter) {
-    //        if (this.m_statusEffectHash != 0) character.GetSEMan().AddStatusEffect(...);
-    //        if (this.m_isHeatType) character.OnNearFire(this.transform.position);
-    //      }
-    //
-    //    which throws a NullReferenceException every FixedUpdate from then on.
-    //
-    // Provenance: same two defects as ComfyMods/Effectual (GPL-3.0, redseiko).
-    //
-    // Both: CustomFixedUpdate has no owner gate and does tick on a dedicated server for areas in its
-    // own active area, where the dangling-Character NRE becomes a permanent per-physics-step loop.
-    // The two statics are called from both sides too - BaseAI and SpawnSystem as well as Player.
+    // Both: CustomFixedUpdate has no owner gate, so the dangling-reference loop runs on a server
+    // too. Provenance: same two defects as ComfyMods/Effectual (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class EffectAreaPatch {
@@ -60,8 +48,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly MethodInfo GrowingOverlapMethod =
             AccessTools.Method(typeof(EffectAreaPatch), nameof(GrowingOverlapSphereNonAlloc));
 
-        // A full buffer means the result was truncated, so grow the shared array and retry. Callers
-        // read EffectArea.m_tempColliders by field on each iteration, so they pick up the new array.
+        // A full buffer means the result was truncated. Callers re-read EffectArea.m_tempColliders
+        // by field on each iteration, so they see the grown array.
         private static int GrowingOverlapSphereNonAlloc(Vector3 position, float radius, Collider[] results, int layerMask) {
             int count = Physics.OverlapSphereNonAlloc(position, radius, results, layerMask);
 
@@ -77,28 +65,12 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         private static IEnumerable<CodeInstruction> ReplaceOverlapCall(IEnumerable<CodeInstruction> instructions, string method) {
-            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
+            if (Enabled == null || !Enabled.Value) { return instructions; }
 
-            int patched = 0;
-            for (int i = 0; i < codes.Count; i++) {
-                if (!codes[i].Calls(OverlapSphereNonAllocMethod)) { continue; }
-
-                codes[i].operand = GrowingOverlapMethod;
-                patched++;
-            }
-
-            if (patched == 0) {
-                Logger.LogWarning(
-                    $"EffectArea.{method}: found no OverlapSphereNonAlloc call, so this fix is inactive here. " +
-                    "Another mod has most likely already rewritten the method - if so, nothing is wrong.");
-                return instructions;
-            }
-
-            return codes;
+            return PatchHelper.ReplaceCalls(instructions, OverlapSphereNonAllocMethod, GrowingOverlapMethod, "EffectArea." + method);
         }
 
-        // Priority.Last on both, for the reason in ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last on both: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(EffectArea), nameof(EffectArea.IsPointInsideArea))]
@@ -111,9 +83,6 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static IEnumerable<CodeInstruction> GetBaseValueTranspiler(IEnumerable<CodeInstruction> instructions) =>
             ReplaceOverlapCall(instructions, nameof(EffectArea.GetBaseValue));
 
-        // Strips characters that were destroyed inside the trigger before vanilla iterates the list.
-        // The list holds one or two entries in practice, so the sweep is cheaper than the null checks
-        // it replaces would be inside the loop.
         [HarmonyPrefix]
         [HarmonyPatch(typeof(EffectArea), nameof(EffectArea.CustomFixedUpdate))]
         private static void CustomFixedUpdatePrefix(EffectArea __instance) {
@@ -128,8 +97,6 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
         }
 
-        // Root cause rather than symptom: a character being destroyed leaves every area it was standing
-        // in holding a dangling reference, and Unity never fires OnTriggerExit for it.
         [HarmonyPostfix]
         [HarmonyPatch(typeof(Character), "OnDestroy")]
         private static void CharacterOnDestroyPostfix(Character __instance) {

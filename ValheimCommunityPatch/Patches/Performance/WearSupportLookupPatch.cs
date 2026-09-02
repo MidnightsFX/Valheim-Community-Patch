@@ -8,53 +8,28 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: WearNTear.UpdateSupport resolves "which building piece owns this collider"
-    // with Component.GetComponentInParent<WearNTear>() - a native hierarchy walk - at three call
-    // sites (WearNTear.cs:431, :474, :500): once per cached support collider on EVERY invocation
-    // (even when the cache holds and the method early-returns), and once per overlap hit in the
-    // clear-broadcast and main processing loops. WearNTearUpdater slices these checks over every
-    // loaded piece continuously, so in a large base the hierarchy walks alone were measured at
-    // ~11.5 seconds of a 10-minute session - a fifth of the whole wear-and-tear cost.
+    // Fix Support Lookup Cost: "which building piece owns this collider" is a table lookup
+    // instead of a native hierarchy walk.
     //
-    // Fix: a collider-to-piece dictionary. Registered when a piece builds its collider list
-    // (WearNTear.SetupColliders - which is LAZY, and WearNTear has no OnEnable/OnDisable, only
-    // Awake/OnDestroy, so the map is keyed to component lifetime, not enabled state - a disabled
-    // piece still physically supports its neighbours and must stay resolvable), learned on miss
-    // (a neighbour that has not run SetupColliders yet resolves via the original walk and is
-    // remembered - so a cold or incomplete map costs exactly vanilla), and cleaned up through a
-    // reverse map on OnDestroy, where the child colliders may already be gone.
+    // WearNTear.UpdateSupport calls Collider.GetComponentInParent<WearNTear>() at three sites:
+    // once per cached support collider on every invocation, even when the cache holds, and once
+    // per overlap hit in the clear-broadcast and main loops. It also tests "is this collider
+    // mine" with LINQ Contains over its own collider array, an allocating enumerator per hit.
+    // WearNTearUpdater visits every loaded piece continuously.
     //
-    // Equivalence: every call site Unity-null-checks the result, so a stale entry whose piece was
-    // destroyed behaves exactly like vanilla's "no ancestor found" as long as cleanup runs - and
-    // if the maintenance hooks failed to attach, ResolveSupport stands down to the original walk
-    // permanently. The only way the map could return a live *wrong* answer is a collider being
-    // re-parented from one living piece to another, which no vanilla path does.
+    // A transpiler swaps the three walks for ResolveSupport and the two Contains calls for
+    // IsOwnCollider. ResolveSupport reads a collider-to-piece dictionary that is filled when a
+    // piece builds its collider list (SetupColliders, which is lazy) and learned on a miss, so a
+    // cold table costs exactly vanilla, and is cleaned through a reverse map in the shared
+    // OnDestroy postfix. Every call site Unity-null-checks the result, so a stale entry for a
+    // destroyed piece behaves like vanilla's "no ancestor found". The lookup stands down to the
+    // walk if either maintenance hook failed to attach. GetCOM also fetches the transform once
+    // for an expression vanilla fetched it twice for.
     //
-    // One more per-call cost in the same method is recovered below (corroborated by ontrigger's
-    // ValheimPerformanceOptimizations, MIT,
-    // https://github.com/ontrigger/ValheimPerformanceOptimizations): the LINQ own-collider Contains
-    // scans become map probes (IsOwnCollider).
-    //
-    // A second one used to live here and was REMOVED after measurement: a GetSupport prefix that
-    // stopped GetMaxSupport being evaluated as an eager default argument on the non-owner path.
-    // Measured 2026-09-01: the interception cost 12.04 ms/s on one of the hottest small methods in
-    // the game, guarding a GetMaterialProperties that cost 0.07 ms/s across the whole session, and
-    // the A/B run with it disabled measured marginally better frame stats than baseline. Vanilla's
-    // eager default is cheaper than any interception of a method this hot; do not reintroduce this
-    // as a prefix. (A transpiler form would be legitimate but its ceiling is ~1 ms/s.)
-    // See Investigations/2026-09-01-wearntear-support-round.md.
-    //
-    // Not recovered, deliberately: the OverlapBoxNonAlloc calls themselves and the spread of
-    // native property reads (attachedRigidbody, isTrigger, transform positions) - caching those
-    // means caching mutable engine state for thin gains. Negative caching of non-piece colliders
-    // (rocks etc.) was evaluated and rejected: no destroy signal exists for those keys, so the
-    // cache would leak; the terrain-layer check already short-circuits the most common case.
-    // A centre-of-mass CACHE was tried here and withdrawn: measured, the per-frame memo spent
-    // 13.7 ms of every second probing its map to avoid about 7 ms of transform reads. What
-    // survives is the cheap half - vanilla fetches the transform twice for one expression, and
-    // once is enough - which beats both the memo and vanilla with no bookkeeping at all.
-    //
-    // Both: a dedicated server runs UpdateSupport for the pieces in its own active area.
+    // A GetSupport prefix that once lived here was removed after measurement: intercepting a
+    // method that hot cost far more than the fallback it guarded. Do not reintroduce it as a
+    // prefix. Both: a dedicated server runs UpdateSupport for its active area. Provenance: the
+    // map-probe form corroborated by ontrigger's ValheimPerformanceOptimizations (MIT).
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(WearNTear))]
     internal static class WearSupportLookupPatch {
@@ -72,30 +47,19 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 advanced: true);
         }
 
-        // Positive entries only. A destroyed piece's entry stays removable because the reverse map
-        // holds the collider keys, not the colliders, so cleanup never has to touch a fake-null.
-        //
-        // Both maps are keyed on GetInstanceID(), not on the Collider / WearNTear itself: a
-        // Dictionary keyed on a UnityEngine.Object pays a native CompareBaseObjects call on every
-        // probe. That matters twice over here. On the teardown path a piece unmapped two entries
-        // per collider it owned, so a four-collider piece paid eight native compares just to
-        // leave. On the READ path the trade is NOT a win and the comment here used to claim it
-        // was: ResolveSupport does a single probe per call, so keying on the id swaps one native
-        // call (Equals) for another (GetInstanceID), measured at 1.06 ms/s. It is kept int-keyed
-        // only because ColliderOwner has to agree with RegisteredBy, which is genuinely
-        // multi-probe. See the measured caveat in TeardownHooks.
-        // RegisteredBy holds collider ids rather than colliders because
-        // unmapping only ever needs the key. See TeardownHooks for the liveness invariant an int
-        // key depends on.
+        // Both keyed on GetInstanceID(); see TeardownHooks for the rationale and invariant. On
+        // the single-probe read path the id lookup costs about as much as the object key it
+        // replaced; it is int-keyed so ColliderOwner agrees with RegisteredBy, which is
+        // multi-probe on teardown.
         private static readonly Dictionary<int, WearNTear> ColliderOwner = new Dictionary<int, WearNTear>();
         private static readonly Dictionary<int, List<int>> RegisteredBy = new Dictionary<int, List<int>>();
 
+        // Without both hooks the map silently goes stale.
+        private static readonly HookHealth Hooks = new HookHealth(
+            "Support lookup",
+            () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "SetupColliders"), typeof(WearSupportLookupPatch))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook)));
 
-        private static bool _hooksChecked;
-        private static bool _hooksHealthy;
-
-        // Verify-mode telemetry: comparison volume proves the verify actually exercised the
-        // table, not just that nothing complained.
         private const int VerifyReportInterval = 25000;
         private static bool _verifyActive;
         private static long _verifyComparisons;
@@ -140,15 +104,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
             for (int i = 0; i < colliders.Length; i++) { Register(__instance, colliders[i]); }
         }
 
-        /// <summary>
-        /// The destroy half of the maps, called from this mod's one WearNTear.OnDestroy postfix.
-        /// </summary>
+        /// <summary>The destroy half, called from TeardownHooks' one WearNTear.OnDestroy postfix.</summary>
         internal static void OnPieceDestroyed(int pieceId) {
             if (!RegisteredBy.TryGetValue(pieceId, out List<int> owned)) { return; }
 
             for (int i = 0; i < owned.Count; i++) {
-                // Only unmap keys that still point at this piece: learn-on-miss may have
-                // re-attributed a collider in an exotic re-parenting scenario.
+                // Only unmap keys that still point at this piece.
                 if (ColliderOwner.TryGetValue(owned[i], out WearNTear current)
                     && !ReferenceEquals(current, null) && current.GetInstanceID() == pieceId) {
                     ColliderOwner.Remove(owned[i]);
@@ -158,8 +119,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             RegisteredBy.Remove(pieceId);
         }
 
-        // A mod suppressing OnDestroy (or a scene teardown race) must not leak the maps across
-        // sessions; Shutdown is the session boundary.
         [HarmonyPatch(typeof(ZNetScene), "Shutdown")]
         internal static class ShutdownHook {
             [HarmonyPostfix]
@@ -171,12 +130,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- the lookup ----------------------------------------------------------------------
 
-        // Replaces collider.GetComponentInParent<WearNTear>() at the three UpdateSupport call
-        // sites. Must be behaviourally identical to the walk: a dictionary hit whose piece died
-        // is a fake-null return the call sites already handle; a miss falls back to the walk and
-        // learns the answer.
+        // Replaces collider.GetComponentInParent<WearNTear>(). A hit whose piece died is a
+        // fake-null the call sites already handle; a miss falls back to the walk and learns it.
         public static WearNTear ResolveSupport(Collider collider) {
-            if (!HooksHealthy()) { return collider.GetComponentInParent<WearNTear>(); }
+            if (!Hooks.Healthy) { return collider.GetComponentInParent<WearNTear>(); }
 
             if (Verify != null && Verify.Value) {
                 _verifyActive = true;
@@ -228,20 +185,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 $"{_verifyDivergences} divergence(s).");
         }
 
-        // Replaces the LINQ ((IEnumerable<Collider>)m_colliders).Contains(collider) at both
-        // UpdateSupport call sites - an allocating enumerator plus an O(n) scan per overlap hit.
-        // A collider's owning piece is already in the map, and a piece's own colliders are
-        // registered before UpdateSupport can reach this check (SetupColliders runs first), so
-        // "is this collider mine" is one dictionary probe plus a reference compare against the
-        // very array vanilla pushed. Signature matches the replaced call's stack exactly.
-        // Provenance: corroborated by ontrigger's ValheimPerformanceOptimizations (MIT).
+        // Replaces ((IEnumerable<Collider>)m_colliders).Contains(collider). A piece's own
+        // colliders are registered before UpdateSupport can reach this check, so "is this
+        // collider mine" is one probe plus a reference compare against the array vanilla pushed.
         public static bool IsOwnCollider(IEnumerable<Collider> ownColliders, Collider candidate) {
-            if (HooksHealthy() && ColliderOwner.TryGetValue(candidate.GetInstanceID(), out WearNTear owner)) {
+            if (Hooks.Healthy && ColliderOwner.TryGetValue(candidate.GetInstanceID(), out WearNTear owner)) {
                 return ReferenceEquals(owner.m_colliders, ownColliders);
             }
 
-            // Unregistered candidate (not a piece collider) or unhealthy hooks: vanilla's
-            // answer, without the enumerator allocation.
+            // Not a piece collider, or unhealthy hooks: vanilla's answer without the enumerator.
             if (ownColliders is Collider[] array) {
                 for (int i = 0; i < array.Length; i++) {
                     if (ReferenceEquals(array[i], candidate)) { return true; }
@@ -253,15 +205,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return ownColliders.Contains(candidate);
         }
 
-        // Vanilla fetches the transform TWICE for this one expression (WearNTear.cs:594); one
-        // fetch serves both reads. Value-identical.
-        //
-        // This was briefly a per-frame memo instead, on the reasoning that neighbours repeat
-        // heavily inside a sweep. Measured, the memo cost 13.7 ms of every second in dictionary
-        // probing to avoid roughly 7 ms of transform reads - a Unity object key hashes and
-        // compares fast, but the map is thousands of entries and every hit still copies the
-        // record out. The plain single-fetch form is cheaper than both the memo and vanilla, so
-        // that is what this is.
+        // Vanilla fetches the transform twice for this one expression; once serves both reads.
         [HarmonyPrefix]
         [HarmonyPatch("GetCOM")]
         private static bool GetCOMPrefix(WearNTear __instance, ref Vector3 __result) {
@@ -270,7 +214,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
+        // Both replacements are required, so this backs out unless it can make all five swaps.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("UpdateSupport")]
@@ -281,12 +226,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
             int containsReplaced = 0;
             for (int i = 0; i < codes.Count; i++) {
                 if (codes[i].Calls(GetComponentInParentMethod)) {
-                    // Same stack shape: [collider] -> WearNTear. A one-for-one operand rewrite.
                     codes[i].opcode = OpCodes.Call;
                     codes[i].operand = ResolveSupportMethod;
                     replaced++;
                 } else if (codes[i].Calls(EnumerableContainsMethod)) {
-                    // Same stack shape: [IEnumerable<Collider>, Collider] -> bool.
                     codes[i].opcode = OpCodes.Call;
                     codes[i].operand = IsOwnColliderMethod;
                     containsReplaced++;
@@ -303,46 +246,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             return codes;
-        }
-
-        // ---- hook health ---------------------------------------------------------------------
-
-        /// Without the SetupColliders and OnDestroy hooks the map silently goes stale, so the
-        /// lookup stands down to the plain walk when either is missing.
-        private static bool HooksHealthy() {
-            if (_hooksChecked) { return _hooksHealthy; }
-            _hooksChecked = true;
-
-            _hooksHealthy =
-                HasOurPostfix(AccessTools.DeclaredMethod(typeof(WearNTear), "SetupColliders"))
-                && HasOurPostfixIn(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook));
-
-            if (!_hooksHealthy) {
-                Logger.LogError(
-                    "Support lookup: a maintenance hook is not attached, so the lookup table " +
-                    "cannot be trusted and support checks have fallen back to vanilla's hierarchy " +
-                    "walk for this session. This usually means a Valheim update changed those " +
-                    "methods - look for the patch failure logged at startup.");
-            }
-
-            return _hooksHealthy;
-        }
-
-        private static bool HasOurPostfix(MethodBase target) =>
-            HasOurPostfixIn(target, typeof(WearSupportLookupPatch));
-
-        private static bool HasOurPostfixIn(MethodBase target, Type hookClass) {
-            // Fully qualified: HarmonyLib.Patches collides with this mod's own Patches namespace.
-            HarmonyLib.Patches info = target == null ? null : Harmony.GetPatchInfo(target);
-            if (info == null) { return false; }
-
-            foreach (Patch patch in info.Postfixes) {
-                if (patch.owner != ValheimCommunityPatch.PluginGUID) { continue; }
-                if (patch.PatchMethod == null || patch.PatchMethod.DeclaringType != hookClass) { continue; }
-                return true;
-            }
-
-            return false;
         }
     }
 }

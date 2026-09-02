@@ -3,36 +3,20 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Vanilla defect: three places walk the terrain paint mask with the wrong stride or bounds.
+    // Fix Terrain Paint Mask Indexing: corrects the stride and bounds three methods use to walk
+    // the terrain paint data.
     //
-    // A heightmap of m_width cells has (m_width + 1) vertices per axis, and every paint array is sized
-    // (m_width + 1)^2 accordingly - TerrainComp.Initialize allocates `new Color[num * num]` with
-    // `num = m_width + 1`, and Heightmap.Initialize creates the paint texture at that size. But:
+    // A heightmap of m_width cells has m_width + 1 vertices per axis, and every paint array is
+    // sized to match. TerrainComp.UpdatePaintMask and Heightmap.UpdateTerrainAlpha index that
+    // array with a stride of m_width and stop one short, so the paint is read along a diagonal
+    // skew and the last row and column are never processed. Heightmap.SetPaintMask rejects index
+    // m_width, which is the row and column a zone shares with its neighbour, so paint can never
+    // be written to a seam.
     //
-    //   TerrainComp.UpdatePaintMask:  index = y * m_width + x,  loops bounded by m_width
-    //   Heightmap.UpdateTerrainAlpha: index = y * m_width + x,  loops bounded by m_width
+    // Prefixes replace all three with the same logic at the correct stride and bounds. All three
+    // are only reachable from the optterrain console command.
     //
-    // Indexing a 33-wide array with a stride of 32 slips one column further left on every row, so the
-    // paint data is read and written along a diagonal skew rather than at the intended coordinates -
-    // it is not a uniform offset, it worsens as y grows. Both loops also stop one short, so the final
-    // row and column are never processed at all.
-    //
-    // And:
-    //
-    //   Heightmap.SetPaintMask: if (x < 0 || y < 0 || x >= m_width || y >= m_width) return;
-    //
-    // rejects index m_width, which is precisely the row and column a zone *shares with its
-    // neighbour* - so terrain paint can never be written to the seam between two zones.
-    //
-    // Fix: correct the stride and the bounds in all three. All three sit on the `optterrain` console
-    // path, so the blast radius is small, and each method is short enough that replacing it outright
-    // is clearer than an IL edit.
-    //
-    // Client: the effect is persistent, but the code path is not reachable without a local player.
-    // Heightmap.SetPaintMask is private with exactly one caller (Heightmap.cs:924), reached only
-    // from static Heightmap.UpdateTerrainAlpha, which returns immediately when m_localPlayer is
-    // null (Heightmap.cs:894) and is itself only called by the optterrain console command
-    // (Terminal.cs:196).
+    // Client: UpdateTerrainAlpha returns immediately without a local player.
     [PatchSide(Side.Client)]
     [HarmonyPatch]
     internal static class PaintMaskStridePatch {

@@ -5,23 +5,17 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Vanilla defect: Recipe.GetAmount dereferences the result of GetFirstRequiredItem without a null
-    // check, but that method returns null when the player holds none of the accepted ingredients:
+    // Fix Recipe Amount Crash: stops the crafting panel throwing on a "requires any one of these"
+    // recipe when the player carries none of the ingredients.
     //
-    //   if (this.m_requireOnlyOneIngredient) {
-    //     singleReqItem = Player.m_localPlayer.GetFirstRequiredItem(...);
-    //     amount += (int)Mathf.Ceil((float)((singleReqItem.m_quality - 1) * this.m_amount) * ...) + extraAmount;
-    //   }
+    // Recipe.GetAmount reads singleReqItem.m_quality without a null check, and GetFirstRequiredItem
+    // returns null when the player holds none of the accepted items. The NullReferenceException
+    // leaves the crafting or upgrade panel blank.
     //
-    // Player-visible symptom: opening the crafting or upgrade panel for a "requires any one of these"
-    // recipe while holding none of the ingredients throws a NullReferenceException, which leaves the
-    // panel blank or frozen and spams the log.
+    // A transpiler replaces the m_quality field load with a call that returns 1 for a null item,
+    // the quality a nonexistent item would contribute, so the rest of the calculation is unchanged.
     //
-    // Fix: substitute a quality of 1 - the value a nonexistent item would contribute - when the lookup
-    // came back null. The rest of the calculation is untouched, so a recipe that *does* find an
-    // ingredient behaves exactly as before.
-    //
-    // Client: Recipe.GetAmount dereferences Player.m_localPlayer directly, so it cannot run headless.
+    // Client: GetAmount dereferences Player.m_localPlayer. Provenance: Zen.ModLib (catalogue).
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Recipe))]
     internal static class RecipeGetAmountNrePatch {
@@ -41,23 +35,23 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly FieldInfo QualityField = AccessTools.Field(typeof(ItemDrop.ItemData), nameof(ItemDrop.ItemData.m_quality));
         private static readonly MethodInfo SafeQualityMethod = AccessTools.Method(typeof(RecipeGetAmountNrePatch), nameof(SafeQuality));
 
-        // A missing item contributes nothing: quality 1 makes the (quality - 1) term zero.
         private static int SafeQuality(ItemDrop.ItemData item) => item?.m_quality ?? 1;
 
-        // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(Recipe.GetAmount))]
         private static IEnumerable<CodeInstruction> GetAmountTranspiler(IEnumerable<CodeInstruction> instructions) {
-            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
+            if (Enabled == null || !Enabled.Value) { return instructions; }
 
+            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
+
+            // The ItemData reference is already on the stack for the field load, so a static call
+            // taking that reference and returning int is a drop-in replacement.
             int patched = 0;
             for (int i = 0; i < codes.Count; i++) {
                 if (!codes[i].LoadsField(QualityField)) { continue; }
 
-                // The ItemData reference is already on the stack for the field load, so a static call
-                // taking that same reference and returning int is a drop-in replacement.
                 codes[i].opcode = OpCodes.Call;
                 codes[i].operand = SafeQualityMethod;
                 patched++;

@@ -4,29 +4,20 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Vanilla defect: ItemDrop.ItemData.GetIcon indexes the shared icon array with no bounds check:
+    // Fix Item Icon Crash: an item whose stored icon variant is out of range draws its first icon
+    // instead of throwing from every UI panel.
     //
-    //   public Sprite GetIcon() => this.m_shared.m_icons[this.m_variant];
+    // ItemDrop.ItemData.GetIcon indexes m_shared.m_icons with m_variant and no bounds check.
+    // m_variant is saved per stack and can outlive the array (a removed item mod, a content update
+    // that shortened the icon list, an item whose prefab never got icons), so every inventory,
+    // tooltip and crafting panel that draws the item throws IndexOutOfRangeException.
     //
-    // m_variant is stored per item stack and comes back off the save, so it can outlive the array it
-    // indexes: a removed item mod, a content update that shortened m_icons, or a stack written by
-    // something that minted its own variant. SharedData.m_icons also defaults to Array.Empty<Sprite>(),
-    // so an item whose prefab never got icons throws on variant 0.
+    // A prefix on GetIcon falls back to the first icon, or null when there are none, when the
+    // variant is out of range, and logs each offending item once so the broken stack can be found.
     //
-    // Player-visible symptom: an IndexOutOfRangeException from any of the twenty call sites, all of
-    // them inventory, tooltip or crafting UI - so the panel breaks and the log fills, the same
-    // failure mode as Fix Recipe Amount Crash.
-    //
-    // Fix: fall back to the first icon when the variant is out of range. Each offending item is
-    // reported once, by name, so the broken stack can actually be found.
-    //
-    // Provenance: same defect as ComfyMods/LetMePlay (GPL-3.0, redseiko). Deliberately a smaller fix
-    // than that mod's: it repairs the item by resizing m_icons, substituting a hammer sprite and
-    // overwriting m_name, m_description, m_itemType and m_crafterName. m_shared is shared by every
-    // instance of that item, so that mutates global state and changes what the player sees - a
-    // recovery tool rather than a bug fix.
-    //
-    // Client: every caller of GetIcon is inventory, tooltip or crafting UI.
+    // Client: every caller is UI. Provenance: same defect as ComfyMods/LetMePlay (GPL-3.0,
+    // redseiko), which repairs the shared item data instead; this deliberately changes nothing
+    // global.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(ItemDrop.ItemData))]
     internal static class ItemIconVariantPatch {
@@ -43,8 +34,6 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "removed item mod. Without it the inventory and crafting panels break.");
         }
 
-        // Reported once per item so a broken stack is identifiable without the log filling up again
-        // with what this fix exists to stop.
         private static readonly HashSet<string> Reported = new HashSet<string>();
 
         [HarmonyPrefix]
@@ -55,9 +44,6 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             Sprite[] icons = __instance.m_shared?.m_icons;
             if (icons != null && __instance.m_variant >= 0 && __instance.m_variant < icons.Length) { return true; }
 
-            // Variant 0 is what every item with a single icon uses, so it is the one index that is
-            // safe to assume. With no icons at all there is nothing to return but null, which the UI
-            // renders as an empty slot rather than throwing.
             __result = icons != null && icons.Length > 0 ? icons[0] : null;
 
             string name = __instance.m_shared?.m_name ?? "<unknown item>";

@@ -5,47 +5,25 @@ using UnityEngine;
 using UnityEngine.Rendering;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: the realtime reflection probes render ALL SIX cubemap faces inside a single
-    // frame every few seconds (ReflectionUpdate.UpdateReflection -> ReflectionProbe.RenderProbe,
-    // surfacing as BuiltinRuntimeReflectionSystem.TickRealtimeProbes) - measured at a steady
-    // 14-18 ms of every second across sessions, delivered as periodic single-frame spikes.
+    // Fix Reflection Probe Spikes: the realtime reflection cubemap renders one face per frame
+    // instead of all six in one frame.
     //
-    // Fix: render ONE face per frame with an explicit camera into our own cubemap render
-    // texture, publishing to the probe's realtimeTexture only when the sixth face completes -
-    // the same double-probe crossfade vanilla runs, spread over six frames. While a face
-    // renders, quality is temporarily clamped (LOD bias, two shadow cascades, 80 m shadow
-    // distance, LOD level 1) and characters, items, effects and TransparentFX are excluded from
-    // the reflection - reflections are a blurry 128px environment cube, where none of that
-    // reads, but it IS a deliberate fidelity trade and the description says so.
+    // ReflectionUpdate.UpdateReflection calls ReflectionProbe.RenderProbe, which renders all six
+    // cubemap faces inside a single frame every few seconds: a steady cost delivered as periodic
+    // single-frame spikes.
     //
-    // Slicing alone still dropped a fixed ~10 ms face onto whatever frame came next, and a face
-    // landing on a frame the streaming system was already saturating was measured tipping
-    // otherwise-marginal frames past the spike threshold. So a face is also DEFERRED while the
-    // previous frame is over budget: nothing consumes a half-built cubemap - the probe keeps
-    // showing the previous one until the sixth face publishes, and vanilla's own cadence already
-    // leaves a reflection up to m_interval (3 s) stale - so a defer changes only WHICH frame
-    // pays for the face, never what is displayed. Deferring stretches a cycle by a few frames,
-    // which starts the 3 s crossfade a few percent further along; invisible at this cadence.
+    // A prefix replaces the per-frame driver. Faces are rendered one per frame with an explicit
+    // camera into this mod's own cubemap render textures, and the probe's realtimeTexture is
+    // swapped only when the sixth face completes, so the probe never shows a half-built cubemap
+    // and vanilla's two-probe crossfade runs unchanged. While a face renders, quality is clamped
+    // (LOD bias, two shadow cascades, 80 m shadows) and characters, items and effects are
+    // excluded: a deliberate fidelity trade in a blurry 128px environment reflection. A face is
+    // also held back while the previous frame ran over budget, or for a few frames after a face
+    // that was itself expensive, and a starvation guard renders regardless after three consecutive
+    // defers so the cubemap always finishes well inside vanilla's 3 s refresh interval.
     //
-    // Reading the previous frame is not enough on its own, because it cannot see a face that is
-    // itself expensive. Measured in a large base, a face is usually ~4 ms but occasionally
-    // 100-150 ms inside Camera.RenderToCubemap, and those land on frames that looked perfectly
-    // healthy a moment earlier. So each face is TIMED, and one that blew the budget arms a short
-    // cooldown - the same two-signal pacing ZoneGenPacingPatch uses, for the same reason: the
-    // expensive renders cluster (same camera position, same heavy scene), so spacing the rest of
-    // that cycle out is exactly what is wanted.
-    //
-    // The starvation guard is load-bearing rather than hygiene: without it a machine that never
-    // makes budget would never publish its first cubemap at all. It bounds the cooldown too, so
-    // a permanently expensive scene still finishes its cubemap - a face every
-    // (MaxConsecutiveDefers + 1) frames, ~24 frames for a full cycle, still comfortably inside
-    // the 3 s refresh interval.
-    //
-    // Provenance: technique from ontrigger's ValheimPerformanceOptimizations (MIT),
-    // https://github.com/ontrigger/ValheimPerformanceOptimizations - reworked
-    // from a component swap into this mod's prefix style.
-    //
-    // Client: probes only exist with a graphics device.
+    // Client: probes need a graphics device. Provenance: ontrigger's
+    // ValheimPerformanceOptimizations (MIT), reworked from a component swap into a prefix.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(ReflectionUpdate))]
     internal static class ReflectionSlicePatch {
@@ -53,7 +31,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static ConfigEntry<int> FrameBudgetMs;
 
         internal static void BindConfig() {
-            // Client-local visual preference, deliberately not server-synced.
+            // Client-local visual preferences, deliberately not server-synced.
             Resolution = ValConfig.cfg.Bind(
                 "Client config",
                 "Reflection Resolution",
@@ -64,8 +42,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     new AcceptableValueList<int>(64, 128, 256, 512),
                     new ConfigurationManagerAttributes { IsAdvanced = true }));
 
-            // Client-local for the same reason as Resolution: a dedicated server has no probes,
-            // so there is nothing here for a server to sync down.
             FrameBudgetMs = ValConfig.cfg.Bind(
                 "Client config",
                 "Reflection Frame Budget",
@@ -80,11 +56,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         private const int FaceIdle = -1;
-
-        // After this many consecutive defers the face renders regardless (see header).
         private const int MaxConsecutiveDefers = 3;
-
-        // Frames to hold off after a face that blew the budget on its own.
         private const int CooldownFrames = 4;
 
         private static Camera _camera;
@@ -98,8 +70,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _excludeMask;
         private static float[] _layerCullDistances;
 
-        // Replaces the per-frame driver. The timer, probe swap and crossfade replicate vanilla
-        // (ReflectionUpdate.cs:41-76); only the render itself is sliced.
+        // The timer, probe swap and crossfade replicate vanilla's Update; only the render is sliced.
         [HarmonyPrefix]
         [HarmonyPatch("Update")]
         private static bool UpdatePrefix(ReflectionUpdate __instance) {
@@ -114,8 +85,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 long started = Stopwatch.GetTimestamp();
                 RenderFace(__instance, _nextFace);
 
-                // A face that cost more than the whole frame budget on its own arms the cooldown;
-                // the next few frames hold off so the rest of this cycle spreads out.
+                // A face that cost more than the frame budget on its own arms the cooldown.
                 double elapsedMs = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
                 int spent = FrameBudgetMs != null ? FrameBudgetMs.Value : 0;
                 if (spent > 0 && elapsedMs > spent) { _cooldownFrames = CooldownFrames; }
@@ -129,7 +99,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (_finished) {
-                // Vanilla's crossfade block verbatim.
+                // Vanilla's crossfade.
                 float num = Mathf.Pow(Mathf.Clamp01(__instance.m_updateTimer / __instance.m_transitionDuration), __instance.m_power);
                 if (__instance.m_probe1 == Current(__instance)) {
                     __instance.m_probe1.importance = 1;
@@ -147,7 +117,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // Anything calling the public one-shot entry point starts a sliced cycle instead.
+        // The public one-shot entry point starts a sliced cycle instead.
         [HarmonyPrefix]
         [HarmonyPatch("UpdateReflection")]
         private static bool UpdateReflectionPrefix(ReflectionUpdate __instance) {
@@ -217,13 +187,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
             };
         }
 
-        // Holds a face back while the PREVIOUS frame is over budget - the same pacing signal
-        // ZoneGenPacingPatch reads - and gives up on holding after MaxConsecutiveDefers so the
-        // cubemap always finishes (see header).
+        // Holds a face back while the previous frame is over budget or a cooldown is armed, and
+        // gives up on holding after MaxConsecutiveDefers so the cubemap always finishes.
         private static bool DeferFace() {
             int budget = FrameBudgetMs != null ? FrameBudgetMs.Value : 0;
 
-            // The guard outranks both signals, so the cubemap always finishes.
             if (budget <= 0 || _deferStreak >= MaxConsecutiveDefers) {
                 _deferStreak = 0;
                 _cooldownFrames = 0;

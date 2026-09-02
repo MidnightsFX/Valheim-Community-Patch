@@ -3,54 +3,25 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: the mist queries are per-candidate loops over live components that read
-    // transform.position - a native interop call - once or twice per Mister per check:
+    // Fix Mist Query Overhead: mist volume queries read a zone-bucketed snapshot instead of
+    // scanning every live mister with a native position read each.
     //
-    //   foreach (Mister instance in Mister.m_instances)
-    //     if (Vector3.Distance(instance.transform.position, p) < instance.m_radius + radius && ...)
+    // Mister.InsideMister and its siblings loop over every loaded Mister reading
+    // transform.position, and ParticleMist runs them per emitted particle candidate, ten times a
+    // second, with a further per-particle loop over every Demister reading a native force-field
+    // property. In the Mistlands that is thousands of native reads and full scans per frame.
+    // ParticleMist.FindMaxMistAlltitude also fires 20 ground-height raycasts per tick.
     //
-    // and ParticleMist.Emit / MisterEmit run these *per emitted particle candidate*, ten times a
-    // second, with a further per-particle loop over every Demister reading a native
-    // ParticleSystemForceField.endRange property. In the Mistlands that multiplies out to thousands
-    // of interop calls per frame.
+    // Misters never move, so their snapshot rebuilds only when one spawns or despawns (with a
+    // slow safety refresh), bucketed by 64 m zone so a query reads only the handful nearby.
+    // Demisters do move (carried torches, ships) and keep a per-frame snapshot. The ground probes
+    // are answered from heightmap data through the shared registry and sampler, with the Random
+    // draws replicated so downstream randomness is unchanged. The comparison math mirrors vanilla
+    // line for line. A demister with no force field is snapshotted with range 0 rather than
+    // throwing as vanilla would.
     //
-    // The first version of this fix snapshotted positions once per frame and ran the same loops as
-    // pure math. Profiling the result showed two costs it left behind, both real in the Mistlands:
-    // the loops are O(particle candidates x ALL loaded misters) - hundreds of misters at dozens of
-    // candidates per tick - and the per-frame snapshot rebuild itself re-read every mister's
-    // position at several hundred fps. Both are gone:
-    //
-    //  - The mister snapshot is event-driven. Misters never move - nothing in the vanilla assembly
-    //    writes their transforms - so the snapshot rebuilds only when one spawns or despawns
-    //    (OnEnable/OnDisable, the registry mutations), with a slow safety refresh (~every 300
-    //    frames) as a hedge against a hypothetical modded mister that does move. Demisters keep
-    //    the per-frame refresh: they are few and genuinely move (carried torches, ships).
-    //
-    //  - Misters are bucketed by 64 m zone at rebuild, each inserted into every zone its circle
-    //    (radius + a one-zone margin for query radii) overlaps. A query then reads only the bucket
-    //    of its own zone: O(nearby misters, a handful) instead of O(all loaded, hundreds). A query
-    //    whose radius argument exceeds the margin - nothing in vanilla does this - falls back to
-    //    the full snapshot for correctness.
-    //
-    //  - ParticleMist.FindMaxMistAlltitude fired 20 ZoneSystem.GetGroundHeight raycasts per 100 ms
-    //    tick to estimate the local ground level. The probes are terrain-height questions and are
-    //    now answered from heightmap data via the shared registry and sampler, with the Random
-    //    draws replicated exactly so particle randomness downstream is unchanged.
-    //
-    // Staleness is bounded by one frame for demisters and by spawn/despawn events for misters -
-    // within vanilla's own tolerance, which treats these positions as constant across each 100 ms
-    // tick. The comparison math mirrors vanilla line for line. Not networked; cosmetic only.
-    //
-    // A demister whose m_forceField is missing (a broken modded prefab - vanilla NREs on it in
-    // ParticleMist.Update) is snapshotted with range 0, i.e. never inside; that is the one deliberate
-    // divergence, robustness over NRE parity.
-    //
-    // Compatibility: ComfyMods' Dramamist patches ParticleMist.Awake / Demister.OnEnable and the
-    // particle trigger modules - no overlap with the methods replaced here; the two compose.
-    //
-    // Client: the hot loops never run headless. ParticleMist.Update requires Player.m_localPlayer,
-    // and the AI checks (BaseAI.CanSeeTarget etc.) short-circuit on m_haveActiveMist, which only a
-    // client's ParticleMist.Update ever sets.
+    // Client: ParticleMist.Update needs a local player, and the AI checks short-circuit on a flag
+    // only a client sets. ComfyMods' Dramamist patches different methods and composes with this.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Mister))]
     internal static class MisterCachePatch {
@@ -67,12 +38,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
             public float m_endRange;
         }
 
-        // Covers every radius argument vanilla passes (demister end ranges plus mist thickness,
-        // well under a zone). A query radius beyond this falls back to the full snapshot.
+        // Covers every radius argument vanilla passes; a larger one falls back to the full snapshot.
         private const float BucketMargin = 64f;
         private const int SafetyRefreshFrames = 300;
 
-        // Grow-only, so steady state allocates nothing. Counts track the live prefix.
+        // Grow-only arrays with live counts, so steady state allocates nothing.
         private static MisterSnap[] Misters = new MisterSnap[64];
         private static int MisterCount;
         private static DemisterSnap[] Demisters = new DemisterSnap[64];
@@ -88,8 +58,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- snapshot maintenance ----------------------------------------------------------
 
-        // The registry mutations (Mister.cs:23-25). Nothing in the vanilla assembly moves a
-        // mister after that, which is what makes the event-driven snapshot sound.
         [HarmonyPostfix]
         [HarmonyPatch("OnEnable")]
         private static void OnEnablePostfix() => _mistersDirty = true;
@@ -124,8 +92,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     m_height = m.m_height,
                 };
 
-                // Insert into every zone the mister's circle (plus the query margin) overlaps, so
-                // a lookup only ever needs the bucket of its own zone.
+                // Insert into every zone the mister's circle plus the query margin overlaps, so a
+                // lookup only ever needs the bucket of its own zone.
                 float reach = m.m_radius + BucketMargin;
                 Vector2i min = ZoneSystem.GetZone(new Vector3(pos.x - reach, 0f, pos.z - reach));
                 Vector2i max = ZoneSystem.GetZone(new Vector3(pos.x + reach, 0f, pos.z + reach));
@@ -175,7 +143,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             __result = false;
 
             if (radius > BucketMargin) {
-                // No vanilla caller reaches this; correctness over speed for a modded one.
                 for (int i = 0; i < MisterCount; i++) {
                     ref MisterSnap snap = ref Misters[i];
                     if (Vector3.Distance(snap.m_pos, p) < snap.m_radius + radius && p.y - radius < snap.m_pos.y + snap.m_height) {
@@ -208,9 +175,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             List<int> bucket = BucketAt(p);
             for (int b = 0; b < bucket.Count; b++) {
                 ref MisterSnap snap = ref Misters[bucket[b]];
-
-                // ReferenceEquals is enough: the snapshot only holds components that were alive in
-                // the registry when it was built, and the bucket entry proves membership.
                 if (ReferenceEquals(snap.m_mister, ignore)) { continue; }
 
                 if (Vector3.Distance(p, snap.m_pos) < snap.m_radius && p.y < snap.m_pos.y + snap.m_height) {
@@ -227,7 +191,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool IsCompletelyInsideOtherMisterPrefix(Mister __instance, float thickness, ref bool __result) {
             EnsureMisters();
 
-            // Vanilla reads its own live position here too; one interop call per mister per tick.
             // Any qualifying larger mister strictly contains this position, so its circle overlaps
             // this position's zone and the bucket lookup cannot miss it.
             Vector3 position = __instance.transform.position;
@@ -254,9 +217,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         [HarmonyPatch(typeof(ParticleMist))]
         internal static class DemisterQueryHooks {
-            // The fields list vanilla iterates is rebuilt every tick from Demister.GetDemisters() -
-            // the same registry the snapshot reads - so membership is identical; its distance sort
-            // only changes early-exit order of a boolean any-test, never the answer.
+            // Vanilla's fields list is rebuilt every tick from the same registry the snapshot
+            // reads; its distance sort only changes early-exit order of an any-test.
             [HarmonyPrefix]
             [HarmonyPatch("IsInsideOtherDemister")]
             private static bool IsInsideOtherDemisterPrefix(
@@ -292,10 +254,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return false;
             }
 
-            // Vanilla estimates the local ground level with 20 Physics.Raycasts per 100 ms tick
-            // (ParticleMist.cs:228-247). Each probe is a terrain-height question the heightmap
-            // data answers directly. The Random draws are replicated exactly, so everything
-            // downstream that shares UnityEngine.Random sees an unchanged sequence.
+            // Vanilla's 20 ground probes, answered from heightmap data. The Random draws are
+            // replicated exactly so everything downstream sees an unchanged sequence.
             [HarmonyPrefix]
             [HarmonyPatch("FindMaxMistAlltitude")]
             private static bool FindMaxMistAlltitudePrefix(
@@ -315,8 +275,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return false;
             }
 
-            // The single-point GetGroundHeight returns p.y when its ray misses terrain
-            // (ZoneSystem.cs:1608-1611); every fallback here mirrors that.
+            // ZoneSystem.GetGroundHeight returns p.y when its ray misses; every fallback mirrors that.
             private static float GroundHeight(Vector3 probe) {
                 if (!HeightmapLookupPatch.TryGetCached(probe, out Heightmap hmap, out Vector3 origin)) {
                     return ZoneSystem.instance != null ? ZoneSystem.instance.GetGroundHeight(probe) : probe.y;

@@ -1,49 +1,26 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: ZDOMan.GetAllZDOsWithPrefabIterative answers "every ZDO of this prefab" by
-    // scanning the whole world - every sector list plus the outside-sector map - dereferencing
-    // every ZDO to compare its prefab hash (ZDOMan.cs:922-956). The iteration is batched (400
-    // sector lists per call), which spreads the cost but never reduces it.
+    // Fix Prefab Query Scan: "every ZDO of this prefab" is answered from an index instead of a
+    // scan of the whole world.
     //
-    // Vanilla itself only calls this from a console command, but it is the public API mods use,
-    // and several popular ones call it *every ZoneSystem.Update tick* from postfixes. Profiling a
-    // real modded session attributed ~8.6 seconds of a 10-minute window to these scans - the
-    // single largest item inside ZoneSystem.Update during stutter-heavy seconds.
+    // ZDOMan.GetAllZDOsWithPrefabIterative walks every sector list plus the outside-sector map,
+    // dereferencing every ZDO to compare its prefab hash. Vanilla only calls it from a console
+    // command, but it is the API mods use, and several popular ones call it every ZoneSystem tick.
     //
-    // Fix: keep the answer instead of recomputing it. ZDOs are bucketed by prefab hash as the
-    // prefab is assigned, so the query returns O(matches) instead of O(world).
+    // ZDOs are bucketed by prefab hash as the prefab is assigned (ZDO.SetPrefab and ZDO.Deserialize
+    // postfixes, a HandleDestroyedZDO postfix for removal, a full rebuild after ZDOMan.Load and a
+    // clear on ShutDown), so the query returns O(matches). The replaced method's contract is kept:
+    // an iteration already in flight (index != 0) is finished by vanilla, a fresh one completes in
+    // one call, the final RemoveAll over the caller's whole list runs as vanilla's does, and the
+    // cursor is left where a finished vanilla iteration leaves it. Result order changes from
+    // sector-grouped to bucket order; callers treat the list as a set. Maintenance is
+    // unconditional; the read stands down to vanilla if any hook failed to attach.
     //
-    // The index is maintained unconditionally (standing rule), and unlike OrphanZdoIndexPatch it
-    // is NOT gated on the network role: this method is called on clients, listen hosts and
-    // dedicated servers alike.
-    //
-    // Contract of the replaced method, preserved exactly:
-    //  - `index` is a resume cursor. An iteration already in flight (index != 0) is finished by
-    //    vanilla, so mods that spread the drain across frames keep their semantics; a fresh
-    //    iteration completes in one call, which is a legal fast completion - the bool return
-    //    means "iteration complete" and every caller loops until it is true.
-    //  - The final call runs zdos.RemoveAll(!IsValid) over the caller's whole accumulated list,
-    //    pre-existing entries included. Replicated verbatim.
-    //  - Result ordering changes from sector-grouped to bucket order. Callers accumulate into a
-    //    list they treat as a set; no vanilla or known mod caller depends on the order, and the
-    //    Verify toggle exists to prove equivalence on a live game.
-    //
-    // Prefab lifecycle, and why these hooks cover it: a ZDO's m_prefab is written by
-    // ZDO.SetPrefab (the ZNetView.Awake path and direct mod calls), by ZDO.Deserialize (network
-    // sync, ZDO.cs:571), and by the world-load readers inside ZDOMan.Load - covered by a full
-    // rebuild there, where an O(world) pass is already unavoidable. ZDOMan.CreateNewZDO's
-    // prefabHash parameter is deliberately not hooked: it is only used for the portal-list check
-    // and m_prefab stays 0 until SetPrefab or Deserialize runs. ZDO.Reset zeroes m_prefab but is
-    // deliberately not hooked, for OrphanZdoIndexPatch's reasons: every ZDOPool.Release site is
-    // covered (HandleDestroyedZDO, the Load rebuild, the ShutDown clear), and Reset also runs on
-    // millions of save clones - MemberwiseClones carrying the live ZDO's uid - every world save.
-    //
-    // Both: see above - the callers that matter run on every side.
+    // Both: the callers that matter run on every side.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoPrefabIndexPatch {
@@ -60,9 +37,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 advanced: true);
         }
 
-        // ZDOID -> the prefab bucket that ZDO is filed under. Authoritative: untracking reads this
-        // rather than live state, because by the time HandleDestroyedZDO's postfix runs the ZDO
-        // has been reset and pooled and its prefab is unrecoverable.
+        // ZDOID -> the bucket it is filed under. Authoritative for untracking, because by the time
+        // HandleDestroyedZDO's postfix runs the ZDO has been reset and pooled.
         private static readonly Dictionary<ZDOID, int> PrefabOf = new Dictionary<ZDOID, int>();
         private static readonly Dictionary<int, HashSet<ZDOID>> ByPrefab = new Dictionary<int, HashSet<ZDOID>>();
 
@@ -70,22 +46,24 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly List<ZDO> VanillaScratch = new List<ZDO>();
         private static readonly List<ZDOID> StaleScratch = new List<ZDOID>();
 
-        // Cached so the per-call RemoveAll does not allocate a delegate.
         private static readonly Predicate<ZDO> InvalidZdo = zdo => !zdo.IsValid();
 
-        private static bool _hooksChecked;
-        private static bool _hooksHealthy;
+        // Checked against the hook class, not merely "some patch of ours": OrphanZdoIndexPatch
+        // also patches HandleDestroyedZDO and Load, and its presence proves nothing about this index.
+        private static readonly HookHealth Hooks = new HookHealth(
+            "Prefab index",
+            () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.SetPrefab)), typeof(SetPrefabHook))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.Deserialize)), typeof(DeserializeHook))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), nameof(ZDOMan.HandleDestroyedZDO)), typeof(HandleDestroyedZdoHook))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), nameof(ZDOMan.Load)), typeof(ZdoManLoadHook)));
 
         // ---- index maintenance -------------------------------------------------------------
 
         private static void Track(ZDOID uid, int prefab) {
-            // Load paths set m_uid before the prefab, so this should not fire; the cost is one
-            // comparison and it prevents a phantom bucket entry nothing could ever resolve.
             if (uid == ZDOID.None) { return; }
 
-            // Hash 0 is the unassigned state (a fresh CreateNewZDO before SetPrefab/Deserialize).
-            // A real prefab name never hashes to 0 in practice, and the read path falls back to
-            // vanilla for a query that does, so the degenerate case stays correct either way.
+            // Hash 0 is the unassigned state; the read path falls back to vanilla for a query
+            // that hashes to 0, so the degenerate case stays correct.
             if (prefab == 0) { Untrack(uid); return; }
 
             if (PrefabOf.TryGetValue(uid, out int existing)) {
@@ -111,8 +89,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (ByPrefab.TryGetValue(prefab, out HashSet<ZDOID> bucket)) {
                 bucket.Remove(uid);
 
-                // Buckets are keyed by prefab hash; a world cycles through many transient prefabs
-                // (projectiles, vfx), so empties would otherwise accumulate for the session.
+                // Transient prefabs (projectiles, vfx) would otherwise leave empties for the session.
                 if (bucket.Count == 0) { ByPrefab.Remove(prefab); }
             }
         }
@@ -122,9 +99,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             ByPrefab.Clear();
         }
 
-        /// Full rebuild from live state. Only ever runs at world load, where an O(world) pass is
-        /// already unavoidable, and it gives the index a known-good baseline covering ZDO.Load's
-        /// direct m_prefab writes rather than trusting hooks through the load.
+        // Full rebuild from live state, only at world load where an O(world) pass is already
+        // unavoidable. Covers ZDO.Load's direct m_prefab writes.
         private static void RebuildIndex(ZDOMan zdoMan) {
             ClearIndex();
 
@@ -138,9 +114,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- hooks -------------------------------------------------------------------------
 
-        // The assignment path for new objects (ZNetView.Awake) and for any mod setting a prefab
-        // directly. Vanilla early-outs when the value is unchanged, so the postfix's compare is
-        // the only steady-state cost.
+        // ZDO.Reset is deliberately not hooked: every ZDOPool.Release site is covered by the hooks
+        // below, and Reset also runs on millions of save clones carrying the live ZDO's uid.
+
         [HarmonyPatch(typeof(ZDO), nameof(ZDO.SetPrefab))]
         internal static class SetPrefabHook {
             [HarmonyPrefix]
@@ -154,9 +130,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // The network path: RPC_ZDOData deserializes into both freshly created and existing ZDOs,
-        // writing m_prefab directly (ZDO.cs:571). This rides the hottest network path, so the
-        // no-change case is one int compare and nothing else.
+        // The network path writes m_prefab directly. The no-change case is one int compare.
         [HarmonyPatch(typeof(ZDO), nameof(ZDO.Deserialize))]
         internal static class DeserializeHook {
             [HarmonyPrefix]
@@ -170,7 +144,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // Takes the uid by value, so it still works after the ZDO itself has been pooled.
         [HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.HandleDestroyedZDO))]
         internal static class HandleDestroyedZdoHook {
             [HarmonyPostfix]
@@ -195,10 +168,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(nameof(ZDOMan.GetAllZDOsWithPrefabIterative))]
         private static bool GetAllZDOsWithPrefabIterativePrefix(
             ZDOMan __instance, string prefab, List<ZDO> zdos, ref int index, ref bool __result) {
-            if (!HooksHealthy()) { return true; }
+            if (!Hooks.Healthy) { return true; }
 
-            // An iteration already in flight - a mod holding the cursor across frames - finishes
-            // under vanilla, cursor semantics untouched. The next fresh iteration takes the index.
+            // An iteration already in flight finishes under vanilla.
             if (index != 0) { return true; }
 
             int hash = prefab.GetStableHashCode();
@@ -216,18 +188,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 VanillaScratch.RemoveAll(InvalidZdo);
                 ReportDivergence(prefab);
 
-                // Act on vanilla's answer while verifying, so a bad index cannot mislead a mod
-                // during the very run that is meant to expose it.
                 found = VanillaScratch;
             }
 
             for (int i = 0; i < found.Count; i++) { zdos.Add(found[i]); }
 
-            // Vanilla's completion call filters the caller's *entire* accumulated list, including
-            // entries it did not add this call. Kept verbatim - it is observable behaviour.
+            // Vanilla's completion filters the caller's entire accumulated list.
             zdos.RemoveAll(InvalidZdo);
 
-            // Leave the cursor where a finished vanilla iteration leaves it.
             index = __instance.m_objectsBySector.Length;
 
             IndexScratch.Clear();
@@ -246,17 +214,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 if (zdo == null) { StaleScratch.Add(uid); } else { IndexScratch.Add(zdo); }
             }
 
-            // A ZDO leaves m_objectsByID only through HandleDestroyedZDO, Load or ShutDown, all
-            // of which maintain the index, so this should find nothing. Cleaning up anyway keeps
-            // a missed path from becoming an index that grows for the life of the session -
-            // deferred, because Untrack mutates the bucket being iterated above.
+            // Should find nothing, since every path out of m_objectsByID maintains the index;
+            // cleaning up anyway keeps a missed path from growing the index for the session.
+            // Deferred because Untrack mutates the bucket being iterated.
             for (int i = 0; i < StaleScratch.Count; i++) { Untrack(StaleScratch[i]); }
             StaleScratch.Clear();
         }
 
-        /// Vanilla's drain, read-only, with a local cursor: the sector array in 400-list batches,
-        /// then the outside-sector map (ZDOMan.cs:922-956, minus the caller-list filter, which the
-        /// query above applies to whichever result it uses).
+        // Vanilla's drain, read-only, for the verify path.
         private static void CollectFullScan(ZDOMan zdoMan, int hash) {
             List<ZDO>[] sectors = zdoMan.m_objectsBySector;
             for (int i = 0; i < sectors.Length; i++) {
@@ -311,62 +276,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 $"object(s) the index missed (first {firstMissed}), and the index claimed {extra} " +
                 $"the full scan did not (first {firstExtra}). Vanilla's result was used. Please " +
                 "report this - leave 'Fix Prefab Query Scan' off until it is understood.");
-        }
-
-        // ---- hook health -------------------------------------------------------------------
-
-        /// True only when every maintenance hook is attached, checked against the hook class that
-        /// was supposed to attach it - not merely "some patch of ours" - because this mod also
-        /// patches HandleDestroyedZDO and Load from OrphanZdoIndexPatch, and their presence proves
-        /// nothing about this index. A missing hook means the index silently stops tracking a
-        /// whole class of change, so the answer gates the fix entirely.
-        private static bool HooksHealthy() {
-            if (_hooksChecked) { return _hooksHealthy; }
-            _hooksChecked = true;
-
-            string missing = null;
-            NoteIfUnhooked(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.SetPrefab)),
-                           typeof(SetPrefabHook), "ZDO.SetPrefab", ref missing);
-            NoteIfUnhooked(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.Deserialize)),
-                           typeof(DeserializeHook), "ZDO.Deserialize", ref missing);
-            NoteIfUnhooked(AccessTools.DeclaredMethod(typeof(ZDOMan), nameof(ZDOMan.HandleDestroyedZDO)),
-                           typeof(HandleDestroyedZdoHook), "ZDOMan.HandleDestroyedZDO", ref missing);
-            NoteIfUnhooked(AccessTools.DeclaredMethod(typeof(ZDOMan), nameof(ZDOMan.Load)),
-                           typeof(ZdoManLoadHook), "ZDOMan.Load", ref missing);
-
-            _hooksHealthy = missing == null;
-
-            if (!_hooksHealthy) {
-                Logger.LogError(
-                    $"Prefab index: the hook on {missing} is not attached, so the index cannot be " +
-                    "trusted and prefab queries have fallen back to vanilla's whole-world scan for " +
-                    "this session. This usually means a Valheim update changed that method - look " +
-                    "for the patch failure logged at startup.");
-            }
-
-            return _hooksHealthy;
-        }
-
-        /// Appends `label` to `missing` when the method is gone or carries no patch declared by
-        /// `hookType`. Matching the declaring type as well as the owner distinguishes this class's
-        /// hooks from this mod's other patches on the same methods.
-        private static void NoteIfUnhooked(MethodBase target, Type hookType, string label, ref string missing) {
-            bool ours = false;
-            // Fully qualified: HarmonyLib.Patches collides with this mod's own Patches namespace.
-            HarmonyLib.Patches info = target == null ? null : Harmony.GetPatchInfo(target);
-
-            if (info != null) {
-                foreach (Patch patch in info.Postfixes) {
-                    if (patch.owner != ValheimCommunityPatch.PluginGUID) { continue; }
-                    if (patch.PatchMethod == null || patch.PatchMethod.DeclaringType != hookType) { continue; }
-                    ours = true;
-                    break;
-                }
-            }
-
-            if (ours) { return; }
-
-            missing = missing == null ? label : missing + " and " + label;
         }
     }
 }

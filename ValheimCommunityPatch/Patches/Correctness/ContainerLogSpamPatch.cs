@@ -4,43 +4,20 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Vanilla defect: the three container request RPCs log unconditionally, then log again on every
-    // rejection path. Container.RPC_RequestOpen, verbatim:
+    // Fix Container Log Spam: stops every chest open, stack-all and take-all writing several lines
+    // to the game log.
     //
-    //   ZLog.Log((object) $"Player {uid} wants to open {this.gameObject.name}   im: {ZDOMan.GetSessionID()}");
-    //   if (!this.m_nview.IsOwner())
-    //     ZLog.Log((object) "  but im not the owner");
-    //   else if (...) { ZLog.Log((object) "  in use"); ... }
-    //   else if (!this.CheckAccess(playerID)) { ZLog.Log((object) "  not yours"); ... }
+    // Container.RPC_RequestOpen, RPC_RequestStack and RPC_RequestTakeAll each log unconditionally
+    // on entry and again on every rejection path. The handlers run on the container's owner, so a
+    // player sorting their own base logs their own chests and a server logs the ones it owns.
     //
-    // RPC_RequestStack and RPC_RequestTakeAll are the same shape. Every chest, every open, stack-all
-    // and take-all - and the leading line is built whether anything interesting happened or not,
-    // marshalling a fresh string out of native Unity for gameObject.name on top of the interpolation.
+    // Transpilers point every ZLog.Log call in the three handlers at this mod's debug sink, so the
+    // messages are silenced by default and come back with EnableDebugMode. The string building
+    // that feeds the call stays; the log write and its stack trace are the bulk of the cost.
     //
-    // These land on the container's *owner*, not on everyone: ZNetView.InvokeRPC addresses
-    // m_zdo.GetOwner(), and a server relaying a peer-targeted RPC never invokes the handler itself.
-    // So a player sorting their own base logs their own chests, and a server logs the containers it
-    // happens to own. Either way it is a steady stream of lines nobody reads.
-    //
-    // Fix: route the messages to this mod's debug log instead of the game's.
-    //
-    // Scope note: repointing the call cannot elide the string building that feeds it - the argument
-    // is already on the stack by then. That is the deliberate trade. The log write and its stack
-    // trace are the bulk of the cost, and an operand swap survives these methods changing, whereas
-    // unpicking a DefaultInterpolatedStringHandler sequence is exactly the kind of fragile IL
-    // matching this project avoids elsewhere.
-    //
-    // Provenance: same defect as ComfyMods/BetterZeeLog (GPL-3.0, redseiko), which NOPs the calls out
-    // and branches over the leading statement. Redirected rather than deleted here so the messages
-    // are still recoverable by turning on EnableDebugMode.
-    //
-    // These three methods are shared with that mod, so the transpilers run at Priority.Last for the
-    // reason set out in ValheimCommunityPatch.ApplyPatches: it matches on the ZLog.Log operand we
-    // rewrite, and throws rather than backing off when it cannot find it. Running after it, we find
-    // only the leading call it branched over, repoint that, and leave its stronger fix in place.
-    //
-    // Both: whoever owns the container does the logging, and that is a client for most chests but the
-    // server for any it owns.
+    // Both. Provenance: same defect as ComfyMods/BetterZeeLog (GPL-3.0, redseiko), which removes
+    // the calls; where both are installed its rewrite lands first and this one repoints whatever
+    // it left.
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class ContainerLogSpamPatch {
@@ -58,38 +35,15 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         private static readonly MethodInfo ZLogMethod = AccessTools.Method(typeof(ZLog), nameof(ZLog.Log));
-        private static readonly MethodInfo SinkMethod =
-            AccessTools.Method(typeof(ContainerLogSpamPatch), nameof(LogDebugSink));
-
-        // Signature matches ZLog.Log(object), so this is a drop-in replacement for the call.
-        private static void LogDebugSink(object message) {
-            if (Logger.Level < BepInEx.Logging.LogLevel.Debug) { return; }
-
-            Logger.LogDebug(message?.ToString() ?? string.Empty);
-        }
+        private static readonly MethodInfo SinkMethod = AccessTools.Method(typeof(Logger), nameof(Logger.DebugSink));
 
         private static IEnumerable<CodeInstruction> RedirectLogCalls(IEnumerable<CodeInstruction> instructions, string method) {
-            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
+            if (Enabled == null || !Enabled.Value) { return instructions; }
 
-            int patched = 0;
-            for (int i = 0; i < codes.Count; i++) {
-                if (!codes[i].Calls(ZLogMethod)) { continue; }
-
-                codes[i].operand = SinkMethod;
-                patched++;
-            }
-
-            if (patched == 0) {
-                Logger.LogWarning(
-                    $"Container.{method}: found no ZLog.Log calls to redirect, so this fix is inactive here. " +
-                    "Another mod has most likely already rewritten the method - if so, nothing is wrong.");
-                return instructions;
-            }
-
-            return codes;
+            return PatchHelper.ReplaceCalls(instructions, ZLogMethod, SinkMethod, "Container." + method);
         }
 
+        // Priority.Last on all three: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(Container), "RPC_RequestOpen")]

@@ -1,40 +1,25 @@
 using System.Collections.Generic;
-using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: every piece with material variation (RandomMaterialValues) schedules
-    // itself five polls through Unity's string-based invoke machinery the moment it spawns -
-    // InvokeRepeating("CheckMaterial", 0f, 0.2f) in Start, CancelInvoke(nameof(CheckMaterial))
-    // after the fifth poll (RandomMaterialValues.cs:23-54). The polls exist only to wait for the
-    // piece's random seed to arrive over the network; once it has (usually on the first poll),
-    // the remaining polls re-derive and re-write the exact same deterministic values, allocating
-    // a System.Random per property and re-hashing every shader property name through
-    // Shader.PropertyToID each time. Streaming a large base runs this machinery for thousands
-    // of pieces at once - measured at ~35 ms of every streaming second across the component,
-    // its CancelInvoke calls and the MaterialMan writes.
+    // Fix Piece Material Polling: pieces with material variation wait for their random seed on
+    // one shared ticker and stop polling once the values are applied.
     //
-    // Fix: one central queue pumped from ZNetScene.Update replaces the per-piece invoke
-    // scheduling, and the poll body is replicated with two value-preserving cuts:
-    //  - polling STOPS once the values are applied (m_isSet), instead of re-applying identical
-    //    values on the remaining polls. Identical is provable: the values are pure functions of
-    //    the seed (System.Random(seed) per property), the seed is written once, and MaterialMan
-    //    stores per-object keyed values that nothing clears between polls - so the re-writes
-    //    vanilla performs are state-level no-ops bought at full price;
-    //  - Shader.PropertyToID results are cached by name.
-    // Everything else is verbatim: the same not-yet-seeded retry (five polls, 0.2 s apart,
-    // first one immediate, then the piece gives up exactly like vanilla), the same owner-side
-    // seed write - that one is real ZDO state and is preserved on the same schedule - the same
-    // placement-ghost condition, the same m_checks bookkeeping on the component.
+    // RandomMaterialValues.Start schedules five polls through InvokeRepeating and CancelInvoke,
+    // Unity's string-based invoke machinery. The polls only exist to wait for the piece's random
+    // seed to arrive over the network, and once it has, the remaining polls re-derive and
+    // re-write the same deterministic values, allocating a System.Random per property and
+    // re-hashing every shader property name each time.
     //
-    // A queued piece destroyed before finishing simply drops out on its next due poll (vanilla's
-    // own alive-checks inside the body make a dead piece's poll a no-op anyway). Start stands
-    // down to vanilla if the pump hook failed to attach: a piece must never end up scheduled by
-    // neither.
+    // Start is replaced with a copy that adds the piece to a queue pumped from ZNetScene.Update,
+    // and the poll body is copied with two changes that preserve every value: polling stops once
+    // m_isSet (the values are a pure function of the seed, which is written once), and
+    // Shader.PropertyToID results are cached by name. The retry schedule, the owner-side seed
+    // write and the m_checks bookkeeping are vanilla's. A piece destroyed mid-queue drops out on
+    // its next due poll.
     //
-    // Both: a dedicated server runs the same polling for every piece it instantiates, including
-    // the owner-side seed assignment.
+    // Both: a dedicated server polls every piece it instantiates.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(RandomMaterialValues))]
     internal static class RandomMaterialPollPatch {
@@ -50,15 +35,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly List<Entry> Queue = new List<Entry>();
         private static readonly Dictionary<string, int> PropertyIds = new Dictionary<string, int>();
 
-        private static bool _hooksChecked;
-        private static bool _hooksHealthy;
+        // A queued piece is polled only by the pump, so Start must not queue unless it attached.
+        private static readonly HookHealth Hooks = new HookHealth(
+            "Piece material polling",
+            () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZNetScene), "Update"), typeof(PumpHook)));
 
-        // Vanilla's Start verbatim (RandomMaterialValues.cs:23-30) with the InvokeRepeating
-        // replaced by a queue entry due immediately.
+        // Vanilla's Start with the InvokeRepeating replaced by a queue entry due immediately.
         [HarmonyPrefix]
         [HarmonyPatch("Start")]
         private static bool StartPrefix(RandomMaterialValues __instance) {
-            if (!HooksHealthy()) { return true; }
+            if (!Hooks.Healthy) { return true; }
 
             __instance.m_nview = __instance.GetComponentInParent<ZNetView>();
             __instance.m_piece = __instance.GetComponentInParent<Piece>();
@@ -70,8 +56,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // Vanilla's CheckMaterial verbatim (RandomMaterialValues.cs:32-54) minus the invoke
-        // bookkeeping, plus the two cuts the header argues for. Returns true when this piece is
+        // Vanilla's CheckMaterial minus the invoke bookkeeping. Returns true when this piece is
         // finished polling.
         private static bool Poll(RandomMaterialValues rmv) {
             if ((!rmv.m_isSet && rmv.m_randomSeed < 0
@@ -120,8 +105,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     Entry entry = Queue[i];
                     if (now < entry.m_next) { continue; }
 
-                    // A swap-removed tail entry lands on an already-visited slot and polls next
-                    // frame instead - a one-frame slip against a 0.2 s cadence.
+                    // Swap-remove; a tail entry landing on a visited slot polls next frame instead.
                     if (entry.m_rmv == null || Poll(entry.m_rmv)) {
                         Queue[i] = Queue[Queue.Count - 1];
                         Queue.RemoveAt(Queue.Count - 1);
@@ -135,41 +119,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPostfix]
             [HarmonyPatch("Shutdown")]
             private static void ShutdownPostfix() => Queue.Clear();
-        }
-
-        // ---- hook health ---------------------------------------------------------------------
-
-        /// A queued piece is polled ONLY by the pump, so Start must not route pieces into the
-        /// queue unless it attached.
-        private static bool HooksHealthy() {
-            if (_hooksChecked) { return _hooksHealthy; }
-            _hooksChecked = true;
-
-            _hooksHealthy = HasOurPostfix(AccessTools.DeclaredMethod(typeof(ZNetScene), "Update"), typeof(PumpHook));
-
-            if (!_hooksHealthy) {
-                Logger.LogError(
-                    "Piece material polling: the pump hook is not attached, so pieces are " +
-                    "polling through vanilla's invoke scheduling for this session. This usually " +
-                    "means a Valheim update changed ZNetScene.Update - look for the patch " +
-                    "failure logged at startup.");
-            }
-
-            return _hooksHealthy;
-        }
-
-        private static bool HasOurPostfix(MethodBase target, System.Type hookClass) {
-            // Fully qualified: HarmonyLib.Patches collides with this mod's own Patches namespace.
-            HarmonyLib.Patches info = target == null ? null : Harmony.GetPatchInfo(target);
-            if (info == null) { return false; }
-
-            foreach (Patch patch in info.Postfixes) {
-                if (patch.owner != ValheimCommunityPatch.PluginGUID) { continue; }
-                if (patch.PatchMethod == null || patch.PatchMethod.DeclaringType != hookClass) { continue; }
-                return true;
-            }
-
-            return false;
         }
     }
 }

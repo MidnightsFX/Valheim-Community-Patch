@@ -3,34 +3,21 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect, two of them, in HeightmapBuilder.BuildThread (HeightmapBuilder.cs:66-94):
+    // Fix Terrain Builder Throughput: the terrain build thread sleeps only when idle and holds
+    // more finished results.
     //
-    //  - Thread.Sleep(10) runs after *every* loop iteration, including one that just finished a
-    //    build with more work queued. That hard-caps terrain generation at under a hundred maps a
-    //    second and, in practice, far fewer - and every sleep with work queued directly extends
-    //    ZoneSystem.SpawnZone's IsTerrainReady wait (a zone spawn retries on a 100 ms tick) and
-    //    RequestTerrainSync's main-thread busy spin (HeightmapBuilder.cs:181-195, a do-while with
-    //    no yield).
+    // HeightmapBuilder.BuildThread sleeps 10 ms after every iteration, including one that just
+    // finished a build with more work queued, which caps terrain generation far below what the
+    // thread could do and extends every zone spawn's wait for terrain. Its ready queue is capped
+    // at 16 with silent oldest-first eviction, and the distant-terrain ring alone keeps 9 in
+    // flight, so finished results are evicted before they are consumed and rebuilt from scratch.
     //
-    //  - The ready queue is capped at 16 entries with silent oldest-first eviction. TerrainLod alone
-    //    keeps 9 distant-LOD results in flight, and a moving player's ghost-zone ring enqueues more
-    //    via IsTerrainReady's add-if-absent side effect - so finished results get evicted before
-    //    their heightmap consumes them and are rebuilt from scratch, wasting the thread the sleeps
-    //    already starve.
+    // A prefix replaces the loop with the same code and the same mutex discipline, sleeping only
+    // when the queue was empty, and with a configurable ready cap (default 32). The thread enters
+    // BuildThread once, when the singleton is created, so the patch has to be in place before
+    // that; Prepare logs if it was not.
     //
-    // Fix: the same loop, with the sleep only when the queue was empty this iteration, and the
-    // ready cap raised and configurable (a result is ~100 KB, so the default 32 holds ~3.5 MB).
-    // Mutex discipline is copied exactly - same lock/release pairing, no new lock ordering. The
-    // cap is re-read every iteration, so a server-synced change applies live.
-    //
-    // Constraint worth knowing: the builder thread enters BuildThread once, when the lazily-created
-    // singleton starts it. A Harmony detour applied after that never takes effect for the running
-    // thread. BepInEx applies this patch in plugin Awake, long before anything touches
-    // HeightmapBuilder.instance, so in practice the patched body is what the thread runs; the
-    // Prepare check below logs if that assumption is ever violated rather than failing silently.
-    //
-    // Both: servers generate terrain for every ghost zone around every peer; the throughput matters
-    // most there.
+    // Both: servers generate terrain for every ghost zone around every peer.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(HeightmapBuilder))]
     internal static class HeightmapBuilderThroughputPatch {
@@ -49,10 +36,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 valMax: 128);
         }
 
-        // The thread that would run the unpatched body starts the moment anything touches
-        // HeightmapBuilder.instance. Patching happens in plugin Awake, before any scene code runs,
-        // so the singleton cannot exist yet - but if some other mod's preloader created it, this
-        // fix is silently inert for the session, and that deserves a log line.
         [HarmonyPrepare]
         private static bool Prepare() {
             if (HeightmapBuilder.m_instance != null) {
@@ -89,7 +72,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     __instance.m_lock.ReleaseMutex();
                 }
 
-                // The whole fix: idle pacing only when idle.
                 if (!haveWork) { Thread.Sleep(10); }
 
                 __instance.m_lock.WaitOne();

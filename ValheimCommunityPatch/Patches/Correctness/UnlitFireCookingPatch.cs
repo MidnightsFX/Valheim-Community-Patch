@@ -4,26 +4,17 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Vanilla defect: the burning-area lookups test only the cached bounds, never whether the area is
-    // actually lit:
+    // Require Lit Fire: an unlit or burnt-out fireplace no longer counts as a heat source.
     //
-    //   public static bool IsPointPlus025InsideBurningArea(Vector3 p) {
-    //     foreach (KeyValuePair<Bounds, EffectArea> burningArea in EffectArea.s_BurningAreas)
-    //       if (burningArea.Key.Contains(p)) return true;
-    //     return false;
-    //   }
+    // EffectArea.IsPointPlus025InsideBurningArea and GetBurningAreaPointPlus025 test only the
+    // cached bounds in s_BurningAreas. Fireplace.UpdateState puts a fire out by deactivating the
+    // EffectArea object, which leaves its entry in that list, so cooking stations over a dead fire
+    // keep cooking.
     //
-    // EffectArea.Awake registers the area into s_BurningAreas, and only OnDestroy removes it.
-    // Fireplace.UpdateState puts the fire out by calling m_enabledObject.SetActive(false), which
-    // deactivates the EffectArea component but leaves its entry in the list forever. Player-visible
-    // symptom: a burnt-out or unlit fireplace still counts as a heat source, so cooking stations over
-    // a dead fire keep working.
+    // Postfixes on both lookups require the matching area to be active and enabled. They only do
+    // work when vanilla already reported a hit, so the common miss costs nothing.
     //
-    // Fix: postfix both lookups and require the matched area to be active. The extra walk only runs
-    // when vanilla already reported a hit, so the common negative case costs nothing.
-    //
-    // Client: the callers are CookingStation.IsFireLit and CraftingStation.CheckFire, component
-    // behaviours on player-built pieces owned by whichever player is standing near them.
+    // Client: the callers (CookingStation, CraftingStation) run on whichever player owns the piece.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(EffectArea))]
     internal static class UnlitFireCookingPatch {
@@ -60,8 +51,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             if (Enabled == null || !Enabled.Value || __result == null) { return; }
             if (IsLit(__result)) { return; }
 
-            // Vanilla returned the first area whose bounds matched, which may be an unlit one shadowing
-            // a lit one at the same spot. Prefer any lit area still covering the point.
+            // Vanilla returned the first area whose bounds matched, which may be an unlit one
+            // shadowing a lit one at the same spot.
             List<KeyValuePair<Bounds, EffectArea>> areas = EffectArea.s_BurningAreas;
             for (int i = 0; i < areas.Count; i++) {
                 if (IsLit(areas[i].Value) && areas[i].Key.Contains(p)) {

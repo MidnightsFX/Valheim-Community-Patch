@@ -4,50 +4,25 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: while any object-creation backlog exists, every CreateDestroyObjects pass
-    // (30 Hz) rebuilds the pending list from scratch - a Created check and a distance computation
-    // over every near ZDO - and then sorts the ENTIRE backlog, only to consume its head
-    // (ZNetScene.CreateObjectsSorted, ZNetScene.cs:152-189). Streaming a large base keeps the
-    // backlog in the tens of thousands for minutes; measured there, the re-sort alone was
-    // ~56 ms of every second and the refilter another ~18, against ~227 ms/s of actual object
-    // creation.
+    // Fix Spawn Queue Churn: the sorted spawn backlog persists between passes instead of being
+    // rebuilt and re-sorted thirty times a second.
     //
-    // Fix: keep the filtered, sorted backlog and consume it with a cursor across passes,
-    // rebuilding it from scratch - vanilla's exact filter and sort - only every third pass, or
-    // immediately when the player's zone changes (the sort order is distance-from-player, so a
-    // zone hop is the one event that meaningfully reorders it). Between rebuilds a pass is just
-    // the consume loop vanilla already ran. Creation itself is untouched: the same per-pass
-    // budget, computed the same way, consumes the same entries in the same order. This throttles
-    // bookkeeping, not work - the lesson of the withdrawn spawn-burst budget - so nothing
-    // accumulates; the worst case (a backlog too small to outlive one pass) simply rebuilds each
-    // pass, which IS vanilla.
+    // While any object-creation backlog exists, every CreateDestroyObjects pass rebuilds the
+    // pending list (a Created check and a distance per near ZDO) and sorts the entire backlog,
+    // only to consume its head. Streaming a large base keeps the backlog in the tens of thousands
+    // for minutes.
     //
-    // What a stale pass can see, and why each is safe (the cache is at most 3 passes = ~100 ms
-    // old):
-    //  - An entry created meanwhile (by us, a previous pass, or the distant path): its Created
-    //    flag is live state, checked at consume time and skipped - vanilla's refilter, one entry
-    //    later.
-    //  - An entry whose ZDO was destroyed and possibly recycled by the ZDO pool into a different
-    //    object: the id captured at rebuild no longer matches the live m_uid and the slot is
-    //    skipped. This guard is load-bearing - without it a recycled entry could be instantiated
-    //    off-ring, or worse, fed to the server-side invalid-prefab destroy branch.
-    //  - An entry whose zone is not ready: skipped past, retried after the next rebuild. Vanilla
-    //    retries every pass; ~100 ms later is invisible at zone-generation granularity, and this
-    //    is exactly what keeps the everything-gated regime from degenerating into per-pass
-    //    rebuilds.
-    //  - A ZDO newly entering the ring waits for the next rebuild to join the queue - the same
-    //    ~100 ms.
+    // A prefix on CreateObjectsSorted keeps the filtered, sorted list in vanilla's own
+    // m_tempCurrentObjects2 and consumes it with a cursor across passes, rebuilding it with
+    // vanilla's exact filter and sort only every third pass or when the player's zone changes.
+    // Creation itself is unchanged: same per-pass budget, same order. A cached entry is guarded at
+    // consume time against having been created meanwhile and against its pooled ZDO having been
+    // recycled into a different object (the captured id no longer matches). This is the fallback
+    // path when SpawnEventQueuePatch is not driving; that patch's prefix runs first and skips this
+    // one while it is. Other mods' prefixes on this method are bypassed; re-check the copied filter
+    // against the game source on updates.
     //
-    // The cache lives in vanilla's own m_tempCurrentObjects2 (this method is its only writer),
-    // so SceneIdleSkipPatch's pending-count diagnostic reads data at most ~100 ms old - it only
-    // runs on quiet passes, where the list is empty anyway. IsActiveAreaLoaded gating, the
-    // per-pass budget formula, the shared created counter, and the server-side invalid-prefab
-    // branch are replicated verbatim; CreateDistantObjects is left vanilla on purpose (no sort,
-    // and the shared budget's early-out already keeps it cheap). Replicated wholesale like
-    // RemoveObjectsNrePatch's sibling: re-check against the game source on updates; other mods'
-    // prefixes on this method are bypassed while it is on (postfixes still run).
-    //
-    // Both: a dedicated server streams objects for connected players through this same path.
+    // Both: a dedicated server streams objects for connected players through this path.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SpawnQueueCachePatch {
@@ -67,17 +42,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 valMax: 2000);
         }
 
-        // Rebuild cadence in passes. At 30 Hz this is ~100 ms of maximum staleness - the safety
-        // analysis in the header is written against it.
+        // Rebuild cadence in passes: ~100 ms of maximum staleness at 30 Hz.
         private const int RebuildInterval = 3;
 
         private static int _passesSinceRebuild = int.MaxValue;
         private static int _cursor;
         private static Vector2i _rebuildZone = new Vector2i(int.MinValue, int.MinValue);
 
-        // Ids captured at rebuild, parallel to the cached list: a pooled ZDO recycled into a new
-        // object keeps the reference alive but changes m_uid, which is how stale slots are told
-        // apart from live ones.
+        // Ids captured at rebuild, parallel to the cached list, so a recycled ZDO can be told
+        // apart from a live one.
         private static readonly List<ZDOID> CachedIds = new List<ZDOID>();
 
         [HarmonyPrefix]
@@ -90,16 +63,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
             Vector3 referencePosition = ZNet.instance.GetReferencePosition();
             Vector2i referenceZone = ZoneSystem.GetZone(referencePosition);
 
-            // The length check re-establishes the parallel-array invariant if anything else
-            // rewrote the list; a coincidental same-length rewrite is caught slot-by-slot by
-            // the id guard below.
+            // The length check re-establishes the parallel-list invariant if anything else
+            // rewrote the list.
             if (_passesSinceRebuild >= RebuildInterval - 1 || referenceZone != _rebuildZone
                 || pending.Count != CachedIds.Count) {
                 _passesSinceRebuild = 0;
                 _rebuildZone = referenceZone;
                 _cursor = 0;
 
-                // Vanilla's filter and sort verbatim (ZNetScene.cs:159-170).
+                // Vanilla's filter and sort.
                 pending.Clear();
                 for (int i = 0; i < currentNearObjects.Count; i++) {
                     ZDO zdo = currentNearObjects[i];
@@ -127,7 +99,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ZDOID cachedId = CachedIds[_cursor];
                 _cursor++;
 
-                // Stale-slot guards, in place of the refilter a rebuild pass would have done.
                 if (zdo.m_uid != cachedId || zdo.Created) { continue; }
 
                 if (!ZoneSystem.instance.IsZoneReadyForType(zdo.GetSector(), zdo.Type)) { continue; }
@@ -145,7 +116,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // The cache indexes into scene state; a session boundary invalidates both.
         [HarmonyPatch(typeof(ZNetScene), "Shutdown")]
         internal static class ShutdownHook {
             [HarmonyPostfix]

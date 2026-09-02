@@ -5,75 +5,29 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Vanilla defect: the terrain paint kernel reaches about a metre further than the radius the
-    // operation is fanned out with, so zones just past that metre never record paint that was applied
-    // to the ground they own.
+    // Fix Terrain Paint Zone Fanout: terrain paint is recorded into every zone it actually
+    // covers, so the two sides of a zone border stop disagreeing.
     //
-    //   TerrainOp.Awake decides which zones an operation touches from its radius alone:
+    // TerrainOp.Awake decides which zones an operation touches from GetRadius() alone, but
+    // TerrainComp.PaintCleared shifts the position half a texel and floors it, which snaps the
+    // paint kernel up to a full texel toward -x/-z. An operation near a zone's west or south
+    // border therefore paints that zone's own copy of the shared boundary texel while the
+    // neighbour, never included in the fan-out, keeps the unpainted copy. Only paint is affected:
+    // level, raise and smooth round to nearest and stay symmetric.
     //
-    //     Heightmap.FindHeightmap(this.transform.position, this.GetRadius(), heightmaps);
-    //     foreach (Heightmap heightmap in heightmaps)
-    //       heightmap.GetAndCreateTerrainCompiler().ApplyOperation(this);
+    // A postfix on Awake finds the extra zones the paint kernel reaches on the -x/-z side and
+    // hands them a paint-only copy of the operation (the settings object is masked around the
+    // call, which is safe because ApplyOperation serialises it synchronously). This changes what
+    // is saved, for operations placed from now on; PaintSeamReconcilePatch repairs borders that
+    // already diverged.
     //
-    //   but TerrainComp.PaintCleared shifts the position half a texel and then floors it:
+    // Zone lookup is horizontal only, so a TerrainOp created inside a dungeon (built at y+5000)
+    // would resolve to the surface heightmaps beneath it. Unreachable today because both TerrainOp
+    // creators refuse inside no-build locations, which every dungeon is; if that gate ever
+    // loosens, compare the operation's y against the heightmap's before extending to it.
     //
-    //     worldPos.x -= 0.5f;  worldPos.z -= 0.5f;
-    //     this.m_hmap.WorldToVertexMask(worldPos, out x1, out y1);   // FloorToInt inside
-    //
-    //   The two halves cancel inside WorldToVertexMask, leaving a plain floor, so the kernel's centre
-    //   lands on the vertex grid up to a full texel toward -x/-z of where the player actually
-    //   painted. Everything downstream is measured from that shifted centre, which pushes the
-    //   kernel's -x/-z reach past GetRadius() by the same amount.
-    //
-    //   Adjacent zones each hold their own copy of the shared boundary texel, so an operation placed
-    //   in that band paints its own zone's column 0 / row 0 - the shared texel - while the west or
-    //   south neighbour, excluded from the fan-out, keeps the unpainted copy. The two sides then
-    //   disagree about the same patch of ground for good: TerrainComp stores paint as an absolute
-    //   colour snapshot and replays it over the top on every regeneration, so nothing reconciles them
-    //   afterwards.
-    //
-    // Only paint is affected. LevelTerrain, RaiseTerrain and SmoothTerrain all call WorldToVertex
-    // without the half-texel shift, which rounds to nearest and stays symmetric about the operation.
-    //
-    // Fix: after vanilla has fanned the operation out, work out which extra zones the paint kernel
-    // genuinely reaches and send those a paint-only copy of the same operation, so both sides of the
-    // boundary record it and the agreement is saved rather than patched up at render time.
-    //
-    //   * Paint-only, because level/raise/smooth do not over-reach - handing them to a zone vanilla
-    //     deliberately left out would move terrain nothing asked to move. The settings object is
-    //     temporarily masked around the call; ApplyOperation serialises it into its ZPackage
-    //     synchronously, and the operation is destroyed at the end of this frame, so nothing else can
-    //     observe the change.
-    //   * Only zones on the -x/-z side of the operation are considered, because that is the only
-    //     direction the floor can run past the radius. A zone to the east or north is already inside
-    //     vanilla's fan-out whenever the kernel touches it.
-    //   * Running as a postfix rather than replacing Awake keeps vanilla's own fan-out and OnPlaced
-    //     intact. Destroy(gameObject) at the end of Awake is deferred to the end of the frame, so the
-    //     operation's transform and settings are still live here.
-    //
-    // This only helps operations placed from now on. PaintSeamReconcilePatch is what repairs
-    // boundaries in terrain that was already recorded the broken way.
-    //
-    // One assumption here is load bearing and invisible: zone lookup is horizontal only. Both
-    // Heightmap.IsPointInside overloads compare x and z and ignore y entirely (Heightmap.cs:846),
-    // so FindHeightmap resolves a point to the zone column it sits above or below, however far away
-    // that is vertically. Location interiors are built at the location's y plus 5000 (Location.cs:47),
-    // which means a TerrainOp created inside a dungeon resolves to the *surface* heightmaps five
-    // kilometres beneath it - and this fix, which deliberately reaches further than vanilla's
-    // fan-out, would spread that across more zones than vanilla touches.
-    //
-    // It is unreachable today, and only for a reason outside this file: the two places a TerrainOp
-    // is created (Attack.cs:1256 and Player's build placement) both refuse when
-    // Location.IsInsideNoBuildLocation says so, that test is horizontal too (Location.cs:88), and
-    // dungeon locations have m_noBuild set. So no operation is ever created inside a dungeon in the
-    // first place. If that gate ever loosens - a location with m_noBuild off, or a new caller that
-    // does not consult it - this fix turns into a way to paint surface terrain from underground, and
-    // the fix would be to compare the operation's y against the heightmap's before extending to it.
-    //
-    // Both, and deliberately ungated: this changes what is *recorded*, not what is drawn, so it has
-    // to run wherever the operation is created. TerrainOp has no ZNetView, so Awake only fires on
-    // the peer that instantiated it - a player placing or attacking, but also a server-owned
-    // creature attacking inside the server's own active area.
+    // Both, and not gated on side: TerrainOp has no ZNetView, so Awake runs only on the peer that
+    // created it, and the record has to be correct wherever that is.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(TerrainOp))]
     internal static class TerrainOpPaintFanoutPatch {
@@ -97,13 +51,10 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         [HarmonyPostfix]
         [HarmonyPatch("Awake")]
         private static void AwakePostfix(TerrainOp __instance, bool __runOriginal) {
-            // Harmony still runs postfixes when another mod's prefix skipped the original, and there
-            // is no fan-out to extend if vanilla never ran one.
+            // No fan-out to extend if another mod's prefix skipped vanilla's.
             if (!__runOriginal) { return; }
 
             if (Enabled == null || !Enabled.Value) { return; }
-
-            // Vanilla returned before touching anything, so there is no fan-out to extend.
             if (TerrainOp.m_forceDisableTerrainOps) { return; }
 
             TerrainOp.Settings settings = __instance.m_settings;
@@ -157,8 +108,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             }
         }
 
-        // True when the zone lies on the -x or -z side of the operation, which is the only direction
-        // the floored kernel centre can carry paint past the fan-out radius.
+        // True when the zone lies on the -x or -z side of the operation, the only direction the
+        // floored kernel centre can carry paint past the fan-out radius.
         private static bool IsBehindOperation(Heightmap hmap, Vector3 pos) {
             float half = hmap.m_width * hmap.m_scale * 0.5f;
             Vector3 centre = hmap.transform.position;

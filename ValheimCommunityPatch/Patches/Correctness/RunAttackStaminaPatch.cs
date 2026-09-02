@@ -2,27 +2,17 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Vanilla defect: holding sprint while attacking stops the player moving, but the run check does
-    // not know about attacks, so run stamina keeps draining for the whole swing.
+    // Fix Run Attack Stamina Drain: stops run stamina draining while a player is mid-attack.
     //
-    //   Character.CheckRun (the base virtual):
-    //     return this.m_run && moveDir.magnitude >= 0.1 && !IsCrouching() && !IsEncumbered() && !InDodge();
+    // Vanilla halts movement during an attack, but Character.CheckRun does not know about
+    // attacks, so Player.CheckRun keeps charging run stamina for the whole swing.
     //
-    //   Player.CheckRun:
-    //     if (!base.CheckRun(moveDir, dt)) return false;      // <- early out, before the drain
-    //     ...
-    //     this.UseStamina(dt * drain * Game.m_moveStaminaRate);
+    // A postfix on Character.CheckRun returns false for a Player that is attacking. It targets the
+    // base method because Player.CheckRun charges stamina after the base check passes, so a
+    // postfix on Player.CheckRun would run too late. Narrowed to Player so creature AI is
+    // unchanged.
     //
-    // The patch has to target the *base* method. Patching Player.CheckRun instead would run after
-    // UseStamina had already been called, which is exactly the cost we are trying to avoid.
-    //
-    // Scope note: Character.CheckRun is the virtual base for every character, so an unconditional
-    // postfix would also stop creatures running mid-attack - a creature-AI change, not a bug fix.
-    // This deliberately narrows to players.
-    //
-    // Client: already narrowed to Player, and a Player is only ever owned by its own client -
-    // CheckRun is reached from UpdateMotion inside CustomFixedUpdate's zdo.IsOwner() block. Skipping
-    // it headless also takes a trampoline off a method that runs per creature per frame there.
+    // Client: a Player's CheckRun only runs on its owning client.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Character))]
     internal static class RunAttackStaminaPatch {

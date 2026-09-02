@@ -6,82 +6,34 @@ using System.Reflection.Emit;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: every read of ZDO data looks the ZDO up twice. The four helpers that back the
-    // entire read path all ask the dictionary whether a key is present and then ask it again for the
-    // value (ZDOHelper.cs:64-70, :123-145):
+    // Fix Doubled ZDO Lookups: every read of ZDO data searches the per-type dictionary once
+    // instead of twice.
     //
-    //   public static TType GetValueOrDefault<TType>(this Dictionary<ZDOID, BinarySearchDictionary<int, TType>> container, ...)
-    //     => !container.ContainsKey(zid) ? defaultValue : container[zid].GetValueOrDefault(hash, defaultValue);
+    // The four ZDOHelper helpers behind the whole read path ask the dictionary whether a key is
+    // present and then ask it again for the value, e.g.
     //
-    //   public static bool GetValue<TType>(...) {
-    //     if (container.ContainsKey(zid)) { return container[zid].TryGetValue(hash, out value); }
-    //     value = default; return false;
-    //   }
+    //   => !container.ContainsKey(zid) ? defaultValue : container[zid].GetValueOrDefault(hash, defaultValue);
     //
-    // ContainsKey and the indexer are both a full Dictionary.FindEntry: hash the key, probe the
-    // bucket chain, compare. The second one buys nothing - it re-derives an answer the first one
-    // already had and threw away.
+    // Both are a full Dictionary.FindEntry over the largest dictionaries in the process, keyed on
+    // a ZDOID whose hash is a bounds-checked list read. This sits under every ZDO.GetInt, GetFloat,
+    // GetVec3 and GetString in the game, under ZSyncAnimation for every remote character every
+    // fixed step, and under ZDO.Serialize, which does sixteen of them per ZDO on every send tick
+    // and every save.
     //
-    // Two things make that worse than it sounds. The key is a ZDOID, whose GetHashCode is
-    // `ZDOID.GetUserID(this.UserKey).GetHashCode() ^ this.ID.GetHashCode()` (ZDOID.cs:97-100), and
-    // GetUserID is a List<long> indexer (ZDOID.cs:46) - so hashing is a bounds-checked heap read
-    // before any probing starts, and it happens twice. And these are the largest dictionaries in
-    // the process: one entry per ZDO that holds a field of that type, so on a long-lived world the
-    // buckets and entries arrays are megabytes and the probe is a cold read.
+    // Four signature-identical replacements answer both questions with one TryGetValue, and a
+    // transpiler swaps the call operand inside each of ZDOExtraData's 34 accessors. Equivalence is
+    // exact, including a present-but-null table throwing the same NullReferenceException. Patched
+    // on the accessors rather than on the generic helpers themselves because Mono compiles one
+    // shared body for all reference-type instantiations of a generic, so a patch aimed at
+    // GetValueOrDefault<string> would land on GetValueOrDefault<byte[]> too.
     //
-    // This sits under everything. ZDO.GetInt/GetFloat/GetVec3/GetString/GetBool and their
-    // out-parameter forms all land here, so it is paid by every WearNTear health read, every
-    // Fireplace fuel read, every Pickable and Plant and Container check, and by
-    // ZSyncAnimation.SyncParameters, which reads every animation parameter of every character this
-    // machine does NOT own on every fixed step (ZSyncAnimation.cs:99-121). ZDO.Serialize
-    // (ZDO.cs:461-470) does seven of the list forms plus a connection read - sixteen lookups per
-    // ZDO - and runs for every ZDO sent to every peer on every send tick, and again for every ZDO
-    // in the world on every save.
-    //
-    // Fix: one lookup. TryGetValue answers both questions in a single FindEntry. The four
-    // replacements below are signature-identical drop-ins for the vanilla helpers, so the edit at
-    // each call site is a call-operand swap with no change to the stack - which also means no
-    // Harmony prefix dispatch is added to methods this small. Nothing is cached and no state is
-    // kept, so there is nothing to invalidate and no Verify toggle to justify: this is the same
-    // question asked once instead of twice.
-    //
-    // Equivalence is exact, including the two edge cases worth naming. An entry that is present but
-    // whose table is null - the transient ZDOHelper.Release leaves behind at ZDOHelper.cs:151-155 -
-    // throws a NullReferenceException in vanilla off `container[zid].GetValueOrDefault(...)` and
-    // throws the identical one here off the fetched reference, rather than being quietly absorbed.
-    // And GetValuesOrEmpty's miss path returns `Array.Empty<...>().ToList()`, a fresh empty List
-    // with zero capacity, which is what `new List<...>()` is; the hit path calls the same
-    // Enumerable.ToList on the same table.
-    //
-    // Patched on ZDOExtraData's accessors rather than on the four ZDOHelper helpers themselves, and
-    // that is a correctness requirement, not a preference. The helpers are generic methods, and Mono
-    // compiles one shared body for all reference-type instantiations of a generic - so a patch aimed
-    // at GetValueOrDefault<string> would land on GetValueOrDefault<byte[]> too. Emitting a *call* to
-    // our own instantiation is free of that problem; patching vanilla's is not. Same reasoning as
-    // ZdoValueWriteAllocPatch, and it is why this covers string and byte[] reads where that fix
-    // could not. The 34 accessors are selected by name off ZDOExtraData and every one of them was
-    // checked to contain exactly one helper call; a name that stops matching is logged and skipped,
-    // and a method that turns out to contain no helper call keeps vanilla's IL.
-    //
-    // Composition: VisEquipmentRefreshPatch routes UpdateEquipmentVisuals' fifteen reads around
-    // ZDOExtraData.GetInt entirely, at one table lookup for all fifteen, so that path stays ahead of
-    // this one and the two do not interact.
-    //
-    // Deliberately not included, both the same defect and both worth their own round: the write path
-    // (ZDOHelper.InitAndSet calls Init, which is a ContainsKey, and then indexes - two lookups on an
-    // existing field, three when adding one), and ZDOExtraData.GetOwner (ZDOExtraData.cs:204-207),
-    // which spells the double lookup out inline rather than going through a helper and so needs a
-    // different edit. ZDO.IsOwner does not go near it - that is a flag test on the ZDO itself
-    // (ZDO.cs:984, :1036-1038) - which is what makes GetOwner cold enough to leave for now.
-    //
-    // Both: this is the ZDO data layer with no GameObject in sight. The server pays it hardest, on
-    // the serialize path under every ZDO send and every world save.
+    // Both: hardest on the server, under every ZDO send and every world save.
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class ZdoReadLookupPatch {
-        // Every accessor on ZDOExtraData that reaches one of the four helpers, by name. 27 names,
-        // 34 methods - GetFloat, GetVec3, GetQuaternion, GetInt, GetLong, GetString and GetByteArray
-        // each have both an out-parameter and a default-value overload, and both are wanted.
+        // Every accessor on ZDOExtraData that reaches one of the four helpers. The seven scalar
+        // getters each have an out-parameter and a default-value overload, so 27 names cover 34
+        // methods.
         private static readonly HashSet<string> AccessorNames = new HashSet<string> {
             "GetFloat", "GetVec3", "GetQuaternion", "GetInt", "GetLong", "GetString", "GetByteArray",
             "GetBool",
@@ -91,8 +43,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             "GetSaveStrings", "GetSaveByteArrays", "GetSaveConnections",
         };
 
-        // What the count below is checked against, so a game update that adds or removes an accessor
-        // says so in the log instead of silently changing how much of the read path is covered.
         private const int ExpectedAccessors = 34;
 
         [HarmonyTargetMethods]
@@ -134,19 +84,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
+        // Same Enumerable.ToList vanilla calls, and on a miss the same fresh zero-capacity list.
         private static List<KeyValuePair<int, TType>> GetValuesOrEmpty<TType>(
             Dictionary<ZDOID, BinarySearchDictionary<int, TType>> container, ZDOID zid) {
-            // Enumerable.ToList, as vanilla calls it, on the same table; and on a miss the same
-            // fresh zero-capacity List its Array.Empty<...>().ToList() produces. The allocation
-            // vanilla makes here is not this fix's business and is left exactly as it is.
             return container.TryGetValue(zid, out BinarySearchDictionary<int, TType> table)
                 ? table.ToList()
                 : new List<KeyValuePair<int, TType>>();
         }
 
-        // Keeps vanilla's IDictionary parameter rather than narrowing to Dictionary: the call sites
-        // pass a Dictionary either way, and matching the declared signature keeps this a pure
-        // operand swap. One interface call replaces two.
+        // Named after vanilla's helper so Pair() can match it by name. Keeps the IDictionary
+        // parameter so the swap is a pure operand replacement.
         private static TValue GetValueOrDefaultPiktiv<TKey, TValue>(
             IDictionary<TKey, TValue> container, TKey zid, TValue defaultValue) {
             return container.TryGetValue(zid, out TValue value) ? value : defaultValue;
@@ -167,10 +114,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return map;
         }
 
-        // Plain reflection rather than AccessTools: these are generic method *definitions*, and
-        // asking AccessTools for one without supplying type arguments is a case its overloads
-        // handle inconsistently across Harmony versions. GetMethod returns the open definition,
-        // which is exactly what the transpiler compares GetGenericMethodDefinition() against.
+        // Plain reflection rather than AccessTools: these are open generic definitions, which
+        // GetMethod returns directly and which the transpiler compares against.
         private static void Pair(Dictionary<MethodInfo, MethodInfo> map, string name) {
             MethodInfo vanilla = typeof(ZDOHelper).GetMethod(
                 name, BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly);
@@ -187,7 +132,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             map[vanilla] = ours;
         }
 
-        // Priority.Last, for the reason in ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         private static IEnumerable<CodeInstruction> AccessorTranspiler(
@@ -202,8 +147,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 if (!(codes[i].operand is MethodInfo called) || !called.IsGenericMethod) { continue; }
                 if (!Replacements.TryGetValue(called.GetGenericMethodDefinition(), out MethodInfo ours)) { continue; }
 
-                // Instantiated to match the call being replaced - <TType> for three of them,
-                // <TKey, TValue> for the connection helper - so the operand swap is all there is.
+                // Instantiated to match the call being replaced, so the operand swap is all there is.
                 codes[i].opcode = OpCodes.Call;
                 codes[i].operand = ours.MakeGenericMethod(called.GetGenericArguments());
                 replaced++;

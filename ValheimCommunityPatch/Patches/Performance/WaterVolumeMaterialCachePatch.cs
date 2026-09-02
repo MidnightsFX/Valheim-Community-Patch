@@ -3,26 +3,18 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: WaterVolume.UpdateMaterials runs for every loaded water volume every frame
-    // and is a single line (WaterVolume.cs:118-121):
+    // Fix Water Material Lookup: each water tile caches its surface material instead of fetching
+    // it from the engine every frame.
     //
-    //   this.m_waterSurface.material.SetFloat(WaterVolume.s_shaderWaterTime, WaterVolume.s_waterTime);
+    // WaterVolume.UpdateMaterials runs for every loaded water volume every frame and is one line,
+    // m_waterSurface.material.SetFloat(...). Renderer.material is a native call that returns the
+    // same instance for the volume's whole life.
     //
-    // Renderer.get_material is a native engine call per volume per frame - it instantiated the
-    // per-renderer material copy on first access and afterwards just fetches it, but the fetch
-    // is interop that answers the same reference every time for the volume's whole life.
-    // Profiling attributed ~1.4 seconds of a 10-minute coastal session to that fetch alone,
-    // alongside the SetFloat write it feeds (which is a genuine per-material update of the
-    // advancing water time, and stays).
+    // A prefix caches the material per volume on first use and writes the water time through the
+    // cache. The entry is dropped when the volume disables, and a destroyed material is re-fetched
+    // once. Everything else that touches the material keeps sharing the same per-renderer instance.
     //
-    // Fix: cache the material instance per volume on first use and write through the cache. The
-    // entry is dropped when the volume disables - the same hook vanilla uses to unregister it -
-    // and a Unity-destroyed material (scene teardown races) re-fetches once. Every other
-    // .material user (SetupMaterial's one-time setup) stays vanilla and shares the same
-    // per-renderer instance, so nothing can diverge.
-    //
-    // Client: material state is rendering state; a dedicated server is never patched here and
-    // keeps vanilla's writes that nothing ever draws.
+    // Client: material state is rendering state.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(WaterVolume))]
     internal static class WaterVolumeMaterialCachePatch {
@@ -43,7 +35,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // Vanilla unregisters the volume here (WaterVolume.cs:75); the cache entry goes with it.
+        // Vanilla unregisters the volume here; the cache entry goes with it.
         [HarmonyPatch(typeof(WaterVolume), "OnDisable")]
         internal static class DisableHook {
             [HarmonyPostfix]

@@ -2,38 +2,25 @@ using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Vanilla defect: Game.ConnectPortals runs every 5 seconds on the server main thread and is
-    // quadratic. Its second pass calls FindRandomUnconnectedPortal for every unconnected portal, and
-    // that method allocates a fresh List<ZDO> and rescans *all* portals, doing a ZDO string lookup and
-    // comparison per element, plus a linear IsCurrentlyConnectingPortal scan per element.
+    // Fix Portal Connection Scan: the server pairs portals by tag in one linear pass instead of
+    // rescanning every portal for every unconnected one.
     //
-    // The pathological part is that an unpaired portal never resolves, so it re-runs the full scan
-    // forever - every five seconds, for the life of the server. On a mature world with hundreds of
-    // portal ZDOs (including orphans left behind by destroyed portals) that is the recurring stall.
+    // Game.ConnectPortals runs every 5 s and is quadratic: for each unconnected portal,
+    // FindRandomUnconnectedPortal allocates a list and rescans all portals with a string lookup
+    // per element. An unpaired portal never resolves, so the full scan repeats forever, and
+    // Game.SetConnection defers the write to an RPC round-trip when a client owns the ZDO.
     //
-    // Game.SetConnection compounds it: it does a linear ZNet.GetPeer scan and, when the ZDO's owner is
-    // an online client, does not write the connection at all - it fires an RPC and defers to another
-    // tick via m_currentlyConnectingPortals.
+    // A prefix replaces it with three O(n) passes over a tag-keyed dictionary with no per-call
+    // allocation: validate existing connections and bucket the rest by tag, pair each bucket two
+    // at a time after seizing ownership, then one force-send union per peer. Pairing is in list
+    // order rather than random and completes in one tick.
     //
-    // Fix: three O(n) passes over the portal list with a tag-keyed dictionary, no per-call allocation,
-    // and direct writes after seizing ownership so no RPC round-trip is needed. Force-sends are
-    // batched into one UnionWith per peer instead of vanilla's per-ZDO loop over all peers.
-    //
-    // Behavioural note: vanilla picks a *random* partner among same-tag candidates. This pairs them in
-    // list order instead, so pairing is deterministic. It also pairs every same-tag portal in one tick
-    // rather than one pair per tick.
-    //
-    // Algorithm follows ComfyMods/BetterServerPortals (GPL-3.0, redseiko), with its
-    // "random portal" gameplay feature deliberately omitted.
-    //
-    // Server: Game.Start only starts ConnectPortalsCoroutine inside if (ZNet.instance.IsServer())
-    // (Game.cs:157), and the only other caller is ZDOMan.Load, itself server-only. No runtime gate
-    // needed - vanilla's own call site is the gate. Declared here so the config and README can say
-    // so, and so a client install reports it honestly as inert-unless-you-host.
+    // Server: vanilla only starts the coroutine inside Game.Start's IsServer branch.
+    // Provenance: ComfyMods/BetterServerPortals (GPL-3.0, redseiko), without its random-portal
+    // gameplay feature.
     [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(Game))]
     internal static class PortalConnectionPatch {
-        // Reused across ticks and cleared rather than reallocated, so a steady state allocates nothing.
         private static readonly Dictionary<string, List<ZDO>> UnconnectedByTag = new Dictionary<string, List<ZDO>>();
         private static readonly Stack<List<ZDO>> ListPool = new Stack<List<ZDO>>();
         private static readonly HashSet<ZDOID> ToForceSend = new HashSet<ZDOID>();
@@ -63,9 +50,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // Pass 1: validate every existing connection and bucket everything still unconnected by tag.
-        // Vanilla needs two separate sweeps for this; the validation result feeds straight into the
-        // bucket, so one sweep does both.
+        // Pass 1: validate every existing connection and bucket everything still unconnected.
         private static void CollectUnconnected(ZDOMan zdoMan, long sessionId) {
             List<ZDO> portals = zdoMan.m_portalObjects;
 
@@ -77,7 +62,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ZDOID targetId = portal.GetConnectionZDOID(ZDOExtraData.ConnectionType.Portal);
 
                 if (!targetId.IsNone()) {
-                    // Direct dictionary hit rather than vanilla's GetZDO wrapper path.
                     zdoMan.m_objectsByID.TryGetValue(targetId, out ZDO target);
                     if (target != null && target.GetString(ZDOVars.s_tag) == tag) { continue; }
 
@@ -88,8 +72,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // Pass 2: pair up each tag's unconnected portals two at a time. An odd one out simply stays
-        // unconnected, exactly as in vanilla.
+        // Pass 2: pair each tag's portals two at a time. An odd one out stays unconnected.
         private static int PairByTag(long sessionId) {
             int connected = 0;
 
@@ -112,8 +95,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return list;
         }
 
-        // UpdateConnection rather than SetConnection: it only rewrites an existing connection record,
-        // so clearing a portal that never had one does not create an empty entry.
+        // UpdateConnection rather than SetConnection: it only rewrites an existing record, so
+        // clearing a portal that never had one does not create an empty entry.
         private static void Disconnect(ZDO portal, long sessionId) {
             portal.SetOwner(sessionId);
             portal.UpdateConnection(ZDOExtraData.ConnectionType.Portal, ZDOID.None);
@@ -129,7 +112,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             ToForceSend.Add(b.m_uid);
         }
 
-        // One set union per peer, instead of vanilla ForceSendZDO's loop over every peer per ZDO.
+        // Pass 3: one set union per peer instead of vanilla's per-ZDO loop over every peer.
         private static void FlushForceSend(ZDOMan zdoMan) {
             if (ToForceSend.Count == 0) { return; }
 

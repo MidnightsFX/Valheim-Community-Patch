@@ -3,78 +3,25 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Vanilla defect: Player.AddStamina bounds only the top of the range.
+    // Fix Negative Stamina: floors player stamina at zero and refuses a NaN or infinite stamina
+    // drain from the network.
     //
-    //   public override void AddStamina(float v)
-    //   {
-    //     this.m_stamina += v;
-    //     if ((double) this.m_stamina <= (double) this.m_maxStamina)
-    //       return;
-    //     this.m_stamina = this.m_maxStamina;
-    //   }
+    // Player.AddStamina clamps only the top of the range, so a mod calling AddStamina with a
+    // negative value can take stamina below zero, where every HaveStamina gate fails: no attack,
+    // run, dodge or build. Vanilla's per-second SetMaxStamina clamp repairs a plain negative, but
+    // NaN passes every clamp (all comparisons against NaN are false), stops regeneration for good
+    // and is written to the character file on save, so it survives relogging. NaN can also arrive
+    // through RPC_UseStamina, whose handler screens nothing, and through the public UseStamina
+    // wrapper, whose NaN check runs before it multiplies by the StaminaRate world key, which can
+    // itself parse as NaN.
     //
-    // Nothing stops m_stamina going below zero. Vanilla never passes a negative v itself, so this
-    // only opens up under mods: anything that reduces stamina with AddStamina(-x) - rather than
-    // UseStamina, whose RPC does floor at zero - takes the field arbitrarily negative.
+    // Postfixes on AddStamina and Player.Load floor m_stamina at zero (NaN included), repairing a
+    // character that loads in broken. A prefix on RPC_UseStamina drops a call whose value is NaN
+    // or infinite rather than applying it and then zeroing the victim's stamina. Positive infinity
+    // as a field value is left alone: it is above the floor, and a ceiling would fight mods that
+    // grant over-max stamina on purpose.
     //
-    // Player-visible symptom: every HaveStamina gate is a strict >, so while stamina is negative the
-    // player cannot attack, run, dodge, sneak or build, jumps only weakly, takes drowning damage
-    // while swimming, and cannot move at all if encumbered.
-    //
-    // A negative value is largely self-correcting, and the fix should not claim otherwise.
-    // UpdateStats calls UpdateFood every frame, which once a second calls SetMaxStamina, which ends
-    // in Mathf.Clamp(m_stamina, 0f, m_maxStamina) - so a negative is snapped back to zero within
-    // about a second of normal play, and Player.Load clamps the same way, so it does not survive a
-    // relog. What that leaves is a sub-second window in which the gates all read false, the value is
-    // published to the ZDO for other peers, and the HUD bar draws negative.
-    //
-    // NaN is the case nothing recovers from. Unity's Mathf.Clamp is a pair of comparisons -
-    // `if (value < min) ... else if (value > max) ...` - and every comparison against NaN is false,
-    // so all three of vanilla's clamps return NaN unchanged. The regen gate m_stamina < maxStamina
-    // is false as well, so regen never runs, HaveStamina is false forever, GetStaminaPercentage
-    // feeds NaN to the HUD bar, and Player.Save writes the NaN straight back out to the character
-    // file with no validation. A player in that state stays broken across every relog.
-    //
-    // NaN also has a network-facing route. RPC_UseStamina is a registered RPC - Player.Awake does
-    // m_nview.Register<float>("UseStamina", ...) - so the float arrives from whichever peer sent it,
-    // and the handler checks only v == 0:
-    //
-    //   private void RPC_UseStamina(long sender, float v)
-    //   {
-    //     if ((double) v == 0.0) return;
-    //     this.m_stamina -= v;
-    //     if ((double) this.m_stamina < 0.0) this.m_stamina = 0.0f;
-    //     this.m_staminaRegenTimer = this.m_staminaRegenDelay;
-    //   }
-    //
-    // The public UseStamina wrapper does screen NaN, but its guard runs one line too early:
-    //
-    //   if ((double) v == 0.0 || float.IsNaN(v)) return;
-    //   v *= Game.m_staminaRate;
-    //
-    // Game.m_staminaRate is a public static float filled from the StaminaRate world key by
-    // Game.trySetScalarKey, which parses with float.TryParse(s, NumberStyles.Any, InvariantCulture,
-    // ...) - and that accepts the literal "NaN". So a single malformed global key makes every local
-    // UseStamina call multiply a screened value straight back into NaN after the screen.
-    //
-    // Fix: floor the field at zero after the two writes that can breach it - Player.AddStamina and
-    // Player.Load - so a character already saved in a bad state is repaired as it enters the world.
-    // RPC_UseStamina is handled the other way round, by dropping a call whose v is not finite rather
-    // than repairing m_stamina afterwards: repairing would mean a peer sending garbage silently
-    // resets the victim's stamina to zero, where dropping leaves it untouched. That is the same
-    // decision vanilla's own wrapper makes, applied where the wrapper does not reach.
-    //
-    // Scope note: the floor only. RPC_UseStamina with a finite negative v can push stamina above
-    // m_maxStamina, but SetMaxStamina's per-second clamp already pulls that back, and imposing a
-    // ceiling here would fight mods that grant over-max stamina on purpose. So as a *field value*
-    // positive infinity passes untouched - it is above the floor - while negative infinity and NaN
-    // are repaired, because neither is a usable number. As an *RPC input* both infinities are
-    // rejected along with NaN: nothing legitimate sends one, and unlike the field there is no cost
-    // to refusing it. A corrupt m_maxStamina is a different field with a different set of writers
-    // and is left alone.
-    //
-    // Client: Player.Load is the local character's profile load, and AddStamina / RPC_UseStamina only
-    // fire on the Player's owner, which is that player's own machine.
+    // Client: Player.Load, AddStamina and RPC_UseStamina all run on the player's own machine.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Player))]
     internal static class NegativeStaminaPatch {
@@ -93,32 +40,25 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "stamina without checking the value first.");
         }
 
-        // Keyed on player name rather than the Player object so nothing holds a reference to a
-        // destroyed one. A name goes in when stamina is first found out of bounds and comes out once
-        // it has genuinely recovered, so a mod that breaches the floor repeatedly logs once.
+        // Keyed on player name so nothing holds a destroyed Player. A name is added when stamina is
+        // first found out of bounds and removed once it recovers, so a repeat offender logs once.
         private static readonly HashSet<string> Reported = new HashSet<string>();
 
-        // Separate from Reported, and never cleared. A rejected RPC leaves stamina untouched, so
-        // there is no recovery event to end an episode on, and sharing the one set would let a
-        // stream of bad RPCs suppress a genuine floor warning - or the reverse.
+        // Separate and never cleared: a rejected RPC leaves stamina untouched, so there is no
+        // recovery event to end an episode on.
         private static readonly HashSet<string> ReportedRpc = new HashSet<string>();
 
         private static void Repair(Player player, string site) {
             float stamina = player.m_stamina;
 
-            // Ordered so the common case - a healthy positive value - costs one comparison. Positive
-            // infinity lands here too, which is intended: it is above the floor, so it is not this
-            // patch's business.
             if (stamina > 0f) {
                 if (Reported.Count > 0) { Reported.Remove(player.GetPlayerName()); }
                 return;
             }
 
-            // Exactly zero is the value this patch itself writes, so it must not count as a recovery
-            // - otherwise a mod breaching the floor every frame would clear and re-arm the log every
-            // frame, which is the spam this is trying to avoid. NaN fails both comparisons and falls
-            // through to the repair below, which is the point: it is the one value vanilla's own
-            // clamps pass straight through.
+            // Exactly zero is what this patch writes, so it must not count as a recovery or a mod
+            // breaching the floor every frame would re-arm the log every frame. NaN fails both
+            // comparisons and falls through to the repair, which is the point.
             if (stamina == 0f) { return; }
 
             player.m_stamina = 0f;
@@ -139,10 +79,6 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             Repair(__instance, "AddStamina");
         }
 
-        // Input guard rather than a repair: for any finite v vanilla's own floor already does the
-        // right thing, so NaN and the infinities are the only values worth intercepting, and the
-        // correct answer for those is to drop the call rather than let it land and then zero the
-        // player's stamina putting it right.
         [HarmonyPrefix]
         [HarmonyPatch("RPC_UseStamina")]
         private static bool RpcUseStaminaPrefix(Player __instance, float v) {
