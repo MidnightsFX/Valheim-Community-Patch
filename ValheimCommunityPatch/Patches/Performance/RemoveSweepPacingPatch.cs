@@ -39,21 +39,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class RemoveSweepPacingPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<int> SweepIntervalMs;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(RemoveSweepPacingPatch),
-                ValConfig.SectionPerformance,
-                "Fix Unload Sweep Cost",
-                true,
-                "Runs the object-unload sweep on a wall-clock interval instead of thirty times a " +
-                "second. The sweep walks every loaded object to find the few that left the " +
-                "loaded area, so at large-base object counts it is a steady share of frame time " +
-                "whenever the scene is changing. Objects leaving the area despawn up to a tenth " +
-                "of a second later, at the far edge of the loaded distance.");
-
             SweepIntervalMs = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Object Unload Sweep Interval",
@@ -72,8 +60,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPriority(Priority.High)]
         [HarmonyPatch("RemoveObjects")]
         private static bool RemoveObjectsPrefix() {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             int intervalMs = SweepIntervalMs != null ? SweepIntervalMs.Value : 100;
             if (intervalMs <= 0) { return true; }
 

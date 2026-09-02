@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
@@ -38,19 +37,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoConnectionIndexPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(ZdoConnectionIndexPatch),
-                ValConfig.SectionPerformance,
-                "Fix World Load Connection Scan",
-                true,
-                "Replaces the three quadratic scans that pair portals, spawners and sync transforms " +
-                "(ships and carts) with their targets during world load with indexed lookups. On a " +
-                "long-lived world these are a multi-second stall on every server start.");
-        }
-
         private const ZDOExtraData.ConnectionType PortalType = ZDOExtraData.ConnectionType.Portal;
         private const ZDOExtraData.ConnectionType PortalTargetType = ZDOExtraData.ConnectionType.Portal | ZDOExtraData.ConnectionType.Target;
         private const ZDOExtraData.ConnectionType SpawnedType = ZDOExtraData.ConnectionType.Spawned;
@@ -61,8 +47,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("ConnectPortals")]
         private static bool ConnectPortalsPrefix(ZDOMan __instance) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(PortalType);
             List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(PortalTargetType);
 
@@ -127,8 +111,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("ConnectSpawners")]
         private static bool ConnectSpawnersPrefix(ZDOMan __instance) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(SpawnedType);
             List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(SpawnedTargetType);
 
@@ -176,8 +158,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("ConnectSyncTransforms")]
         private static bool ConnectSyncTransformsPrefix() {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(SyncTransformType);
             List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(SyncTransformTargetType);
 

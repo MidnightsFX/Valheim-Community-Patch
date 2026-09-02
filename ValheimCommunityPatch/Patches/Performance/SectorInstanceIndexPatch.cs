@@ -33,27 +33,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // view is counted until its deferred OnDestroy where vanilla's alive-check skips it a few
     // frames sooner - again the safe direction (a zone lives marginally longer).
     //
-    // The index is maintained unconditionally (standing rule); the toggle gates only the read,
-    // and the read stands down to vanilla's walk if any maintenance hook failed to attach.
+    // The index is maintained unconditionally (standing rule); the read stands down to
+    // vanilla's walk if any maintenance hook failed to attach.
     //
     // Both: a dedicated server runs UpdateTTL over its own loaded zones at the same rate.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SectorInstanceIndexPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(SectorInstanceIndexPatch),
-                ValConfig.SectionPerformance,
-                "Fix Zone Occupancy Scan",
-                true,
-                "Answers \"does anything stand in this zone\" from a per-zone tally instead of " +
-                "walking every loaded object with two engine calls each. The game asks this for " +
-                "every zone it considers unloading, which at large object counts is a steady " +
-                "share of frame time.");
-
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Zone Occupancy",
@@ -104,7 +93,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static long _verifyDivergences;
         private static int _comparisonsSinceReport;
 
-        // ---- index maintenance (unconditional; the toggle gates only the read) ---------------
+        // ---- index maintenance (unconditional) -----------------------------------------------
 
         private static void Bump(Vector2i sector, int delta) {
             NonDistantCount.TryGetValue(sector, out int count);
@@ -200,7 +189,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("HaveInstanceInSector")]
         private static bool HaveInstanceInSectorPrefix(ZNetScene __instance, Vector2i sector, ref bool __result) {
-            if (Enabled == null || !Enabled.Value || !MaintenanceHealthy()) { return true; }
+            if (!MaintenanceHealthy()) { return true; }
 
             bool indexed = NonDistantCount.ContainsKey(sector);
 

@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
-using BepInEx.Configuration;
 using HarmonyLib;
 using Unity.Collections;
 
@@ -42,20 +41,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(LiquidVolume))]
     internal static class LiquidVolumeLeakPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(LiquidVolumeLeakPatch),
-                ValConfig.SectionPerformance,
-                "Fix Tar Pit Memory Leak",
-                true,
-                "Allocates the tar pit (LiquidVolume) raycast buffers with a persistent allocator instead " +
-                "of the 4-frame temporary one, and guards their disposal. Stops the 'JobTempAlloc has " +
-                "allocations that are more than 4 frames old' log spam and the native memory growth that " +
-                "comes with it. Changing this requires a game restart.");
-        }
-
         private static readonly MethodInfo SafeDisposeMethod =
             AccessTools.Method(typeof(LiquidVolumeLeakPatch), nameof(SafeDispose));
 
@@ -76,7 +61,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("Awake")]
         private static IEnumerable<CodeInstruction> AwakeTranspiler(IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
 
             int patched = 0;
             for (int i = 0; i < codes.Count; i++) {
@@ -119,7 +103,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("OnDestroy")]
         private static IEnumerable<CodeInstruction> OnDestroyTranspiler(IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
 
             int patched = 0;
             for (int i = 0; i < codes.Count; i++) {

@@ -68,12 +68,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // time, exactly as SpawnQueueCachePatch's guard does, before a recycled slot can be
     // instantiated off-ring or fed to the server-side destroy branch.
     //
-    // HARD PRECONDITION - the reason this class checks more than its own toggle. Replacing the
+    // HARD PRECONDITION - the reason this class checks more than its own hooks. Replacing the
     // pass means m_tempCurrentObjects and m_tempCurrentDistantObjects stay EMPTY, and
     // ZNetScene.RemoveObjects treats those two lists as its keep-set: vanilla's earmark discovery
     // handed two empty lists would unload every object in the world. ZoneDiffRemovalPatch ignores
     // both arguments and answers from the per-zone instance index, which is why the two compose -
-    // so this class stands down entirely unless that fix is on and its index is healthy.
+    // so this class stands down entirely unless that fix's index is healthy.
     //
     // "Verify Spawn Queue" runs vanilla's FindSectorObjects and filter on every pass, compares
     // the candidate set against the queue, ACTS ON VANILLA'S, and reports engagement plus any
@@ -84,21 +84,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SpawnEventQueuePatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(SpawnEventQueuePatch),
-                ValConfig.SectionPerformance,
-                "Fix Object Stream Rescan",
-                true,
-                "Keeps the set of objects waiting to stream in as a running list updated by the " +
-                "events that change it, instead of rescanning every loaded zone thirty times a " +
-                "second to rediscover it. Crossing a zone border adds one new column of zones " +
-                "rather than re-reading the whole loaded area, which is where the border stutter " +
-                "comes from. Objects still spawn at the same rate, nearest first.");
-
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Spawn Queue",
@@ -294,7 +282,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool CreateDestroyObjectsPrefix(ZNetScene __instance) {
             // The ring snapshot is maintained unconditionally, like every other index in this
             // mod: the feeds below decide in-ring membership from it, so it has to be current
-            // the moment the fix is switched on - not merely from then onwards.
+            // before the queue may drive.
             if (ZNet.instance != null && ZoneSystem.instance != null && ZDOMan.instance != null) {
                 // A new scene is a new world: the queue indexes into ZDOs the old session owned.
                 if (!ReferenceEquals(__instance, _snapshotScene)) { ResetSession(__instance); }
@@ -303,7 +291,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 Vector2i zone = ZoneSystem.GetZone(ZNet.instance.GetReferencePosition());
                 SyncZoneSets(zone, zoneSystem.m_activeArea, zoneSystem.m_activeDistantArea);
 
-                if (Enabled != null && Enabled.Value && Verify != null && Verify.Value) {
+                if (Verify != null && Verify.Value) {
                     RunVerify(zone, zoneSystem);
                     return true;
                 }
@@ -563,9 +551,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- feeds 2-4: the event hooks ------------------------------------------------------
         //
-        // Maintenance, never behind the toggle: the queue must be correct the moment the fix is
-        // switched on, and an unmaintained queue that is switched on later would silently miss
-        // everything that happened while it was off.
+        // Maintenance, never conditional: the queue must be correct the moment it starts
+        // driving, and an unmaintained queue would silently miss everything that happened
+        // while it stood down.
 
         [HarmonyPatch(typeof(ZDOMan), "AddToSector")]
         internal static class AddToSectorHook {
@@ -648,11 +636,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         /// Every condition that must hold before the queue may replace the pass. The removal
         /// interlock is the load-bearing one: see the header.
         private static bool Engaged() {
-            if (Enabled == null || !Enabled.Value) { return false; }
             if (ZNet.instance == null || ZoneSystem.instance == null || ZDOMan.instance == null) { return false; }
             if (!HooksHealthy()) { return false; }
 
-            if (ZoneDiffRemovalPatch.Enabled == null || !ZoneDiffRemovalPatch.Enabled.Value) { return false; }
             if (!SectorInstanceIndexPatch.MaintenanceHealthy()) { return false; }
 
             // That fix's own verify reconstructs vanilla's keep-set from the two lists this

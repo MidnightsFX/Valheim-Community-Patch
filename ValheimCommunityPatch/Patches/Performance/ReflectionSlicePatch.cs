@@ -43,30 +43,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Provenance: technique from ontrigger's ValheimPerformanceOptimizations (MIT),
     // https://github.com/ontrigger/ValheimPerformanceOptimizations - reworked
-    // from a component swap into this mod's prefix style so the toggle works at runtime: on
-    // toggle-off the probes' realtimeTexture is handed back and vanilla's RenderProbe path
-    // resumes on its own timer.
+    // from a component swap into this mod's prefix style.
     //
     // Client: probes only exist with a graphics device.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(ReflectionUpdate))]
     internal static class ReflectionSlicePatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<int> Resolution;
         internal static ConfigEntry<int> FrameBudgetMs;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(ReflectionSlicePatch),
-                ValConfig.SectionPerformance,
-                "Fix Reflection Probe Spikes",
-                true,
-                "Renders the realtime reflection cubemap one face per frame instead of all six " +
-                "in one frame - the periodic reflection spike becomes six small slices. " +
-                "Reflections render at reduced quality (lower LOD, shorter shadows, no " +
-                "characters or items) - a deliberate trade that is hard to spot in a blurry " +
-                "environment reflection.");
-
             // Client-local visual preference, deliberately not server-synced.
             Resolution = ValConfig.cfg.Bind(
                 "Client config",
@@ -109,7 +95,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _cooldownFrames;
         private static bool _finished;
         private static Vector3 _renderPosition;
-        private static bool _tookOver;
         private static int _excludeMask;
         private static float[] _layerCullDistances;
 
@@ -118,12 +103,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("Update")]
         private static bool UpdatePrefix(ReflectionUpdate __instance) {
-            if (Enabled == null || !Enabled.Value) {
-                ReleaseTakeover(__instance);
-                return true;
-            }
-
-            _tookOver = true;
             __instance.m_updateTimer += Time.deltaTime;
 
             if (_nextFace == FaceIdle && __instance.m_updateTimer > __instance.m_interval) {
@@ -172,8 +151,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("UpdateReflection")]
         private static bool UpdateReflectionPrefix(ReflectionUpdate __instance) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             __instance.m_updateTimer = 0.0f;
             BeginRender(__instance);
             return false;
@@ -188,7 +165,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _nextFace = FaceIdle;
             _deferStreak = 0;
             _finished = false;
-            _tookOver = false;
         }
 
         private static ReflectionProbe Current(ReflectionUpdate update) => update.m_current;
@@ -288,18 +264,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 QualitySettings.shadowDistance = oldShadowDistance;
                 QualitySettings.maximumLODLevel = oldMaxLod;
             }
-        }
-
-        // Toggled off mid-session: hand the probes back so vanilla's RenderProbe repopulates
-        // them on its own timer instead of sampling our stale low-res cubes forever.
-        private static void ReleaseTakeover(ReflectionUpdate update) {
-            if (!_tookOver) { return; }
-            _tookOver = false;
-            _nextFace = FaceIdle;
-            _deferStreak = 0;
-            _finished = false;
-            if (update.m_probe1 != null) { update.m_probe1.realtimeTexture = null; }
-            if (update.m_probe2 != null) { update.m_probe2.realtimeTexture = null; }
         }
     }
 }

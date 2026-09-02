@@ -70,20 +70,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SceneIdleSkipPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(SceneIdleSkipPatch),
-                ValConfig.SectionPerformance,
-                "Fix Idle Scene Sweep",
-                true,
-                "Skips rebuilding and sweeping the streamed-object lists on the ~30 passes per " +
-                "second where provably nothing changed, keeping one full pass per second as a " +
-                "safety sweep. In a large base the unchanged passes are a double-digit share of " +
-                "all frame time.");
-
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Scene Idle Skip",
@@ -138,7 +127,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _verifyDivergences;
         private static int _passesSinceReport;
 
-        // ---- change hooks (unconditional; maintenance is never behind the toggle) ------------
+        // ---- change hooks (maintenance runs unconditionally) ---------------------------------
 
         // AddToSector receives the NEW sector, RemoveFromSector the OLD one (ZDO.SetSector,
         // ZDO.cs:198-204), so each firing is filtered by the sector it actually touched - which
@@ -177,7 +166,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("CreateDestroyObjects")]
         private static bool CreateDestroyObjectsPrefix(ZNetScene __instance) {
             _ranFullPass = false;
-            if (Enabled == null || !Enabled.Value) { return true; }
             if (!HooksHealthy()) { return true; }
 
             ZoneSystem zoneSystem = ZoneSystem.instance;
@@ -196,7 +184,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             bool verify = Verify != null && Verify.Value;
 
-            // Closing summary when the toggle goes off, so a verify session always ends with its
+            // Closing summary when Verify switches off, so a verify session always ends with its
             // engagement numbers even if nobody watched the periodic lines.
             if (_verifyActive && !verify) {
                 _verifyActive = false;
@@ -278,8 +266,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                         $"{_createdVersion - _createdAtPrefix}, pending near {pendingNear}, " +
                         $"pending distant {pendingDistant}, removed " +
                         $"{__instance.m_tempRemoved.Count}). Vanilla ran, so nothing was lost. " +
-                        "Please report this - leave 'Fix Idle Scene Sweep' off until it is " +
-                        "understood.");
+                        "Please report this - leave 'Verify Scene Idle Skip' on until it is " +
+                        "understood, since verify mode always runs the full pass.");
                 }
             }
 

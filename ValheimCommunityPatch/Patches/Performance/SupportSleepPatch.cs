@@ -104,26 +104,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(WearNTear))]
     internal static class SupportSleepPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
-        internal static ConfigEntry<bool> WearEnabled;
         internal static ConfigEntry<bool> WearVerify;
         internal static ConfigEntry<float> WakeEpsilon;
         internal static ConfigEntry<int> QuietBackoff;
         internal static ConfigEntry<bool> WakeStats;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(SupportSleepPatch),
-                ValConfig.SectionPerformance,
-                "Fix Idle Support Checks",
-                true,
-                "Lets a building piece skip re-checking its structural support while nothing " +
-                "that could change it has happened - no neighbour built, destroyed or changed, " +
-                "no terrain edit. In a large base these re-checks are the single biggest steady " +
-                "cost while standing still. Support changes still propagate exactly as before; " +
-                "only the re-confirmation of unchanged values is skipped.");
-
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Support Sleep",
@@ -133,19 +120,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 "predicted-quiet piece's support actually changed. Costs everything the fix " +
                 "saves, so leave it off unless you are validating the predictions.",
                 advanced: true);
-
-            WearEnabled = ValConfig.BindFixToggle(
-                typeof(SupportSleepPatch),
-                ValConfig.SectionPerformance,
-                "Fix Idle Wear Visits",
-                true,
-                "Extends the support sleep to the whole per-piece wear visit: a piece the " +
-                "support sleep already proved quiet, owned by this machine, away from water, " +
-                "outside the Ashlands, and either in dry weather or safely under a roof skips " +
-                "its entire update - the engine-call overhead of visiting tens of thousands of " +
-                "pieces just to conclude nothing wears right now. Weather changes, roof " +
-                "changes, damage and repairs wake pieces immediately; exposed pieces in wet " +
-                "weather and everything in the Ashlands run exactly vanilla.");
 
             WearVerify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
@@ -529,7 +503,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool UpdateSupportPrefix(WearNTear __instance, out Snapshot __state) {
             __state = default;
             FlushDestroyWakes();
-            if (Enabled == null || !Enabled.Value || !HooksHealthy()) { return true; }
+            if (!HooksHealthy()) { return true; }
 
             PieceState state = GetState(__instance);
             __state.m_state = state;
@@ -827,7 +801,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _supportHandledFor = null;
             FlushDestroyWakes();
 
-            if (WearEnabled == null || !WearEnabled.Value || !HooksHealthy()) { return true; }
+            if (!HooksHealthy()) { return true; }
 
             PieceState state = GetState(__instance);
             __state.m_state = state;
@@ -911,13 +885,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 }
             }
 
-            if (Enabled == null || !Enabled.Value) { return; }
             if (ReferenceEquals(_supportHandledFor, __instance)) {
                 return;
             }
 
-            // Deliberately not __state.m_state: that is only populated when the wear fix is on,
-            // and this repair belongs to the support fix, whose gate is above.
+            // Deliberately not __state.m_state: that is only populated when the wear prefix
+            // engaged, and this repair belongs to the support fix.
             States.TryGetValue(__instance.GetInstanceID(), out PieceState tracked);
             RepairStampedSupport(__instance, tracked);
 
@@ -1009,8 +982,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPostfix]
         [HarmonyPatch("Awake")]
         private static void AwakePostfix(WearNTear __instance) {
-            if (Enabled == null || !Enabled.Value) { return; }
-
             // Vanilla's Awake stamps m_support = GetMaxSupport() as a placeholder and never
             // restores the persisted value: it writes ZDOVars.s_support in four places and reads
             // it in exactly one, the NON-owner branch of GetSupport (WearNTear.cs:207). So an

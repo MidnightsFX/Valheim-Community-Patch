@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -45,27 +44,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Smoke))]
     internal static class SmokeCostPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(SmokeCostPatch),
-                ValConfig.SectionPerformance,
-                "Fix Smoke Overhead",
-                true,
-                "Cuts the per-smoke-per-frame engine calls: the physics mass write happens on " +
-                "2% lifetime steps instead of every frame, the render-chunk recheck runs four " +
-                "times a second instead of sixty, and each smoke's position is read once per " +
-                "frame instead of twice. At fire-heavy bases the smoke system is a steady " +
-                "share of frame time; how the smoke looks and moves does not change.");
-        }
-
         // Vanilla's CustomUpdate verbatim (Smoke.cs:131-149) with the mass write bucketed.
         [HarmonyPrefix]
         [HarmonyPatch("CustomUpdate")]
         private static bool CustomUpdatePrefix(Smoke __instance, float deltaTime, float time) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             __instance.m_time += deltaTime;
             if (__instance.m_time > __instance.m_ttl && __instance.m_fadeTimer < 0.0) {
                 __instance.StartFadeOut();
@@ -108,8 +90,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPrefix]
             [HarmonyPatch("LateUpdate")]
             private static bool LateUpdatePrefix(SmokeRenderer __instance) {
-                if (Enabled == null || !Enabled.Value) { return true; }
-
                 float now = Time.time;
                 if (now >= _nextTransfer) {
                     _nextTransfer = now + TransferInterval;

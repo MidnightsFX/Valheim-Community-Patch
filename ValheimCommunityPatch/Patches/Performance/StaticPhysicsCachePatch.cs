@@ -15,7 +15,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // turns into a delayed wave of raycasts. Profiling attributed ~81 seconds of a day-long session
     // to these checks, concentrated after fresh generation.
     //
-    // Fix, part one (always on with the toggle): reimplement SUpdate with the transform fetched once
+    // Fix, part one (always on): reimplement SUpdate with the transform fetched once
     // and its position read once, threaded through the same logic. Order, thresholds and side
     // effects mirror vanilla exactly, including PushUp still running in the tick whose CheckFall
     // just started a fall.
@@ -32,35 +32,22 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(StaticPhysics))]
     internal static class StaticPhysicsCachePatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> UseHeightmapData;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(StaticPhysicsCachePatch),
-                ValConfig.SectionPerformance,
-                "Fix Static Object Ground Checks",
-                true,
-                "Reads each static object's position once per ground check instead of several times " +
-                "through the engine. Trees and rocks re-check their ground continuously, so the " +
-                "redundant native reads add up after zones generate.");
-
             UseHeightmapData = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Static Ground Checks Use Heightmap Data",
                 false,
                 "Answers static objects' terrain-height checks from heightmap data instead of a " +
                 "physics raycast. Evaluates the same surface the ray would hit, without the physics " +
-                "engine. Off by default for one release while it soaks; requires 'Fix Static Object " +
-                "Ground Checks'.",
+                "engine. Off by default for one release while it soaks.",
                 advanced: true);
         }
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(StaticPhysics.SUpdate))]
         private static bool SUpdatePrefix(StaticPhysics __instance, float time, Vector2i referenceZone) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             // Vanilla's gate order: falling, ShouldUpdate (time > m_updateTime), active area.
             if (__instance.m_falling || time <= __instance.m_updateTime) { return false; }
 

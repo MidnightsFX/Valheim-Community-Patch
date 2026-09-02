@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Reflection;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
@@ -37,11 +36,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // mod's - and vanilla's own -= still runs in OnDisable, where it is now a no-op against a list
     // this mod's lights are not in.
     //
-    // The toggle is safe to flip at runtime in both directions, because the two mechanisms coexist:
-    // a light whose OnEnable ran with the fix off is event-subscribed and served by vanilla's
-    // invocation; one whose OnEnable ran with it on is registry-subscribed and served by the
-    // postfix below, which is therefore unconditional. Registry removal in OnDisable is
-    // unconditional for the same reason.
+    // The two mechanisms coexist: a light whose OnEnable ran before this patch attached (or while
+    // its hooks were unhealthy) is event-subscribed and served by vanilla's invocation; one whose
+    // OnEnable ran through the registry is served by the postfix below, which is therefore
+    // unconditional. Registry removal in OnDisable is unconditional for the same reason.
     //
     // Equivalence: registration happens exactly where vanilla subscribed and under vanilla's own
     // guard (a LightFlicker with no Light returns before subscribing, and still does), removal
@@ -52,20 +50,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(LightFlicker))]
     internal static class LightSettingsEventPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(LightSettingsEventPatch),
-                ValConfig.SectionPerformance,
-                "Fix Light Settings Subscription",
-                true,
-                "Registers lights for graphics-setting changes in a lookup table instead of a " +
-                "linear event list. Vanilla removes a light from that list by scanning it, so " +
-                "the cost of extinguishing or unloading a light grows with how many lights are " +
-                "lit - and unloading a torch-heavy base pays that for every one of them at once.");
-        }
-
         // Keyed on GetInstanceID() rather than the LightFlicker: a dictionary keyed on a
         // UnityEngine.Object pays a native CompareBaseObjects call on every probe. See
         // TeardownHooks for the liveness invariant an int key depends on - satisfied here by
@@ -81,7 +65,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("OnEnable")]
         private static bool OnEnablePrefix(LightFlicker __instance) {
-            if (Enabled == null || !Enabled.Value || !HooksHealthy()) { return true; }
+            if (!HooksHealthy()) { return true; }
 
             __instance.m_time = 0f;
             if (__instance.m_light == null) { return false; }
@@ -91,9 +75,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // Unconditional: a light registered while the toggle was on must leave the registry even
-        // if the toggle is off by the time it is disabled. Vanilla's own -= has already run (this
-        // is a postfix) and was a no-op scan for registry-subscribed lights.
+        // Unconditional: a registered light must always leave the registry when disabled.
+        // Vanilla's own -= has already run (this is a postfix) and was a no-op scan for
+        // registry-subscribed lights.
         [HarmonyPostfix]
         [HarmonyPatch("OnDisable")]
         private static void OnDisablePostfix(LightFlicker __instance) =>

@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Reflection;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
@@ -24,12 +23,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // ever did. The event itself is left fully functional for any other subscriber; this mod's
     // pieces simply stop using it.
     //
-    // The toggle is safe to flip at runtime in both directions, because the two mechanisms
-    // coexist: a piece whose Start ran with the fix off is event-subscribed and serviced by
-    // vanilla's invocation; a piece whose Start ran with it on is registry-subscribed and serviced
-    // by the postfix. OnDestroy always services both (vanilla's -= runs regardless and is cheap
-    // once the event list is small; the registry removal below is unconditional, per the standing
-    // rule that index maintenance never sits behind a toggle).
+    // The two mechanisms coexist: a piece whose Start ran while the hooks were unhealthy is
+    // event-subscribed and serviced by vanilla's invocation; a piece whose Start ran through the
+    // registry is serviced by the postfix. OnDestroy always services both (vanilla's -= runs
+    // regardless and is cheap once the event list is small; the registry removal below is
+    // unconditional, per the standing rule that index maintenance is never conditional).
     //
     // Equivalence: registration happens exactly where vanilla subscribed (Start, after the same
     // FindHeightmap call - replicated verbatim, including vanilla's silent acceptance of a piece
@@ -45,21 +43,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(WearNTear))]
     internal static class WearCacheEventPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(WearCacheEventPatch),
-                ValConfig.SectionPerformance,
-                "Fix Piece Event Stall",
-                true,
-                "Registers building pieces for terrain-change notifications through a lookup " +
-                "table instead of a C# event whose subscriber list is copied whole on every " +
-                "subscribe and scanned whole on every unsubscribe. In a large base, loading or " +
-                "unloading a chunk of pieces through that event is a single multi-hundred-" +
-                "millisecond frame.");
-        }
-
         // Keyed by reference (UnityEngine.Object does not override Equals/GetHashCode), so a
         // fake-null heightmap key stays removable until its own OnDestroy drops the whole set.
         // Heightmap instance id -> (piece instance id -> piece). Both levels are keyed on
@@ -79,7 +62,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("Start")]
         private static bool StartPrefix(WearNTear __instance) {
-            if (Enabled == null || !Enabled.Value || !HooksHealthy()) { return true; }
+            if (!HooksHealthy()) { return true; }
 
             Heightmap hmap = Heightmap.FindHeightmap(__instance.transform.position);
             __instance.m_connectedHeightMap = hmap;
@@ -95,8 +78,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // Unconditional: a piece registered while the toggle was on must leave the registry even
-        // if the toggle is off by the time it is destroyed. Vanilla's own -= has already run (this
+        // Unconditional: a registered piece must always leave the registry when destroyed.
+        // Vanilla's own -= has already run (this
         // is a postfix) and was a no-op scan for registry-subscribed pieces.
         /// <summary>
         /// The destroy half of the registry, called from this mod's one WearNTear.OnDestroy postfix.

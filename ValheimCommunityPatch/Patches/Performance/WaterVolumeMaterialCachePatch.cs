@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -27,26 +26,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(WaterVolume))]
     internal static class WaterVolumeMaterialCachePatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(WaterVolumeMaterialCachePatch),
-                ValConfig.SectionPerformance,
-                "Fix Water Material Lookup",
-                true,
-                "Caches each water surface's material instead of re-fetching it from the engine " +
-                "every frame for every loaded water tile. The per-frame water time update itself " +
-                "is unchanged.");
-        }
-
         private static readonly Dictionary<WaterVolume, Material> Cache = new Dictionary<WaterVolume, Material>();
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(WaterVolume.UpdateMaterials))]
         private static bool UpdateMaterialsPrefix(WaterVolume __instance) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             if (!Cache.TryGetValue(__instance, out Material material) || material == null) {
                 MeshRenderer renderer = __instance.m_waterSurface;
                 if (renderer == null) { return true; }

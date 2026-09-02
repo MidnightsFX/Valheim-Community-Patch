@@ -21,7 +21,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Fix: the same loop, with the sleep only when the queue was empty this iteration, and the
     // ready cap raised and configurable (a result is ~100 KB, so the default 32 holds ~3.5 MB).
     // Mutex discipline is copied exactly - same lock/release pairing, no new lock ordering. The
-    // toggle and cap are re-read every iteration, so a server-synced change applies live.
+    // cap is re-read every iteration, so a server-synced change applies live.
     //
     // Constraint worth knowing: the builder thread enters BuildThread once, when the lazily-created
     // singleton starts it. A Harmony detour applied after that never takes effect for the running
@@ -34,20 +34,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(HeightmapBuilder))]
     internal static class HeightmapBuilderThroughputPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<int> ReadyCap;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(HeightmapBuilderThroughputPatch),
-                ValConfig.SectionPerformance,
-                "Fix Terrain Builder Throughput",
-                true,
-                "Lets the terrain build thread work continuously while builds are queued instead of " +
-                "sleeping 10ms after every single build, and keeps more finished results before old " +
-                "ones are thrown away and rebuilt. Vanilla's pacing makes zones near a moving player " +
-                "wait several extra ticks for their terrain.");
-
             ReadyCap = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Terrain Builder Ready Cap",
@@ -78,10 +67,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("BuildThread")]
         private static bool BuildThreadPrefix(HeightmapBuilder __instance) {
-            // Read once to decide which body this thread runs for its lifetime; the loop below
-            // re-reads it so the fix can also stand down live if the toggle is turned off.
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             ZLog.Log((object)"Builder started");
             bool stop = false;
             while (!stop) {
@@ -99,14 +84,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     __instance.m_lock.WaitOne();
                     __instance.m_toBuild.Remove(data);
                     __instance.m_ready.Add(data);
-                    int cap = Enabled.Value && ReadyCap != null ? ReadyCap.Value : 16;
+                    int cap = ReadyCap != null ? ReadyCap.Value : 16;
                     while (__instance.m_ready.Count > cap) { __instance.m_ready.RemoveAt(0); }
                     __instance.m_lock.ReleaseMutex();
                 }
 
-                // The whole fix: idle pacing only when idle (or when the toggle was switched off
-                // mid-session, which restores vanilla's unconditional sleep).
-                if (!haveWork || !Enabled.Value) { Thread.Sleep(10); }
+                // The whole fix: idle pacing only when idle.
+                if (!haveWork) { Thread.Sleep(10); }
 
                 __instance.m_lock.WaitOne();
                 stop = __instance.m_stop;

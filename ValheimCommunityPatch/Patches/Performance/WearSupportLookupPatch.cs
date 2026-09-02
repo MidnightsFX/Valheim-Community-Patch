@@ -58,20 +58,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(WearNTear))]
     internal static class WearSupportLookupPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(WearSupportLookupPatch),
-                ValConfig.SectionPerformance,
-                "Fix Support Lookup Cost",
-                true,
-                "Resolves which building piece owns a collider through a lookup table instead of " +
-                "walking the object hierarchy for every collider in every structural support " +
-                "check. In a large base those walks are a steady share of frame time. Changing " +
-                "this requires a game restart.");
-
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Support Lookup",
@@ -125,7 +114,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly MethodInfo IsOwnColliderMethod =
             AccessTools.Method(typeof(WearSupportLookupPatch), nameof(IsOwnCollider));
 
-        // ---- map maintenance (unconditional; the toggle gates only the transpiler) -----------
+        // ---- map maintenance (unconditional) -------------------------------------------------
 
         private static void Register(WearNTear piece, Collider collider) {
             if (collider == null) { return; }
@@ -276,8 +265,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("GetCOM")]
         private static bool GetCOMPrefix(WearNTear __instance, ref Vector3 __result) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             Transform transform = __instance.transform;
             __result = transform.position + transform.rotation * __instance.m_comOffset;
             return false;
@@ -289,7 +276,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("UpdateSupport")]
         private static IEnumerable<CodeInstruction> UpdateSupportTranspiler(IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
 
             int replaced = 0;
             int containsReplaced = 0;

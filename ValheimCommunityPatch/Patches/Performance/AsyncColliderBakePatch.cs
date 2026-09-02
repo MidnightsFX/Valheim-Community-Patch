@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Threading;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -48,28 +47,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Heightmap.OnDestroy does the same wait, because it DestroyImmediates the collision mesh the
     // worker would otherwise be reading.
     //
-    // Off by default for its first release: it is the one fix here with a physics-visible window,
-    // and it should soak before it ships enabled.
-    //
     // Client: dedicated servers never take the deferred path - they only spawn Full/Ghost zones and
     // have no local player - so there is nothing for them in the patch at all.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class AsyncColliderBakePatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(AsyncColliderBakePatch),
-                ValConfig.SectionPerformance,
-                "Fix Zone Collider Stall",
-                false,
-                "Bakes the terrain collision of already-generated zones on a background thread as " +
-                "they load in, instead of stalling the frame. This is most of the remaining stutter " +
-                "when crossing zone boundaries in explored terrain. Off by default while it soaks; " +
-                "freshly generating zones and terraforming always keep the immediate behaviour.");
-        }
-
         private sealed class PendingBake {
             public Heightmap m_hmap;
             public MeshCollider m_collider;
@@ -109,8 +91,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPrefix]
             private static void Prefix(Vector2i zoneID, ZoneSystem.SpawnMode mode) {
                 _deferContext =
-                    Enabled != null && Enabled.Value
-                    && mode == ZoneSystem.SpawnMode.Client
+                    mode == ZoneSystem.SpawnMode.Client
                     && Player.m_localPlayer != null
                     && ZNet.instance != null
                     && zoneID != ZoneSystem.GetZone(ZNet.instance.GetReferencePosition());
@@ -129,7 +110,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static class LateUpdateContextHook {
             [HarmonyPrefix]
             private static void Prefix() {
-                _lateUpdateContext = Enabled != null && Enabled.Value && Player.m_localPlayer != null;
+                _lateUpdateContext = Player.m_localPlayer != null;
             }
 
             [HarmonyFinalizer]

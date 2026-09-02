@@ -24,8 +24,10 @@ namespace ValheimCommunityPatch {
 
         public const string cfgFolder = "ValheimCommunityPatch";
 
-        // Config sections. Every individual fix gets its own toggle so a single fix can be switched
-        // off without a rebuild; the toggles live next to the patch that reads them.
+        // Config sections. Correctness and terrain fixes each get their own toggle so a single fix
+        // can be switched off without a rebuild; the toggles live next to the patch that reads
+        // them. Performance fixes are always on - the Performance section holds only their tuning
+        // values (budgets, caps, distances, intervals).
         public const string SectionPerformance = "Fixes - Performance";
         public const string SectionCorrectness = "Fixes - Correctness";
         public const string SectionTerrain = "Fixes - Terrain";
@@ -76,48 +78,32 @@ namespace ValheimCommunityPatch {
             BindFixToggles();
         }
 
-        // Each fix owns its toggle and its description; they are bound here so every entry exists
-        // before the single save flush in ValheimCommunityPatch.Awake.
+        // Each fix binds its config here - correctness and terrain fixes their toggle, performance
+        // fixes their tuning and Verify entries - so every entry exists before the single save
+        // flush in ValheimCommunityPatch.Awake. Performance fixes with nothing to tune bind
+        // nothing and do not appear.
         private static void BindFixToggles() {
             TeardownHooks.BindConfig();
-            Patches.Performance.LiquidVolumeLeakPatch.BindConfig();
-            Patches.Performance.PortalConnectionPatch.BindConfig();
-            Patches.Performance.ZdoConnectionIndexPatch.BindConfig();
             Patches.Performance.OrphanZdoIndexPatch.BindConfig();
             Patches.Performance.ZdoPrefabIndexPatch.BindConfig();
-            Patches.Performance.AutoPickupAllocPatch.BindConfig();
-            Patches.Performance.ZPackageWriteAllocPatch.BindConfig();
-            Patches.Performance.MisterCachePatch.BindConfig();
             Patches.Performance.HeightmapLookupPatch.BindConfig();
             Patches.Performance.StaticPhysicsCachePatch.BindConfig();
             Patches.Performance.ClutterRebuildCapPatch.BindConfig();
             Patches.Performance.HeightmapBuilderThroughputPatch.BindConfig();
-            Patches.Performance.AsyncColliderBakePatch.BindConfig();
-            Patches.Performance.ClutterGroundDataPatch.BindConfig();
             Patches.Performance.ZoneGenPacingPatch.BindConfig();
-            Patches.Performance.WaterVolumeMaterialCachePatch.BindConfig();
             Patches.Performance.TerrainLodSpreadPatch.BindConfig();
             Patches.Performance.WearSupportLookupPatch.BindConfig();
             Patches.Performance.SceneIdleSkipPatch.BindConfig();
             Patches.Performance.LightCostPatch.BindConfig();
-            Patches.Performance.LightSettingsEventPatch.BindConfig();
-            Patches.Performance.WearCacheEventPatch.BindConfig();
             Patches.Performance.RemoveSweepPacingPatch.BindConfig();
             Patches.Performance.SpawnQueueCachePatch.BindConfig();
             Patches.Performance.SectorInstanceIndexPatch.BindConfig();
-            Patches.Performance.RandomMaterialPollPatch.BindConfig();
             Patches.Performance.SupportSleepPatch.BindConfig();
-            Patches.Performance.SmokeCostPatch.BindConfig();
             Patches.Performance.ZoneDiffRemovalPatch.BindConfig();
             Patches.Performance.ReflectionSlicePatch.BindConfig();
             Patches.Performance.PhysicsCatchupPatch.BindConfig();
             Patches.Performance.SpawnEventQueuePatch.BindConfig();
             Patches.Performance.LocationBiomeAreaCachePatch.BindConfig();
-            Patches.Performance.ZdoValueWriteAllocPatch.BindConfig();
-            Patches.Performance.ZdoReadLookupPatch.BindConfig();
-            Patches.Performance.CollisionContactsAllocPatch.BindConfig();
-            Patches.Performance.CollisionCallbackReusePatch.BindConfig();
-            Patches.Performance.VisEquipmentRefreshPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();

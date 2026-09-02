@@ -30,19 +30,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(TerrainLod))]
     internal static class TerrainLodSpreadPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<int> Budget;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(TerrainLodSpreadPatch),
-                ValConfig.SectionPerformance,
-                "Fix Distant Terrain Hitch",
-                true,
-                "Spreads the distant-terrain rebuild that happens every 256m of travel over a few " +
-                "frames instead of rebuilding all nine far-terrain tiles in one. Most noticeable " +
-                "as the fixed-cadence hitch while sailing.");
-
             Budget = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Distant Terrain Rebuild Budget",
@@ -57,8 +47,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("RebuildAllHeightmaps")]
         private static bool RebuildAllHeightmapsPrefix(TerrainLod __instance) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             int budget = Budget != null ? Budget.Value : 3;
             if (budget >= __instance.m_heightmaps.Count) { return true; }
 
@@ -91,8 +79,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("IsTerrainReady", typeof(TerrainLod.HeightmapWithOffset))]
         private static bool IsTerrainReadyPrefix(TerrainLod.HeightmapWithOffset heightmapWithOffset, ref bool __result) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             if (heightmapWithOffset.m_state == TerrainLod.HeightmapState.Done) {
                 __result = true;
                 return false;

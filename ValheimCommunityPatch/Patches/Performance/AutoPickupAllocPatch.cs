@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -27,18 +26,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Player))]
     internal static class AutoPickupAllocPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(AutoPickupAllocPatch),
-                ValConfig.SectionPerformance,
-                "Fix Auto Pickup Allocation",
-                true,
-                "Stops the auto-pickup check allocating a new array every frame for every player. " +
-                "Changing this requires a game restart.");
-        }
-
         private const int BufferSize = 256;
 
         private static readonly Collider[] Buffer = new Collider[BufferSize];
@@ -67,7 +54,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("AutoPickup")]
         private static IEnumerable<CodeInstruction> AutoPickupTranspiler(IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
 
             int replacedCalls = 0, replacedLengths = 0;
 
@@ -96,7 +82,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 Logger.LogWarning(
                     $"Player.AutoPickup: expected 1 OverlapSphere call and 1 array length read, found " +
                     $"{replacedCalls} and {replacedLengths}, so this fix is inactive. Another mod has most " +
-                    "likely already rewritten the method - if so, nothing is wrong.");
+                    "likely already rewrote the method.");
                 return instructions;
             }
 

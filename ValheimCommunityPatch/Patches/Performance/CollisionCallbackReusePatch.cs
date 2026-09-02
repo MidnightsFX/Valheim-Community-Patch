@@ -1,4 +1,3 @@
-using BepInEx.Configuration;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
@@ -26,57 +25,27 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // What it cannot check is other mods. A mod that stashes a Collision for later reads whatever the
     // next collision wrote, so this is the one fix here whose blast radius is outside the mod - hence
-    // its own toggle and this note. If a physics-touching mod starts behaving strangely, turn this off
-    // first.
+    // this note. If a physics-touching mod starts behaving strangely, suspect this first.
     //
-    // Not a Harmony patch: this is a global the engine never rewrites mid-session, so binding plus a
-    // SettingChanged reapply is the whole mechanism - the PhysicsCatchupPatch precedent. The value the
-    // project shipped with is captured before the first write and restored if the fix is switched off,
-    // so a Valheim build that already enables this is left exactly as it was.
-    //
-    // Provenance: R4V9N1's Terramizer sets the same flag from its own config.
+    // Not a Harmony patch: this is a global the engine never rewrites mid-session, so one write at
+    // startup is the whole mechanism - the PhysicsCatchupPatch precedent. A Valheim build that
+    // already enables it is left exactly as it was, with a log line saying so.
     //
     // Both: collision callbacks are dispatched by the physics engine wherever it runs, and a dedicated
     // server simulates whatever falls inside its own active area.
     [PatchSide(Side.Both)]
     internal static class CollisionCallbackReusePatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        private static bool _vanillaCaptured;
-        private static bool _vanillaReuse;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(CollisionCallbackReusePatch),
-                ValConfig.SectionPerformance,
-                "Fix Collision Callback Allocation",
-                true,
-                "Reuses one collision-callback object instead of allocating a fresh one for every " +
-                "collision on every object in the scene. Every vanilla handler is safe with this and " +
-                "the physics data they receive is unchanged. Turn it off if a mod that reads physics " +
-                "collisions misbehaves - a mod that keeps a collision object past the end of its own " +
-                "callback would read the next collision's data.");
-
-            Apply();
-            Enabled.SettingChanged += (sender, args) => Apply();
-        }
-
-        private static void Apply() {
-            if (!_vanillaCaptured) {
-                _vanillaReuse = Physics.reuseCollisionCallbacks;
-                _vanillaCaptured = true;
-
-                if (_vanillaReuse) {
-                    // Worth one line in the log: it means this fix is a no-op on this build, and
-                    // that is a useful thing to know before attributing a measurement to it.
-                    Logger.LogInfo(
-                        "Collision callback reuse was already enabled by the game, so 'Fix Collision " +
-                        "Callback Allocation' changes nothing on this build.");
-                }
+        internal static void Apply() {
+            if (Physics.reuseCollisionCallbacks) {
+                // Worth one line in the log: it means this fix is a no-op on this build, and
+                // that is a useful thing to know before attributing a measurement to it.
+                Logger.LogInfo(
+                    "Collision callback reuse was already enabled by the game, so 'Fix Collision " +
+                    "Callback Allocation' changes nothing on this build.");
+                return;
             }
 
-            Physics.reuseCollisionCallbacks =
-                Enabled != null && Enabled.Value ? true : _vanillaReuse;
+            Physics.reuseCollisionCallbacks = true;
         }
     }
 }

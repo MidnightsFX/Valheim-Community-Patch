@@ -22,15 +22,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // ownership changes, so the sweep visits only the buckets whose owner is gone. O(orphans)
     // instead of O(world).
     //
-    // The index is maintained regardless of the config toggle, even when this fix is switched off. If
-    // maintenance were behind the toggle, switching it on mid-session would consult an index that had
-    // missed every change before the switch, and orphans would leak forever. Only the sweep reads the
-    // toggle; maintenance is a few hash operations per ownership change.
-    //
-    // It is gated on the network role, which is a different thing: the sweep is only ever reached on
-    // a server (ZNet.Disconnect -> ClearPlayerData -> ZDOMan.RemovePeer, itself behind IsServer), so
-    // on a joined client these hooks would feed an index nothing ever reads. Unlike the toggle, the
-    // role is fixed for the whole session, so there is no mid-session switch to miss.
+    // Index maintenance is gated on the network role: the sweep is only ever reached on a server
+    // (ZNet.Disconnect -> ClearPlayerData -> ZDOMan.RemovePeer, itself behind IsServer), so on a
+    // joined client these hooks would feed an index nothing ever reads. The role is fixed for the
+    // whole session, so there is no mid-session switch to miss. Maintenance is a few hash
+    // operations per ownership change.
     //
     // Correctness is the whole risk here: a stale index either leaks non-persistent ZDOs or destroys
     // live ones. Two things guard it. The hooks are checked at first use and the whole fix stands
@@ -45,20 +41,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class OrphanZdoIndexPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(OrphanZdoIndexPatch),
-                ValConfig.SectionPerformance,
-                "Fix Disconnect ZDO Sweep",
-                true,
-                "Replaces the whole-world scan the server runs on every disconnect to clean up a " +
-                "departing player's temporary objects with an owner-indexed lookup. Vanilla walks " +
-                "every ZDO in the world to find a few dozen, so on a large world every logout is a " +
-                "main-thread freeze that grows with the size of the world.");
-
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Orphan Index",
@@ -231,7 +216,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ZDOMan.RemoveOrphanNonPersistentZDOS))]
         private static bool RemoveOrphanNonPersistentZDOSPrefix(ZDOMan __instance) {
-            if (Enabled == null || !Enabled.Value) { return true; }
             if (!HooksHealthy()) { return true; }
 
             bool verify = Verify != null && Verify.Value;
@@ -338,7 +322,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 $"Orphan index verify: DIVERGED. The full scan found {missed} orphan(s) the index " +
                 $"missed (first {firstMissed}), and the index claimed {extra} the full scan did not " +
                 $"(first {firstExtra}). Vanilla's result was used. Please report this - leave " +
-                "'Fix Disconnect ZDO Sweep' off until it is understood.");
+                "'Verify Orphan Index' on until it is understood, since the verify pass acts on " +
+                "vanilla's answer.");
         }
 
         private static void Destroy(ZDOMan zdoMan, List<ZDO> orphans) {

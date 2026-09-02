@@ -33,6 +33,9 @@ namespace ValheimCommunityPatch
             Log = this.Logger;
             cfg = new ValConfig(Config);
 
+            // Engine-flag fixes with no Harmony patch and no config apply here.
+            Patches.Performance.CollisionCallbackReusePatch.Apply();
+
             // All startup hooks should go after the config & Logger have been wired up.
             ApplyPatches();
 
@@ -46,9 +49,10 @@ namespace ValheimCommunityPatch
         // removes a single vanilla method, we want the other fixes to keep working and one clear error
         // in the log - not a mod that silently does nothing.
         //
-        // Each fix checks its own config toggle at runtime, so a fix switched off in the config is a
-        // cheap bool check, not an unpatched method. The exceptions are transpilers, which read their
-        // toggle at patch time and therefore need a restart to change.
+        // Correctness and terrain fixes check their own config toggle at runtime, so a fix switched
+        // off in the config is a cheap bool check, not an unpatched method. The exceptions are
+        // transpilers, which read their toggle at patch time and therefore need a restart to change.
+        // Performance fixes have no toggle - they are always on.
         //
         // Every transpiler in this mod is declared [HarmonyPriority(Priority.Last)], and that is a
         // compatibility rule rather than a preference. Harmony rebuilds a method from its original IL

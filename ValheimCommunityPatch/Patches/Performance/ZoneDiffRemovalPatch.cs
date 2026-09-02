@@ -29,8 +29,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // vanilla's exact sequence per instance. Discovery-by-index also removes the need to PACE
     // the sweep: this prefix sits at Priority.First and, while active, replaces the whole stack
     // below it on this method (RemoveSweepPacingPatch's interval, RemoveObjectsNrePatch's fast
-    // pass, vanilla) - restoring vanilla's every-pass unload latency at near-zero cost. Toggled
-    // off or unhealthy, it returns true and that stack behaves exactly as before.
+    // pass, vanilla) - restoring vanilla's every-pass unload latency at near-zero cost. When
+    // unhealthy, it returns true and that stack behaves exactly as before.
     //
     // Orphan resilience is inherited, not lost: the execution loop runs inside the same
     // try/catch contract as RemoveObjectsNrePatch, and a throw falls back to that patch's
@@ -44,21 +44,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class ZoneDiffRemovalPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
         internal static ConfigEntry<int> FrameBudget;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(ZoneDiffRemovalPatch),
-                ValConfig.SectionPerformance,
-                "Fix Unload Discovery Scan",
-                true,
-                "Finds objects that left the loaded area by asking the per-zone instance index " +
-                "directly, instead of stamping and walking every loaded object to see what was " +
-                "not stamped. The walk's cost scales with how much is loaded; the index answer " +
-                "is effectively free, and unloading returns to vanilla's immediate cadence.");
-
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Unload Discovery",
@@ -104,7 +93,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("RemoveObjects")]
         private static bool RemoveObjectsPrefix(
             ZNetScene __instance, List<ZDO> currentNearObjects, List<ZDO> currentDistantObjects) {
-            if (Enabled == null || !Enabled.Value) { return true; }
             if (!SectorInstanceIndexPatch.MaintenanceHealthy()) { return true; }
             if (ZNet.instance == null || ZoneSystem.instance == null) { return true; }
 

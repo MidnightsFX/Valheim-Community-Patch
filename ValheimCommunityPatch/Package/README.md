@@ -7,9 +7,6 @@ exceptions that silently kill a system, item loss, quadratic hot paths, per-fram
 spam. It deliberately ships no quality-of-life features, no balance changes, and no content, so you
 can install it on a server without anyone having to agree about how the game should play.
 
-Every fix has its own toggle in the config, so you can turn off any single one without a rebuild.
-Toggles are admin-only and server-synced.
-
 Each fix is tagged with the side it is worth installing on. *(server)* fixes only do something on
 the machine hosting the world — a dedicated server or a listen host. *(client)* fixes need a local
 player, and are **not even applied** on a dedicated server, which is why the startup log there
@@ -25,6 +22,14 @@ are created, owned and simulated on that player's client; the server holds the d
 
 So the fixes a server gains from are the data-and-network ones — ZDO handling, world load, packet
 allocation, socket logging — and almost everything else is worth having on the client.
+
+## Performance Side by Side
+
+[![](https://markdown-videos-api.jorgenkh.no/youtube/UrSF0NYgFpo)](https://youtu.be/UrSF0NYgFpo)
+
+## Terrain Fix comparison
+
+
 
 ## Fixes in this release
 
@@ -79,11 +84,10 @@ fix under [Credit and sources](#credit-and-sources).
   single build even with work queued, and throws away finished results beyond 16 held. Zones near a
   moving player wait extra ticks for terrain that is already computed. It now sleeps only when idle
   and holds more results.
-- **Fix Zone Collider Stall** *(client)* — **off by default this release.** Crossing into an
-  already-explored zone cooks its terrain collision on the main thread, which is most of the stutter
-  at zone boundaries in generated terrain. This bakes it on a background thread instead, for exactly
-  that case — freshly generating zones and terraforming keep the immediate behaviour. Turn it on if
-  you want to help prove it out.
+- **Fix Zone Collider Stall** *(client)* — crossing into an already-explored zone cooks its terrain
+  collision on the main thread, which is most of the stutter at zone boundaries in generated
+  terrain. This bakes it on a background thread instead, for exactly that case — freshly generating
+  zones and terraforming keep the immediate behaviour.
 - **Fix Prefab Query Scan** *(both)* — asking "every object of this prefab" scans every ZDO in the
   world. Vanilla only does that from a console command, but it is the API mods use, and several
   popular ones ask every tick — a continuous whole-world scan that was the largest remaining cost
@@ -116,8 +120,7 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Support Lookup Cost** *(both)* — every structural-support check walks the object hierarchy
   once per nearby collider to find which building piece owns it — a steady cost that scales with
   base size. A lookup table answers it instead, self-populating and falling back to the walk
-  whenever it can't. Admin-only "Verify Support Lookup" compares both. Requires a restart to
-  change.
+  whenever it can't. Admin-only "Verify Support Lookup" compares both.
 - **Fix Light Flicker Overhead** *(client)* — torch flicker updates every flickering light every
   frame with per-light engine calls, invisible past a few dozen metres; it now stops beyond a
   configurable distance. Alongside it, a client-local "Point Light Limit" exposes the game's own
@@ -143,9 +146,8 @@ fix under [Credit and sources](#credit-and-sources).
   only to spawn the first few. That rediscovery is the zone-border stutter: it is at its most
   expensive exactly when you cross into a built-up area. The pending set is now kept as a running
   list that the events changing it update directly, so crossing a border adds one new column of
-  zones instead of re-reading the loaded world. Objects spawn at the same rate, nearest first.
-  Needs "Fix Unload Discovery Scan" on — it stands down otherwise — and an admin-only "Verify
-  Spawn Queue" diagnostic checks the list against the full rescan.
+  zones instead of re-reading the loaded world. Objects spawn at the same rate, nearest first,
+  and an admin-only "Verify Spawn Queue" diagnostic checks the list against the full rescan.
 - **Fix Zone Occupancy Scan** *(both)* — deciding whether a zone can unload walks every loaded
   object with two engine calls each, per candidate zone. A per-zone tally answers it instantly,
   with an admin-only "Verify Zone Occupancy" diagnostic comparing it against the walk.
@@ -229,7 +231,7 @@ fix under [Credit and sources](#credit-and-sources).
   instead, on by default in new Unity projects since 2018.3. Every vanilla handler was checked and
   none keeps a collision past its own callback. This is the one fix here that can affect other mods
   — a mod that stashes a collision object for later would read the next collision's data — so it is
-  the first thing to turn off if a physics-touching mod starts misbehaving.
+  the first suspect if a physics-touching mod starts misbehaving.
 - **Fix Equipment Visual Refresh** *(client)* — every character, dropped armour piece and armour
   stand re-derives its whole equipment appearance every frame. Skin and hair colour are re-applied
   on every one of those frames, allocating material and renderer arrays and walking the beard and
@@ -359,9 +361,6 @@ The mods involved:
   — ontrigger (MIT). Three of the performance entries below, including the event-fed spawn queue the
   object-stream rescan fix is built on, plus independent corroboration of two more.
 - **[MyPitsDontLeak](https://github.com/AzumattDev/MyPitsDontLeak)** — Azumatt (MIT).
-- **[Terramizer](https://thunderstore.io/c/valheim/p/Terramizer/Terramizer/)** — R4V9N1. Three of
-  the allocation fixes below. Its terrain-limit and placement-effect features are gameplay and
-  visual changes and are deliberately not here.
 - **Zen.ModLib** — ZenDragon. Used only as a *catalogue* of which vanilla bugs exist; no code was
   copied.
 - **Iron Gate Studio** — Valheim itself. The decompiled game source is the reference used to locate
@@ -404,11 +403,11 @@ The mods involved:
 | Fix Physics Catchup Spiral | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | The maximumDeltaTime cap and its default |
 | Fix Object Stream Rescan | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | Event-fed spawn queue, the zone-set diff, and the 8 m re-sort threshold |
 | Fix Location Biome Area Rescan | worldGenAccelerator — jneb802 / warpalicious (MIT) | The observation that per-zone biome-area evaluation dominates location generation. No code, and not that mod's approach, which trades vanilla world layout for the speed |
-| Fix ZDO Value Write Allocation | Terramizer — R4V9N1 | The boxed comparison in `BinarySearchDictionary.SetValue`. That mod replaces the method with a hand-written copy driven by reflected field refs; this is a three-instruction IL edit, so the growth policy and binary search stay vanilla's |
+| Fix ZDO Value Write Allocation | MidnightsFX | — |
 | Fix Doubled ZDO Lookups | MidnightsFX | — |
 | Fix Collision Contact Allocation | MidnightsFX | — |
-| Fix Collision Callback Allocation | Terramizer — R4V9N1 | The same `Physics.reuseCollisionCallbacks` flag; the per-handler audit and the restore-on-disable are ours |
-| Fix Equipment Visual Refresh | Terramizer — R4V9N1 | The ZDO int-table cache across `UpdateEquipmentVisuals`, same prefix-plus-transpiler shape, keyed here on ZDO identity. The `UpdateColors` change gate is not in that mod |
+| Fix Collision Callback Allocation | MidnightsFX | — |
+| Fix Equipment Visual Refresh | MidnightsFX | — |
 
 ### Terrain
 
@@ -464,10 +463,10 @@ Three caveats for mixed groups:
 
 - **Require Lit Fire** and **Fix Run Attack Stamina Drain** are player-visible, so players with and
   without the mod will see slightly different behaviour on the same server.
-- Config toggles are only synced from the server to clients that have the mod — with a one-sided
+- Config values are only synced from the server to clients that have the mod — with a one-sided
   install each machine uses its own config file.
 - Several fixes are applied by rewriting the method rather than wrapping it, and those read their
-  toggle once when the game starts. Their descriptions say so. Changing one of those — including a
+  config once when the game starts. Their descriptions say so. Changing one of those — including a
   value the server syncs down mid-session — does not take effect on that machine until it restarts.
 
 If both the server and a client have the mod, their versions must match on major and minor; Jotunn

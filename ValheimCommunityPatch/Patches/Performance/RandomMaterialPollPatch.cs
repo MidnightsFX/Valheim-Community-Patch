@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Reflection;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -30,32 +29,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // placement-ghost condition, the same m_checks bookkeeping on the component.
     //
     // A queued piece destroyed before finishing simply drops out on its next due poll (vanilla's
-    // own alive-checks inside the body make a dead piece's poll a no-op anyway). The queue is
-    // pumped unconditionally, so pieces routed into it stay serviced if the toggle is flipped
-    // off mid-session, while new pieces revert to vanilla scheduling - both mechanisms coexist,
-    // like WearCacheEventPatch. Start stands down to vanilla if the pump hook failed to attach:
-    // a piece must never end up scheduled by neither.
+    // own alive-checks inside the body make a dead piece's poll a no-op anyway). Start stands
+    // down to vanilla if the pump hook failed to attach: a piece must never end up scheduled by
+    // neither.
     //
     // Both: a dedicated server runs the same polling for every piece it instantiates, including
     // the owner-side seed assignment.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(RandomMaterialValues))]
     internal static class RandomMaterialPollPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(RandomMaterialPollPatch),
-                ValConfig.SectionPerformance,
-                "Fix Piece Material Polling",
-                true,
-                "Runs the material-variation seed polling for newly spawned pieces through one " +
-                "shared ticker instead of five string-based engine invokes per piece, and stops " +
-                "polling a piece as soon as its values are applied instead of re-applying the " +
-                "same values four more times. The variation itself is unchanged - the values " +
-                "are derived from the same seed by the same math.");
-        }
-
         // Vanilla's schedule: first poll immediately, then every 0.2 s, giving up after 5.
         private const float PollInterval = 0.2f;
         private const int MaxChecks = 5;
@@ -76,7 +58,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("Start")]
         private static bool StartPrefix(RandomMaterialValues __instance) {
-            if (Enabled == null || !Enabled.Value || !HooksHealthy()) { return true; }
+            if (!HooksHealthy()) { return true; }
 
             __instance.m_nview = __instance.GetComponentInParent<ZNetView>();
             __instance.m_piece = __instance.GetComponentInParent<Piece>();

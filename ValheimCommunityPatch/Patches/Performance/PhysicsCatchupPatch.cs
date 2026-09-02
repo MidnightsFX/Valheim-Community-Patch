@@ -21,23 +21,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Both: a dedicated server pays the identical catch-up spiral after its own stalls.
     [PatchSide(Side.Both)]
     internal static class PhysicsCatchupPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<int> MaxSteps;
 
-        private static float _vanillaMaximumDeltaTime = -1f;
-
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(PhysicsCatchupPatch),
-                ValConfig.SectionPerformance,
-                "Fix Physics Catchup Spiral",
-                true,
-                "Caps how many physics steps one frame may run to catch up after a long frame. " +
-                "Vanilla allows ~16, so every big hitch is followed by a second, physics-debt " +
-                "hitch. Time the cap drops is dropped exactly as vanilla drops it past its own " +
-                "higher cap - the world briefly runs a touch behind the wall clock instead of " +
-                "stuttering twice.");
-
             MaxSteps = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Max Physics Steps Per Frame",
@@ -50,16 +36,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 valMax: 15);
 
             Apply();
-            Enabled.SettingChanged += (sender, args) => Apply();
             MaxSteps.SettingChanged += (sender, args) => Apply();
         }
 
         private static void Apply() {
-            if (_vanillaMaximumDeltaTime < 0f) { _vanillaMaximumDeltaTime = Time.maximumDeltaTime; }
+            if (MaxSteps == null) { return; }
 
-            Time.maximumDeltaTime = Enabled != null && Enabled.Value && MaxSteps != null
-                ? MaxSteps.Value * Time.fixedDeltaTime
-                : _vanillaMaximumDeltaTime;
+            Time.maximumDeltaTime = MaxSteps.Value * Time.fixedDeltaTime;
         }
     }
 }

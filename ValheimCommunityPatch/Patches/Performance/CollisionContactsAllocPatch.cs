@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -47,20 +46,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class CollisionContactsAllocPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(CollisionContactsAllocPatch),
-                ValConfig.SectionPerformance,
-                "Fix Collision Contact Allocation",
-                true,
-                "Stops the physics collision callbacks allocating a fresh contact-point array on " +
-                "every read. Every character the machine owns does this on every physics step, so " +
-                "in a busy area it is thousands of throwaway arrays a second. The contact data " +
-                "handed to the game is identical. Changing this requires a game restart.");
-        }
-
         // Contact manifolds are small; this covers every count these three call sites realistically
         // see, and the arrays are created only for the counts actually observed.
         private const int MaxCachedContacts = 64;
@@ -121,7 +106,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static IEnumerable<CodeInstruction> Rewrite(
             IEnumerable<CodeInstruction> instructions, string method, int expected) {
             List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
 
             if (ContactsGetter == null || ReusedContactsMethod == null) { return instructions; }
 

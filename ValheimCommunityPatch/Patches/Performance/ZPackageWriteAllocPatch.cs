@@ -1,4 +1,3 @@
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
@@ -42,24 +41,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZPackage))]
     internal static class ZPackageWriteAllocPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(ZPackageWriteAllocPatch),
-                ValConfig.SectionPerformance,
-                "Fix ZDO Packet Allocation",
-                true,
-                "Stops every nested network package being copied onto the heap before it is written. " +
-                "Vanilla does this once per peer per send tick on the ZDO sync path, so on a busy " +
-                "server it is constant garbage for no benefit. The bytes sent are unchanged.");
-        }
-
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ZPackage.Write), new[] { typeof(ZPackage) })]
         private static bool WritePrefix(ZPackage __instance, ZPackage pkg) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             // GetArray() flushed both of these before taking its copy; the length has to be read
             // after the flush or a buffered tail would be dropped.
             pkg.m_writer.Flush();

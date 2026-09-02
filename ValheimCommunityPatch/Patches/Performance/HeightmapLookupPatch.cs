@@ -37,19 +37,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class HeightmapLookupPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(HeightmapLookupPatch),
-                ValConfig.SectionPerformance,
-                "Fix Heightmap Lookup Scan",
-                true,
-                "Looks terrain tiles up by zone instead of scanning every loaded tile with native " +
-                "position reads. Vanilla re-answers 'which terrain tile is this point on' thousands of " +
-                "times per second by linear search, for tiles that never move.");
-
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Heightmap Registry",
@@ -94,7 +84,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         /// otherwise pay a native transform read per query (HeightmapSampling's data paths).
         /// </summary>
         /// <remarks>
-        /// Returns false only when the registry cannot serve (fix off or hooks unhealthy) - the
+        /// Returns false only when the registry cannot serve (hooks unhealthy) - the
         /// caller then falls back to Heightmap.FindHeightmap plus a live transform read. A true
         /// return with a null <paramref name="hmap"/> is a definitive miss: no registered map
         /// contains the point, exactly as vanilla's scan would conclude.
@@ -103,7 +93,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             hmap = null;
             origin = default;
 
-            if (Enabled == null || !Enabled.Value || !HooksHealthy()) { return false; }
+            if (!HooksHealthy()) { return false; }
 
             if (ByZone.TryGetValue(ZoneSystem.GetZone(point), out Entry entry) && Contains(entry, point)) {
                 hmap = entry.m_hmap;
@@ -220,7 +210,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Heightmap.FindHeightmap), typeof(Vector3))]
         private static bool FindHeightmapPrefix(Vector3 point, ref Heightmap __result) {
-            if (Enabled == null || !Enabled.Value) { return true; }
             if (!HooksHealthy()) { return true; }
 
             Heightmap fast = FastFind(point);
@@ -239,8 +228,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                             $"Heightmap registry verify: DIVERGED at {point} (fast: " +
                             $"{(fast == null ? "null" : fast.transform.position.ToString())}, vanilla: " +
                             $"{(vanilla == null ? "null" : vanilla.transform.position.ToString())}). " +
-                            "Vanilla's result was used. Please report this - leave 'Fix Heightmap " +
-                            "Lookup Scan' off until it is understood.");
+                            "Vanilla's result was used. Please report this - leave 'Verify Heightmap " +
+                            "Registry' on until it is understood, since the verify pass acts on " +
+                            "vanilla's answer.");
                     }
                 }
 
@@ -266,7 +256,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Heightmap.HaveQueuedRebuild), typeof(Vector3), typeof(float))]
         private static bool HaveQueuedRebuildPrefix(Vector3 point, float radius, ref bool __result) {
-            if (Enabled == null || !Enabled.Value) { return true; }
             if (!HooksHealthy()) { return true; }
 
             __result = false;

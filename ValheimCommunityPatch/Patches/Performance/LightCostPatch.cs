@@ -20,7 +20,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //    graphics settings drive only the shadow half (m_shadowLimit,
     //    GraphicsSettingsManager.cs:541); nothing in the game or its UI ever sets m_lightLimit.
     //
-    // Fix, part one (the toggle): a distance LOD for the flicker updates. Each instance's world
+    // Fix, part one: a distance LOD for the flicker updates. Each instance's world
     // position is cached and refreshed with one real transform read every few frames - so carried
     // torches stay correct - and between refreshes the distance gate is pure math against a
     // once-per-frame player position. Beyond the configured distance the update is skipped
@@ -39,20 +39,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(LightFlicker))]
     internal static class LightCostPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<float> FlickerDistance;
         internal static ConfigEntry<int> PointLightLimit;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(LightCostPatch),
-                ValConfig.SectionPerformance,
-                "Fix Light Flicker Overhead",
-                true,
-                "Stops updating torch flicker for lights too far away for the flicker to be " +
-                "visible. At high torch density the per-light engine calls are a steady share of " +
-                "frame time.");
-
             // Client-local visual preferences, deliberately not server-synced.
             FlickerDistance = ValConfig.cfg.Bind(
                 "Client config",
@@ -111,8 +101,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(LightFlicker.CustomUpdate))]
         private static bool CustomUpdatePrefix(LightFlicker __instance) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             // TTL instances destroy themselves from inside CustomUpdate; never starve them.
             if (__instance.m_ttl > 0f) { return true; }
 

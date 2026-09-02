@@ -51,20 +51,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SpawnQueueCachePatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<int> BurstDivisor;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(SpawnQueueCachePatch),
-                ValConfig.SectionPerformance,
-                "Fix Spawn Queue Churn",
-                true,
-                "Keeps the sorted queue of objects waiting to spawn across frames instead of " +
-                "rebuilding and re-sorting the whole thing thirty times a second while an area " +
-                "streams in. Objects spawn at the same rate in the same order; only the " +
-                "repeated bookkeeping goes away.");
-
             BurstDivisor = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Spawn Burst Divisor",
@@ -72,8 +61,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 "The per-frame object spawn budget is the spawn backlog divided by this " +
                 "(minimum 10 for near objects, exactly like vanilla). 100 is vanilla's " +
                 "hardcoded value. Higher spawns fewer objects per frame when entering a " +
-                "built-up area - smaller frame hits, slower pop-in. Only applies while 'Fix " +
-                "Spawn Queue Churn' is on.",
+                "built-up area - smaller frame hits, slower pop-in.",
                 advanced: true,
                 valMin: 10,
                 valMax: 2000);
@@ -96,17 +84,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("CreateObjectsSorted")]
         private static bool CreateObjectsSortedPrefix(
             ZNetScene __instance, List<ZDO> currentNearObjects, int maxCreatedPerFrame, ref int created) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             if (!ZoneSystem.instance.IsActiveAreaLoaded()) { return false; }
 
             List<ZDO> pending = __instance.m_tempCurrentObjects2;
             Vector3 referencePosition = ZNet.instance.GetReferencePosition();
             Vector2i referenceZone = ZoneSystem.GetZone(referencePosition);
 
-            // The length check re-establishes the parallel-array invariant if vanilla passes
-            // rewrote the list while the toggle was off; a coincidental same-length rewrite is
-            // caught slot-by-slot by the id guard below.
+            // The length check re-establishes the parallel-array invariant if anything else
+            // rewrote the list; a coincidental same-length rewrite is caught slot-by-slot by
+            // the id guard below.
             if (_passesSinceRebuild >= RebuildInterval - 1 || referenceZone != _rebuildZone
                 || pending.Count != CachedIds.Count) {
                 _passesSinceRebuild = 0;

@@ -160,10 +160,7 @@ that session, about 1.5 s was this mod. Two fixes here, plus a diagnostic.
 ## 0.20.0
 
 The ZDO and allocation release. Five fixes: three remove garbage the game produces to answer
-questions that need no allocation at all, and two remove work it does twice. Three were found by
-reading R4V9N1's Terramizer (https://thunderstore.io/c/valheim/p/Terramizer/Terramizer/) against
-this mod's patch set; where that mod already fixes one, the entry says so and says how the
-implementation here differs.
+questions that need no allocation at all, and two remove work it does twice.
 
 - **Fix Doubled ZDO Lookups** *(both)* — every read of ZDO data searches for the ZDO twice. The
   four helpers behind the whole read path ask the dictionary whether a key is present and then ask
@@ -222,9 +219,8 @@ implementation here differs.
   identical, NaN-to-NaN included, and only the box is gone. Only the five value-type
   instantiations are patched: `string` and `byte[]` never boxed, and Mono compiles one shared
   body for all reference-type instantiations of a generic, so patching those would land on each
-  other. Found by Terramizer, which replaces the method with a hand-written copy driven by
-  reflected field refs; this is a three-instruction IL edit instead, so the growth policy, the
-  binary search and the ordering stay vanilla's.
+  other. This is a three-instruction IL edit rather than a method replacement, so the growth
+  policy, the binary search and the ordering stay vanilla's.
 - **Fix Collision Contact Allocation** *(both)* — `Collision.contacts` builds a fresh
   `ContactPoint[]` on every read, and the game reads it from inside physics callbacks:
   `Character.OnCollisionStay` once per contacting collider per fixed step for every character the
@@ -246,8 +242,7 @@ implementation here differs.
   the end of its callback. This is the one fix here whose blast radius reaches outside the mod:
   a *mod* that stashes a `Collision` for later would read the next collision's data, so it has
   its own toggle and is the first thing to turn off if a physics-touching mod misbehaves. A build
-  that already enables the setting is left alone, and says so in the log. Same flag Terramizer
-  sets.
+  that already enables the setting is left alone, and says so in the log.
 - **Fix Equipment Visual Refresh** *(client)* — every character, dropped armour piece and armour
   stand re-derives its entire equipment appearance from scratch every frame, through
   `VisEquipment.CustomUpdate`. Two costs, fixed separately. `UpdateColors` re-applies skin and
@@ -261,9 +256,8 @@ implementation here differs.
   `ZDOHelper.GetValueOrDefault` does `ContainsKey` and then indexes — thirty lookups per
   character per frame, each hashing a `ZDOID`, to read fifteen fields out of one table. That
   table is now fetched once and all fifteen reads answered from it. The int-table cache is
-  Terramizer's (`VisEquipmentIntCachePatch`), same prefix-plus-transpiler shape, keyed here on
-  ZDO reference identity so a nested call falls back to vanilla instead of reading the wrong
-  table; the colour gate is not in that mod.
+  keyed on ZDO reference identity so a nested call falls back to vanilla instead of reading
+  the wrong table.
 
 ## 0.19.0
 

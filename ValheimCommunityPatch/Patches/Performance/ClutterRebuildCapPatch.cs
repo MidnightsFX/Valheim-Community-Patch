@@ -27,19 +27,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(ClutterSystem))]
     internal static class ClutterRebuildCapPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<int> Budget;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(ClutterRebuildCapPatch),
-                ValConfig.SectionPerformance,
-                "Fix Grass Rebuild Burst",
-                true,
-                "Spreads full grass rebuilds over a few frames instead of regenerating every patch in " +
-                "one. Vanilla rebuilds all grass around you in a single frame whenever a zone with " +
-                "saved terrain edits loads, which is a reliable stutter entering built-up areas.");
-
             Budget = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Grass Rebuild Budget",
@@ -54,8 +44,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("GeneratePatches")]
         private static bool GeneratePatchesPrefix(ClutterSystem __instance, bool rebuildAll, Vector3 center) {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             // The steady-state path is already budgeted by vanilla; only the burst needs taming.
             if (!rebuildAll) { return true; }
 

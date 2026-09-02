@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
@@ -34,19 +33,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(Game))]
     internal static class PortalConnectionPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(PortalConnectionPatch),
-                ValConfig.SectionPerformance,
-                "Fix Portal Connection Scan",
-                true,
-                "Replaces the quadratic portal-pairing scan the server runs every five seconds with an " +
-                "indexed one. Vanilla rescans every portal for every unconnected portal, forever, so the " +
-                "cost grows with the square of how many portals a world has ever had.");
-        }
-
         // Reused across ticks and cleared rather than reallocated, so a steady state allocates nothing.
         private static readonly Dictionary<string, List<ZDO>> UnconnectedByTag = new Dictionary<string, List<ZDO>>();
         private static readonly Stack<List<ZDO>> ListPool = new Stack<List<ZDO>>();
@@ -55,8 +41,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Game.ConnectPortals))]
         private static bool ConnectPortalsPrefix() {
-            if (Enabled == null || !Enabled.Value) { return true; }
-
             ZDOMan zdoMan = ZDOMan.instance;
             if (zdoMan == null) { return true; }
 

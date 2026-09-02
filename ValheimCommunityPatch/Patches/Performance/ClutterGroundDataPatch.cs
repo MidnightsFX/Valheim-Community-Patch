@@ -1,4 +1,3 @@
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -35,34 +34,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(ClutterSystem))]
     internal static class ClutterGroundDataPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(ClutterGroundDataPatch),
-                ValConfig.SectionPerformance,
-                "Fix Grass Ground Raycasts",
-                true,
-                "Answers grass placement's ground queries from terrain data instead of casting " +
-                "hundreds of physics rays per frame. The rays could only ever hit the terrain " +
-                "surface, whose shape is already known; the same surface and slope come out, " +
-                "without the physics engine.");
-        }
-
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ClutterSystem.GetGroundInfo))]
         private static bool GetGroundInfoPrefix(
             Vector3 p, out Vector3 point, out Vector3 normal, out Heightmap hmap,
             out Heightmap.Biome biome, ref bool __result) {
-            if (Enabled == null || !Enabled.Value) {
-                // Vanilla runs and overwrites these; out params just have to be assigned.
-                point = p;
-                normal = Vector3.up;
-                hmap = null;
-                biome = Heightmap.Biome.Meadows;
-                return true;
-            }
-
             // The registry path answers with the cached transform origin - no native reads at all
             // on the hot path. Falls back to the plain lookup when the registry cannot serve.
             Heightmap found;

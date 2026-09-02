@@ -18,10 +18,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Fix: keep the answer instead of recomputing it. ZDOs are bucketed by prefab hash as the
     // prefab is assigned, so the query returns O(matches) instead of O(world).
     //
-    // The index is maintained regardless of the config toggle (an index that missed changes before
-    // a mid-session switch-on would return wrong answers forever; only the read path checks the
-    // toggle), and unlike OrphanZdoIndexPatch it is NOT gated on the network role: this method is
-    // called on clients, listen hosts and dedicated servers alike.
+    // The index is maintained unconditionally (standing rule), and unlike OrphanZdoIndexPatch it
+    // is NOT gated on the network role: this method is called on clients, listen hosts and
+    // dedicated servers alike.
     //
     // Contract of the replaced method, preserved exactly:
     //  - `index` is a resume cursor. An iteration already in flight (index != 0) is finished by
@@ -48,20 +47,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoPrefabIndexPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(ZdoPrefabIndexPatch),
-                ValConfig.SectionPerformance,
-                "Fix Prefab Query Scan",
-                true,
-                "Answers \"every object of this prefab\" queries from an index instead of scanning " +
-                "every ZDO in the world. Vanilla only reaches this from a console command, but " +
-                "several popular mods ask it every tick, which on a large world is a whole-world " +
-                "scan per query.");
-
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Prefab Index",
@@ -207,7 +195,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(nameof(ZDOMan.GetAllZDOsWithPrefabIterative))]
         private static bool GetAllZDOsWithPrefabIterativePrefix(
             ZDOMan __instance, string prefab, List<ZDO> zdos, ref int index, ref bool __result) {
-            if (Enabled == null || !Enabled.Value) { return true; }
             if (!HooksHealthy()) { return true; }
 
             // An iteration already in flight - a mod holding the cursor across frames - finishes

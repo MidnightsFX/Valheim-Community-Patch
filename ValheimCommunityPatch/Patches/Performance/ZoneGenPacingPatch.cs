@@ -38,7 +38,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(ZoneSystem))]
     internal static class ZoneGenPacingPatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<int> BudgetMs;
         internal static ConfigEntry<int> CooldownTicks;
 
@@ -52,16 +51,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _cooldownRemaining;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(ZoneGenPacingPatch),
-                ValConfig.SectionPerformance,
-                "Fix Background Zone Pacing",
-                true,
-                "Spaces out background zone pre-generation: a tick is deferred when the previous " +
-                "frame already ran long, and a generation that was itself expensive imposes a " +
-                "short cooldown before the next one. The same zones generate identically; only " +
-                "the timing spreads out. Zones the player actually enters are never delayed.");
-
             BudgetMs = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Zone Generation Frame Budget",
@@ -88,7 +77,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("CreateGhostZones")]
         private static bool CreateGhostZonesPrefix(ref bool __result, out long __state) {
             __state = 0;
-            if (Enabled == null || !Enabled.Value) { return true; }
 
             // One decision per frame: Update calls this once for the host plus once per peer,
             // and they share it. Ticks are 100 ms apart, so each tick lands on its own frame.

@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -56,31 +55,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //    that other ZDO, the identity check fails, and the outer call falls back to vanilla's
     //    lookup. The only case that uses the cache is the one where it is provably the right table.
     //
-    // Provenance: caching the ZDO int table across UpdateEquipmentVisuals is R4V9N1's Terramizer
-    // (VisEquipmentIntCachePatch), same prefix-plus-transpiler shape. The UpdateColors gate is not
-    // in that mod.
-    //
     // Client: this is the equipment rendering pipeline. A dedicated server instantiates almost
     // nothing and draws none of it, and is not patched here, exactly as with the water material and
     // smoke fixes.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(VisEquipment))]
     internal static class VisEquipmentRefreshPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(VisEquipmentRefreshPatch),
-                ValConfig.SectionPerformance,
-                "Fix Equipment Visual Refresh",
-                true,
-                "Stops every character re-deriving its equipment appearance from scratch every " +
-                "frame. Skin and hair colour are re-applied only when they change instead of " +
-                "allocating material and renderer arrays every frame per player, and the fifteen " +
-                "equipment fields are read from one table lookup instead of thirty. The appearance " +
-                "is unchanged. Changing this requires a game restart.");
-        }
-
         // ---- 1. Skin and hair colour ------------------------------------------------------------
 
         /// <summary>Everything UpdateColors reads, so a match means it would write what it wrote last time.</summary>
@@ -110,7 +90,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("UpdateColors")]
         private static bool UpdateColorsPrefix(VisEquipment __instance, out ColorState __state) {
             __state = default;
-            if (Enabled == null || !Enabled.Value) { return true; }
 
             // Vanilla dereferences both of these unguarded. Bail to it rather than decide anything
             // on a state where it would throw - the exception is vanilla's to report, not ours to
@@ -176,7 +155,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _scopeZdo = null;
             _scopeTable = null;
 
-            if (Enabled == null || !Enabled.Value) { return; }
             if (__instance.m_nview == null) { return; }
 
             ZDO zdo = __instance.m_nview.GetZDO();
@@ -217,7 +195,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static IEnumerable<CodeInstruction> EquipmentVisualsTranspiler(
             IEnumerable<CodeInstruction> instructions) {
             List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
 
             if (ZdoGetInt == null || ScopedGetIntMethod == null) { return instructions; }
 

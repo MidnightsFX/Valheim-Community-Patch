@@ -47,20 +47,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(WorldGenerator))]
     internal static class LocationBiomeAreaCachePatch {
-        internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
 
         internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(LocationBiomeAreaCachePatch),
-                ValConfig.SectionPerformance,
-                "Fix Location Biome Area Rescan",
-                true,
-                "Remembers each zone's biome-area answer while the world's locations are being " +
-                "placed, instead of recomputing nine terrain noise samples for it on every one " +
-                "of the hundred thousand placement attempts made per location type. Worlds come " +
-                "out identical - same seed, same layout - so this is safe on an existing save.");
-
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Location Biome Area Cache",
@@ -140,8 +129,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ref Heightmap.BiomeArea __result,
                 out Probe __state) {
             __state = default;
-
-            if (Enabled == null || !Enabled.Value) { return true; }
 
             // A plain Dictionary, because vanilla's only caller is the main-thread location
             // coroutine. Anything calling this from a worker thread gets vanilla rather than a

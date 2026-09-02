@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
@@ -80,21 +79,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class ZdoReadLookupPatch {
-        internal static ConfigEntry<bool> Enabled;
-
-        internal static void BindConfig() {
-            Enabled = ValConfig.BindFixToggle(
-                typeof(ZdoReadLookupPatch),
-                ValConfig.SectionPerformance,
-                "Fix Doubled ZDO Lookups",
-                true,
-                "Every read of ZDO data searches for the object twice - once to ask whether it has " +
-                "any data of that kind, then again to fetch it - in the largest dictionaries the " +
-                "game keeps. One search now answers both. This sits under every health, fuel, state " +
-                "and animation read in the world, and under the packing of every object the server " +
-                "sends or saves. Changing this requires a game restart.");
-        }
-
         // Every accessor on ZDOExtraData that reaches one of the four helpers, by name. 27 names,
         // 34 methods - GetFloat, GetVec3, GetQuaternion, GetInt, GetLong, GetString and GetByteArray
         // each have both an out-parameter and a default-value overload, and both are wanted.
@@ -209,7 +193,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static IEnumerable<CodeInstruction> AccessorTranspiler(
             IEnumerable<CodeInstruction> instructions, MethodBase __originalMethod) {
             List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            if (Enabled == null || !Enabled.Value) { return codes; }
             if (Replacements.Count == 0) { return instructions; }
 
             int replaced = 0;
