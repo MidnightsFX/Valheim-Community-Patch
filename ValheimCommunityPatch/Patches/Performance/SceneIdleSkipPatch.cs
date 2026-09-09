@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -59,15 +59,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _ringMaxY;
 
         private static ZNetScene _snapshotScene;
-        private static Vector2i _snapshotZone;
+        private static Vector2s _snapshotZone;
         private static long _snapshotRingHash;
         private static long _snapshotCreatedVersion;
-        private static int _snapshotActiveArea;
-        private static int _snapshotDistantArea;
+        private static SimulationDistance _snapshotSimulationDistance;
         private static bool _idle;
         private static int _skipsSinceFullPass;
 
-        private static Vector2i _zoneAtPrefix;
+        private static Vector2s _zoneAtPrefix;
         private static long _ringHashAtPrefix;
         private static long _createdAtPrefix;
         private static bool _ranFullPass;
@@ -93,8 +92,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // ---- change hooks (maintenance runs unconditionally) ---------------------------------
 
         // AddToSector receives the new sector and RemoveFromSector the old one, so each firing is
-        // filtered by the sector it actually touched.
-        private static void OnSectorTouched(ZDO zdo, Vector2i sector) {
+        // filtered by the sector it actually touched. Both hand over a packed sector index; the
+        // ring test is in zone coordinates, and out-of-grid sectors unpack to a corner zone that
+        // no streamed ring contains, which is the answer we want for them anyway.
+        private static void OnSectorTouched(ZDO zdo, ZoneSystem.SectorIndex sectorIndex) {
+            Vector2s sector = ZoneSystem.IndexToSector(sectorIndex.Sector);
             if (_ringValid
                 && (sector.x < _ringMinX || sector.x > _ringMaxX || sector.y < _ringMinY || sector.y > _ringMaxY)) {
                 return;
@@ -106,13 +108,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(typeof(ZDOMan), "AddToSector")]
         internal static class AddToSectorHook {
             [HarmonyPostfix]
-            private static void Postfix(ZDO zdo, Vector2i sector) => OnSectorTouched(zdo, sector);
+            private static void Postfix(ZDO zdo, ZoneSystem.SectorIndex sectorIndex) => OnSectorTouched(zdo, sectorIndex);
         }
 
         [HarmonyPatch(typeof(ZDOMan), "RemoveFromSector")]
         internal static class RemoveFromSectorHook {
             [HarmonyPostfix]
-            private static void Postfix(ZDO zdo, Vector2i sector) => OnSectorTouched(zdo, sector);
+            private static void Postfix(ZDO zdo, ZoneSystem.SectorIndex sectorIndex) => OnSectorTouched(zdo, sectorIndex);
         }
 
         [HarmonyPatch(typeof(ZDO), nameof(ZDO.Created), MethodType.Setter)]
@@ -133,14 +135,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
             ZNet znet = ZNet.instance;
             if (ReferenceEquals(zoneSystem, null) || ReferenceEquals(znet, null)) { return true; }
 
-            Vector2i zone = ZoneSystem.GetZone(znet.GetReferencePosition());
+            Vector2s zone = ZoneSystem.GetZone(znet.GetReferencePosition());
+            SimulationDistance simulationDistance = znet.GetSyncedSimulationDistance();
             bool canSkip = _idle
                 && ReferenceEquals(__instance, _snapshotScene)
                 && zone == _snapshotZone
                 && _ringHash == _snapshotRingHash
                 && _createdVersion == _snapshotCreatedVersion
-                && zoneSystem.m_activeArea == _snapshotActiveArea
-                && zoneSystem.m_activeDistantArea == _snapshotDistantArea
+                && simulationDistance.Equals(_snapshotSimulationDistance)
                 && _skipsSinceFullPass < HygieneInterval;
 
             bool verify = Verify != null && Verify.Value;
@@ -166,7 +168,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _wouldSkip = canSkip;
             _zoneAtPrefix = zone;
 
-            int span = zoneSystem.m_activeArea + zoneSystem.m_activeDistantArea;
+            // A square of the full simulation radius. The streamed set is the inscribed disc, so
+            // this over-covers, which is the safe direction: no in-ring change goes uncounted.
+            int span = simulationDistance.TotalSimulationDistance;
             _ringMinX = zone.x - span;
             _ringMaxX = zone.x + span;
             _ringMinY = zone.y - span;
@@ -232,8 +236,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _snapshotZone = _zoneAtPrefix;
             _snapshotRingHash = _ringHash;
             _snapshotCreatedVersion = _createdVersion;
-            _snapshotActiveArea = ZoneSystem.instance.m_activeArea;
-            _snapshotDistantArea = ZoneSystem.instance.m_activeDistantArea;
+            _snapshotSimulationDistance = ZNet.instance.GetSyncedSimulationDistance();
         }
 
         private static void LogVerifySummary(string kind) {

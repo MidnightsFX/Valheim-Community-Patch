@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Threading;
 using HarmonyLib;
 using UnityEngine;
@@ -58,7 +58,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(typeof(ZoneSystem), "SpawnZone")]
         internal static class SpawnZoneContextHook {
             [HarmonyPrefix]
-            private static void Prefix(Vector2i zoneID, ZoneSystem.SpawnMode mode) {
+            private static void Prefix(Vector2s zoneID, ZoneSystem.SpawnMode mode) {
                 _deferContext =
                     mode == ZoneSystem.SpawnMode.Client
                     && Player.m_localPlayer != null

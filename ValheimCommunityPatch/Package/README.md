@@ -50,10 +50,8 @@ fix under [Credit and sources](#credit-and-sources).
   and sync transforms with their targets instead of comparing every pair.
 - **Fix Disconnect ZDO Sweep** *(server)* — indexes non-persistent objects by owner, so a disconnect
   sweeps only the departing player's objects instead of every ZDO in the world.
-- **Fix Tar Pit Memory Leak** *(client)* — allocates tar pit raycast buffers persistently and disposes
-  them safely, ending the native memory leak and the `JobTempAlloc` log spam.
-- **Fix Auto Pickup Allocation** *(client)* — reuses one collider buffer for the per-frame auto-pickup
-  check instead of allocating an array every frame.
+- **Fix Tar Pit Buffer Disposal** *(client)* — disposes tar pit raycast buffers only when they were
+  allocated, so a tar pit whose load failed cannot throw out of scene teardown.
 - **Fix ZDO Packet Allocation** *(both)* — writes one network package into another straight from its
   buffer instead of copying the whole payload onto the heap first.
 - **Fix Mist Query Overhead** *(client)* — answers mist volume queries from a zone-bucketed snapshot
@@ -115,9 +113,6 @@ fix under [Credit and sources](#credit-and-sources).
   budget.
 - **Fix Physics Catchup Spiral** *(both)* — caps how many fixed physics steps one frame may run to
   catch up after a stall (default 8; vanilla is about 16).
-- **Fix Location Biome Area Rescan** *(server)* — remembers each zone's biome-area answer during
-  location generation instead of recomputing it for every placement attempt; worlds come out
-  identical.
 - **Fix ZDO Value Write Allocation** *(both)* — compares a ZDO field write against its stored value
   without boxing it.
 - **Fix Doubled ZDO Lookups** *(both)* — reads ZDO data with one dictionary lookup instead of two.
@@ -130,6 +125,18 @@ fix under [Credit and sources](#credit-and-sources).
   when an input changed, and reads its equipment fields with one table lookup instead of thirty.
 - **Fix Light Settings Subscription** *(client)* — registers lights for graphics-setting changes in a
   lookup table instead of a static event whose unsubscribe scans every other lit light.
+- **Fix Portal Idle Updates** *(client)* — stops a portal re-writing its emission colour, light and
+  audio every frame once the connection fade has finished.
+- **Fix Material Fader Settling** *(client)* — stops a finished fade re-applying the same material
+  property block to every renderer every frame; lingering corpses are the common case.
+- **Fix Cooking Slot Keys** *(both)* — reads and writes a cooking station's slot data through
+  precomputed key hashes instead of building six strings per access, as `ArmorStand` already does.
+- **Fix Station Range Scans** *(client)* — answers the per-frame build-mode station and extension
+  range queries with squared distances and one position read per candidate instead of two.
+- **Fix Smelter Catch-up Reads** *(both)* — memoises a smelter's fuel and ore reads against its data
+  revision, so an hour of missed production is not re-read once per simulated second.
+- **Fix Idle Sound Updates** *(client)* — drops a finished one-shot sound out of the per-frame audio
+  updater list until something plays it again.
 
 ### Terrain
 
@@ -166,10 +173,6 @@ every side.
   for a "requires any one of these" recipe with none of the ingredients carried.
 - **Fix Spawner Null Prefabs** *(both)* — drops null entries from a spawner's creature table on load
   instead of letting one kill the spawner.
-- **Require Lit Fire** *(client)* — counts a fireplace as a heat source only while it is lit;
-  player-visible in a mixed group.
-- **Fix Run Attack Stamina Drain** *(client)* — stops run stamina draining while you are mid-attack;
-  player-visible in a mixed group.
 - **Fix Projectile Rotation Spam** *(both)* — stops the `Look rotation viewing vector is zero` log
   line that a projectile at zero velocity writes every physics step.
 - **Fix Send Failure Log Spam** *(both)* — redirects the per-frame `Failed to send data` log line to
@@ -213,8 +216,7 @@ The mods involved:
 | Fix Portal Connection Scan | ComfyMods — BetterServerPortals | The indexing algorithm |
 | Fix World Load Connection Scan | ComfyMods — Atlas | Its `ConnectSpawners` approach, extended here to portals and sync transforms |
 | Fix Disconnect ZDO Sweep | MidnightsFX | — |
-| Fix Tar Pit Memory Leak | MyPitsDontLeak — Azumatt | The root cause; our implementation is transpilers rather than wholesale method replacement |
-| Fix Auto Pickup Allocation | Zen.ModLib (catalogue) | The technique, rewritten |
+| Fix Tar Pit Buffer Disposal | MyPitsDontLeak — Azumatt | The root cause; our implementation is a transpiler rather than wholesale method replacement |
 | Fix ZDO Packet Allocation | ComfyMods — Compress | The technique, taken on its own without that mod's GZip protocol change |
 | Fix Mist Query Overhead | MidnightsFX | — |
 | Fix Heightmap Lookup Scan | MidnightsFX | — |
@@ -242,13 +244,18 @@ The mods involved:
 | Fix Reflection Probe Spikes | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | Face-sliced probe rendering with quality clamps |
 | Fix Physics Catchup Spiral | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | The maximumDeltaTime cap and its default |
 | Fix Object Stream Rescan | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | Event-fed spawn queue, the zone-set diff, and the 8 m re-sort threshold |
-| Fix Location Biome Area Rescan | worldGenAccelerator — jneb802 / warpalicious (MIT) | The observation that per-zone biome-area evaluation dominates location generation. No code, and not that mod's approach, which trades vanilla world layout for the speed |
 | Fix ZDO Value Write Allocation | MidnightsFX | — |
 | Fix Doubled ZDO Lookups | MidnightsFX | — |
 | Fix Collision Contact Allocation | MidnightsFX | — |
 | Fix Collision Callback Allocation | MidnightsFX | — |
 | Fix Equipment Visual Refresh | MidnightsFX | — |
 | Fix Light Settings Subscription | MidnightsFX | — |
+| Fix Portal Idle Updates | MidnightsFX | — |
+| Fix Material Fader Settling | MidnightsFX | — |
+| Fix Cooking Slot Keys | Iron Gate Studio | The key-hash pattern, taken from `ArmorStand.InitKeys` |
+| Fix Station Range Scans | MidnightsFX | — |
+| Fix Smelter Catch-up Reads | MidnightsFX | — |
+| Fix Idle Sound Updates | MidnightsFX | — |
 
 ### Terrain
 

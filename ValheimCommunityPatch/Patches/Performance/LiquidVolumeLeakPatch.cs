@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -6,19 +6,22 @@ using HarmonyLib;
 using Unity.Collections;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Tar Pit Memory Leak: tar pit raycast buffers are allocated persistently and disposed
-    // safely.
+    // Fix Tar Pit Buffer Disposal: tar pit raycast buffers are disposed safely.
     //
-    // LiquidVolume.Awake allocates its two NativeArrays with Allocator.TempJob, a four-frame
-    // allocator, then keeps them for the object's whole life. Unity logs "JobTempAlloc has
-    // allocations that are more than 4 frames old" every time a tar pit loads, and the block is
-    // never returned to the pool. OnDestroy then calls Dispose unguarded, which throws if Awake
-    // never completed.
+    // LiquidVolume.OnDestroy calls Dispose on its two NativeArrays unguarded, and Awake allocates
+    // them in its last few lines, after the mesh build and the save load. A tar pit whose Awake
+    // did not reach them - because something above threw - throws again out of OnDestroy, during
+    // scene teardown, where it takes the rest of the destroy chain with it.
     //
-    // Two transpilers: Awake's allocator constants become Allocator.Persistent, and OnDestroy's
-    // Dispose calls become IsCreated-guarded ones. They depend on each other, since Persistent
-    // memory is reclaimed only by an explicit Dispose. Both are anchored on the constructor and
-    // Dispose calls rather than replacing the methods.
+    // A transpiler rewrites each Dispose call to an IsCreated-guarded one, anchored on the calls
+    // rather than replacing the method.
+    //
+    // This fix used to have a second half, rewriting Awake's Allocator.TempJob constants to
+    // Allocator.Persistent: vanilla kept a four-frame allocation for the object's whole life,
+    // leaking the block and logging "JobTempAlloc has allocations that are more than 4 frames old"
+    // on every tar pit load. Valheim now allocates both arrays Persistent itself, so that half is
+    // gone. Persistent memory is reclaimed only by an explicit Dispose, which is what makes the
+    // guard below matter more than it did, not less.
     //
     // Client: tar pits are Plains-only and never inside a dedicated server's active area.
     // Provenance: Azumatt's MyPitsDontLeak (MIT), which replaces both methods wholesale.
@@ -35,45 +38,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool IsNativeArrayOf(Type type) =>
             type != null && type.IsGenericType && type.GetGenericTypeDefinition() == typeof(NativeArray<>);
 
-        // Priority.Last on both: see ValheimCommunityPatch.ApplyPatches.
-        [HarmonyTranspiler]
-        [HarmonyPriority(Priority.Last)]
-        [HarmonyPatch("Awake")]
-        private static IEnumerable<CodeInstruction> AwakeTranspiler(IEnumerable<CodeInstruction> instructions) {
-            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
-
-            int patched = 0;
-            for (int i = 0; i < codes.Count; i++) {
-                if (codes[i].opcode != OpCodes.Newobj) { continue; }
-                if (!(codes[i].operand is ConstructorInfo ctor) || !IsNativeArrayOf(ctor.DeclaringType)) { continue; }
-
-                // The allocator is the second constructor argument, a few instructions back.
-                for (int j = i - 1; j >= 0 && j >= i - 6; j--) {
-                    if (codes[j].opcode == OpCodes.Ldc_I4_3) {
-                        codes[j].opcode = OpCodes.Ldc_I4_4;
-                        patched++;
-                        break;
-                    }
-                    if (codes[j].opcode == OpCodes.Ldc_I4 && codes[j].operand is int v && v == (int)Allocator.TempJob) {
-                        codes[j].operand = (int)Allocator.Persistent;
-                        patched++;
-                        break;
-                    }
-                }
-            }
-
-            if (patched != 2) {
-                Logger.LogWarning(
-                    $"LiquidVolume.Awake: expected 2 TempJob allocations, rewrote {patched}. " +
-                    "Leaving the method unpatched - the tar pit memory leak fix is inactive.");
-                return instructions;
-            }
-
-            return codes;
-        }
-
         // The managed pointer to the field is already on the stack from the ldflda, so the
-        // signatures line up.
+        // signatures line up. Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("OnDestroy")]

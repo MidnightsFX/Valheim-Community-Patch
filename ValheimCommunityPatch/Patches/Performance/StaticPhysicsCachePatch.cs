@@ -1,4 +1,4 @@
-using BepInEx.Configuration;
+﻿using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -36,14 +36,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(StaticPhysics.SUpdate))]
-        private static bool SUpdatePrefix(StaticPhysics __instance, float time, Vector2i referenceZone) {
+        private static bool SUpdatePrefix(StaticPhysics __instance, float time, Vector2s referenceZone) {
             // Vanilla's gate order: falling, ShouldUpdate, active area.
             if (__instance.m_falling || time <= __instance.m_updateTime) { return false; }
 
             Transform transform = __instance.transform;
             Vector3 position = transform.position;
 
-            if (ZNetScene.OutsideActiveArea(position, referenceZone, __instance.m_activeArea)) { return false; }
+            if (ZNetScene.OutsideActiveArea(position, referenceZone)) { return false; }
 
             if (__instance.m_fall) { CheckFall(__instance, transform, position); }
 

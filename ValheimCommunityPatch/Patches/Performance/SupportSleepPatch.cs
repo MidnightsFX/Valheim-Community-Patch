@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -153,9 +153,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
             // Wear-sleep bookkeeping (see the wear-visit section of the header).
             public bool m_wetSleepable;    // last ran visit found it roofed and dry (may sleep while wet)
             public bool m_wearWake;        // damage/repair/roof-change; next visit must run
-            public bool m_geoCached;       // zone and height captured (static pieces, captured once)
-            public Vector2i m_zone;
+            public bool m_geoCached;       // position captured (static pieces, captured once)
+            public float m_x;
             public float m_y;
+            public float m_z;
         }
 
         private struct Envelope {
@@ -595,8 +596,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool _pendingWet = true;
         private static float _pendingSince;
         private static int _centerFrame = -1;
-        private static Vector2i _centerZone;
-        private static int _activatedRadius;
+
+        // ZNetScene.PointInsideActiveArea's inputs, sampled once a frame so the per-piece test
+        // below is float math with no property calls.
+        private static Vector3 _centerZonePos;
+        private static float _activeAreaChebyshev;
+        private static float _activeAreaRadiusSq;
 
         // One weather sample and one ring computation per frame, shared by every visit.
         [HarmonyPatch(typeof(WearNTearUpdater))]
@@ -622,8 +627,20 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 int frame = Time.frameCount;
                 if (frame != _centerFrame && ZNet.instance != null && ZoneSystem.instance != null) {
                     _centerFrame = frame;
-                    _centerZone = ZoneSystem.GetZone(ZNet.instance.GetReferencePosition());
-                    _activatedRadius = ZoneSystem.instance.m_activeArea - 1;
+                    _centerZonePos = ZoneSystem.GetZonePos(ZoneSystem.GetZone(ZNet.instance.GetReferencePosition()));
+
+                    SimulationDistance simulationDistance = ZNet.instance.GetSyncedSimulationDistance();
+                    float zoneSize = ZoneSystem.instance.m_zoneSize;
+                    _activeAreaChebyshev = (simulationDistance.NearSimulationDistance == 1 ? 1f : 1.5f) * zoneSize;
+
+                    // The extra radial cut only applies at the one simulation distance vanilla
+                    // applies it at; negative disables it here.
+                    if (simulationDistance.NearSimulationDistance == 2 && !simulationDistance.IsClassic) {
+                        float radius = zoneSize * 1.75f;
+                        _activeAreaRadiusSq = radius * radius;
+                    } else {
+                        _activeAreaRadiusSq = -1f;
+                    }
                 }
             }
         }
@@ -691,11 +708,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (piece.m_biome == Heightmap.Biome.None || piece.m_biome == Heightmap.Biome.AshLands
                 || piece.m_inAshlands) { return 5; }
 
-            int dx = state.m_zone.x - _centerZone.x;
-            int dy = state.m_zone.y - _centerZone.y;
-            if (dx < 0) { dx = -dx; }
-            if (dy < 0) { dy = -dy; }
-            if ((dx > dy ? dx : dy) > _activatedRadius) { return 6; }
+            // ZNetScene.PointInsideActiveArea on the cached position. Outside the active area
+            // vanilla's UpdateWear takes its set-support-to-max branch, which is a real write.
+            float dx = state.m_x - _centerZonePos.x;
+            float dz = state.m_z - _centerZonePos.z;
+            if (dx < 0f) { dx = -dx; }
+            if (dz < 0f) { dz = -dz; }
+            if ((dx > dz ? dx : dz) > _activeAreaChebyshev) { return 6; }
+            if (_activeAreaRadiusSq >= 0f && dx * dx + dz * dz >= _activeAreaRadiusSq) { return 6; }
 
             if (!piece.m_nview.IsValid() || !piece.m_nview.IsOwner()) { return 7; }
 
@@ -788,8 +808,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 if (!__instance.m_noSupportWear) { state.m_skips = 0; }
 
                 if (!state.m_geoCached && __instance.m_nview != null && __instance.m_nview.IsValid()) {
-                    state.m_zone = __instance.m_nview.GetZDO().GetSector();
-                    state.m_y = __instance.transform.position.y;
+                    Vector3 piecePosition = __instance.transform.position;
+                    state.m_x = piecePosition.x;
+                    state.m_y = piecePosition.y;
+                    state.m_z = piecePosition.z;
                     state.m_geoCached = true;
                 }
             }

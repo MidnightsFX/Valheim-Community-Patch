@@ -64,7 +64,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             }
 
             __instance.Save();
-            hmap.Poke(false);
+            hmap.Poke();
             return false;
         }
 

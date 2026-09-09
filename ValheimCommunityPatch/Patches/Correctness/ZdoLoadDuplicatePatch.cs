@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Reflection;
 using BepInEx.Configuration;
 using HarmonyLib;
@@ -7,15 +7,17 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Tolerate Duplicate ZDOs On Load: a save containing two ZDOs with the same id loads instead
     // of aborting.
     //
-    // ZDOMan.Load indexes every ZDO with Dictionary.Add, which throws on a duplicate key. A save
-    // damaged by a crash mid-write, a botched world merge or a mod minting its own ids then refuses
-    // to load at all.
+    // ZDOMan.Load and ZDOMan.LoadChunks - the single-file and chunked save formats - index every
+    // ZDO with Dictionary.Add, which throws on a duplicate key. A save damaged by a crash
+    // mid-write, a botched world merge or a mod minting its own ids then refuses to load at all.
     //
-    // A transpiler swaps that Add for an indexer write that keeps the later entry and logs a
-    // warning. One of the two was already unreachable in vanilla's index, so recovering the world
-    // is strictly better than refusing it.
+    // A transpiler swaps every such Add for an indexer write that keeps the later entry and logs
+    // a warning. One of the two was already unreachable in vanilla's index, so recovering the
+    // world is strictly better than refusing it. The expected counts are pinned per load path, so
+    // a game update that adds or removes a branch stands the fix down with a log line rather than
+    // silently covering less than it claims.
     //
-    // Server: ZDOMan.Load only runs on the host. Provenance: ComfyMods/Atlas (GPL-3.0, redseiko).
+    // Server: neither load path runs off the host. Provenance: ComfyMods/Atlas (GPL-3.0, redseiko).
     [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoLoadDuplicatePatch {
@@ -48,13 +50,24 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // Three sites: the pre-chunk format's two per-ZDO branches and the bulk index pass.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(ZDOMan.Load))]
         private static IEnumerable<CodeInstruction> LoadTranspiler(IEnumerable<CodeInstruction> instructions) {
             if (Enabled == null || !Enabled.Value) { return instructions; }
 
-            return PatchHelper.ReplaceCalls(instructions, DictionaryAddMethod, AddOrReplaceMethod, "ZDOMan.Load", expected: 1);
+            return PatchHelper.ReplaceCalls(instructions, DictionaryAddMethod, AddOrReplaceMethod, "ZDOMan.Load", expected: 3);
+        }
+
+        // The chunked save format. Two sites: the portal chunk and the bulk index pass.
+        [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
+        [HarmonyPatch(nameof(ZDOMan.LoadChunks))]
+        private static IEnumerable<CodeInstruction> LoadChunksTranspiler(IEnumerable<CodeInstruction> instructions) {
+            if (Enabled == null || !Enabled.Value) { return instructions; }
+
+            return PatchHelper.ReplaceCalls(instructions, DictionaryAddMethod, AddOrReplaceMethod, "ZDOMan.LoadChunks", expected: 2);
         }
     }
 }

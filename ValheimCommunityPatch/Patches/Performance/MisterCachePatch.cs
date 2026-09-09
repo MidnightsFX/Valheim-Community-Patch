@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 
@@ -48,7 +48,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static DemisterSnap[] Demisters = new DemisterSnap[64];
         private static int DemisterCount;
 
-        private static readonly Dictionary<Vector2i, List<int>> MisterBuckets = new Dictionary<Vector2i, List<int>>();
+        private static readonly Dictionary<Vector2s, List<int>> MisterBuckets = new Dictionary<Vector2s, List<int>>();
         private static readonly Stack<List<int>> BucketPool = new Stack<List<int>>();
         private static readonly List<int> EmptyBucket = new List<int>();
 
@@ -76,7 +76,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (Misters.Length < misters.Count) { Misters = new MisterSnap[Mathf.NextPowerOfTwo(misters.Count)]; }
             MisterCount = misters.Count;
 
-            foreach (KeyValuePair<Vector2i, List<int>> bucket in MisterBuckets) {
+            foreach (KeyValuePair<Vector2s, List<int>> bucket in MisterBuckets) {
                 bucket.Value.Clear();
                 BucketPool.Push(bucket.Value);
             }
@@ -95,11 +95,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 // Insert into every zone the mister's circle plus the query margin overlaps, so a
                 // lookup only ever needs the bucket of its own zone.
                 float reach = m.m_radius + BucketMargin;
-                Vector2i min = ZoneSystem.GetZone(new Vector3(pos.x - reach, 0f, pos.z - reach));
-                Vector2i max = ZoneSystem.GetZone(new Vector3(pos.x + reach, 0f, pos.z + reach));
+                Vector2s min = ZoneSystem.GetZone(new Vector3(pos.x - reach, 0f, pos.z - reach));
+                Vector2s max = ZoneSystem.GetZone(new Vector3(pos.x + reach, 0f, pos.z + reach));
                 for (int zx = min.x; zx <= max.x; zx++) {
                     for (int zy = min.y; zy <= max.y; zy++) {
-                        Vector2i key = new Vector2i(zx, zy);
+                        Vector2s key = new Vector2s(zx, zy);
                         if (!MisterBuckets.TryGetValue(key, out List<int> bucket)) {
                             bucket = BucketPool.Count > 0 ? BucketPool.Pop() : new List<int>();
                             MisterBuckets.Add(key, bucket);

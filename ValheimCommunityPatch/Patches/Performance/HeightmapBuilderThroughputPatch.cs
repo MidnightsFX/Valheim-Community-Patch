@@ -1,4 +1,4 @@
-using System.Threading;
+﻿using System.Threading;
 using BepInEx.Configuration;
 using HarmonyLib;
 
@@ -12,7 +12,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // at 16 with silent oldest-first eviction, and the distant-terrain ring alone keeps 9 in
     // flight, so finished results are evicted before they are consumed and rebuilt from scratch.
     //
-    // A prefix replaces the loop with the same code and the same mutex discipline, sleeping only
+    // A prefix replaces the loop with the same code and the same lock discipline, sleeping only
     // when the queue was empty, and with a configurable ready cap (default 32). The thread enters
     // BuildThread once, when the singleton is created, so the patch has to be in place before
     // that; Prepare logs if it was not.
@@ -53,30 +53,26 @@ namespace ValheimCommunityPatch.Patches.Performance {
             ZLog.Log((object)"Builder started");
             bool stop = false;
             while (!stop) {
-                __instance.m_lock.WaitOne();
-                bool haveWork = __instance.m_toBuild.Count > 0;
-                __instance.m_lock.ReleaseMutex();
+                bool haveWork;
+                lock (__instance.m_lock) { haveWork = __instance.m_toBuild.Count > 0; }
 
                 if (haveWork) {
-                    __instance.m_lock.WaitOne();
-                    HeightmapBuilder.HMBuildData data = __instance.m_toBuild[0];
-                    __instance.m_lock.ReleaseMutex();
+                    HeightmapBuilder.HMBuildData data;
+                    lock (__instance.m_lock) { data = __instance.m_toBuild[0]; }
 
                     __instance.Build(data);
 
-                    __instance.m_lock.WaitOne();
-                    __instance.m_toBuild.Remove(data);
-                    __instance.m_ready.Add(data);
-                    int cap = ReadyCap != null ? ReadyCap.Value : 16;
-                    while (__instance.m_ready.Count > cap) { __instance.m_ready.RemoveAt(0); }
-                    __instance.m_lock.ReleaseMutex();
+                    lock (__instance.m_lock) {
+                        __instance.m_toBuild.Remove(data);
+                        __instance.m_ready.Add(data);
+                        int cap = ReadyCap != null ? ReadyCap.Value : 16;
+                        while (__instance.m_ready.Count > cap) { __instance.m_ready.RemoveAt(0); }
+                    }
                 }
 
                 if (!haveWork) { Thread.Sleep(10); }
 
-                __instance.m_lock.WaitOne();
-                stop = __instance.m_stop;
-                __instance.m_lock.ReleaseMutex();
+                lock (__instance.m_lock) { stop = __instance.m_stop; }
             }
 
             return false;

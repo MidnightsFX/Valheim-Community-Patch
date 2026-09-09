@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using BepInEx.Configuration;
 using HarmonyLib;
@@ -7,15 +7,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Fix Prefab Query Scan: "every ZDO of this prefab" is answered from an index instead of a
     // scan of the whole world.
     //
-    // ZDOMan.GetAllZDOsWithPrefabIterative walks every sector list plus the outside-sector map,
+    // ZDOMan.GetAllZDOsWithPrefabIterative walks every sector list plus the portal map,
     // dereferencing every ZDO to compare its prefab hash. Vanilla only calls it from a console
     // command, but it is the API mods use, and several popular ones call it every ZoneSystem tick.
     //
     // ZDOs are bucketed by prefab hash as the prefab is assigned (ZDO.SetPrefab and ZDO.Deserialize
-    // postfixes, a HandleDestroyedZDO postfix for removal, a full rebuild after ZDOMan.Load and a
-    // clear on ShutDown), so the query returns O(matches). The replaced method's contract is kept:
-    // an iteration already in flight (index != 0) is finished by vanilla, a fresh one completes in
-    // one call, the final RemoveAll over the caller's whole list runs as vanilla's does, and the
+    // postfixes, a HandleDestroyedZDO postfix for removal, a full rebuild after either world-load
+    // path, and a clear on ShutDown), so the query returns O(matches). The replaced method's
+    // contract is kept: an iteration already in flight (index != 0) is finished by vanilla, a fresh
+    // one completes in one call, the final RemoveAll over the caller's list runs as vanilla's, and the
     // cursor is left where a finished vanilla iteration leaves it. Result order changes from
     // sector-grouped to bucket order; callers treat the list as a set. Maintenance is
     // unconditional; the read stands down to vanilla if any hook failed to attach.
@@ -55,7 +55,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.SetPrefab)), typeof(SetPrefabHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.Deserialize)), typeof(DeserializeHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), nameof(ZDOMan.HandleDestroyedZDO)), typeof(HandleDestroyedZdoHook))
-               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), nameof(ZDOMan.Load)), typeof(ZdoManLoadHook)));
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), nameof(ZDOMan.Load)), typeof(ZdoManLoadHook))
+               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), nameof(ZDOMan.LoadChunks)), typeof(ZdoManLoadChunksHook)));
 
         // ---- index maintenance -------------------------------------------------------------
 
@@ -100,7 +101,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Full rebuild from live state, only at world load where an O(world) pass is already
-        // unavoidable. Covers ZDO.Load's direct m_prefab writes.
+        // unavoidable. Covers ZDO.Load's direct m_prefab writes, on both load paths.
         private static void RebuildIndex(ZDOMan zdoMan) {
             ClearIndex();
 
@@ -152,6 +153,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         [HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.Load))]
         internal static class ZdoManLoadHook {
+            [HarmonyPostfix]
+            private static void Postfix(ZDOMan __instance) => RebuildIndex(__instance);
+        }
+
+        // The chunked save format loads a world without ever entering ZDOMan.Load, so without
+        // this the index would stay empty for every world saved in that format.
+        [HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.LoadChunks))]
+        internal static class ZdoManLoadChunksHook {
             [HarmonyPostfix]
             private static void Postfix(ZDOMan __instance) => RebuildIndex(__instance);
         }
@@ -233,7 +242,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 }
             }
 
-            foreach (List<ZDO> list in zdoMan.m_objectsByOutsideSector.Values) {
+            foreach (List<ZDO> list in zdoMan.m_portalObjects.Values) {
                 for (int j = 0; j < list.Count; j++) {
                     if (list[j].GetPrefab() == hash) { VanillaScratch.Add(list[j]); }
                 }

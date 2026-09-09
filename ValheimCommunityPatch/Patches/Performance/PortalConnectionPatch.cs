@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
@@ -27,9 +27,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Game.ConnectPortals))]
-        private static bool ConnectPortalsPrefix() {
+        private static bool ConnectPortalsPrefix(Game __instance) {
             ZDOMan zdoMan = ZDOMan.instance;
             if (zdoMan == null) { return true; }
+
+            // Vanilla's first act, kept: this pass writes both sides itself and never defers,
+            // so the set stays empty, but another mod's deferred pair would otherwise be stranded.
+            __instance.ClearCurrentlyConnectingPortals();
 
             ConnectPortals(zdoMan);
             return false;
@@ -51,24 +55,35 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Pass 1: validate every existing connection and bucket everything still unconnected.
+        // Iterates the sector-keyed buckets directly rather than ZDOMan.GetPortalList(), which
+        // allocates a flat copy of every portal on the world each call.
         private static void CollectUnconnected(ZDOMan zdoMan, long sessionId) {
-            List<ZDO> portals = zdoMan.m_portalObjects;
+            foreach (KeyValuePair<ZoneSystem.SectorIndex, List<ZDO>> sector in zdoMan.m_portalObjects) {
+                List<ZDO> portals = sector.Value;
+                if (portals == null) { continue; }
 
-            for (int i = 0; i < portals.Count; i++) {
-                ZDO portal = portals[i];
-                if (portal == null) { continue; }
+                for (int i = 0; i < portals.Count; i++) {
+                    ZDO portal = portals[i];
+                    if (portal == null) { continue; }
 
-                string tag = portal.GetString(ZDOVars.s_tag);
-                ZDOID targetId = portal.GetConnectionZDOID(ZDOExtraData.ConnectionType.Portal);
+                    string tag = portal.GetString(ZDOVars.s_tag);
+                    ZDOID targetId = portal.GetConnectionZDOID(ZDOExtraData.ConnectionType.Portal);
 
-                if (!targetId.IsNone()) {
-                    zdoMan.m_objectsByID.TryGetValue(targetId, out ZDO target);
-                    if (target != null && target.GetString(ZDOVars.s_tag) == tag) { continue; }
+                    if (!targetId.IsNone()) {
+                        zdoMan.m_objectsByID.TryGetValue(targetId, out ZDO target);
+                        // The half-connection check is vanilla's: a target that points nowhere
+                        // leaves this portal linked to a portal that will pair with someone else.
+                        if (target != null
+                            && target.GetString(ZDOVars.s_tag) == tag
+                            && !target.GetConnectionZDOID(ZDOExtraData.ConnectionType.Portal).IsNone()) {
+                            continue;
+                        }
 
-                    Disconnect(portal, sessionId);
+                        Disconnect(portal, sessionId);
+                    }
+
+                    Bucket(tag).Add(portal);
                 }
-
-                Bucket(tag).Add(portal);
             }
         }
 

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Logging;
@@ -18,7 +18,7 @@ namespace ValheimCommunityPatch
     {
         public const string PluginGUID = "MidnightsFX.ValheimCommunityPatch";
         public const string PluginName = "ValheimCommunityPatch";
-        public const string PluginVersion = "0.21.0";
+        public const string PluginVersion = "0.22.0";
 
         internal static ManualLogSource Log;
 
@@ -104,6 +104,9 @@ namespace ValheimCommunityPatch
         }
 
         public void OnDestroy() {
+            // Fixes that removed entries from a vanilla collection have to put them back before
+            // the patches that would have restored them go away.
+            Patches.Performance.ZsfxIdleDormancyPatch.RestoreAll();
             harmony?.UnpatchSelf();
         }
     }

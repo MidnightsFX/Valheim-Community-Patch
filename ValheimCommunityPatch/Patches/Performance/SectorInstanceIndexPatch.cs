@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -41,17 +41,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Zones with a positive count only: Bump removes emptied keys, so presence is the answer.
-        private static readonly Dictionary<Vector2i, int> NonDistantCount = new Dictionary<Vector2i, int>();
+        private static readonly Dictionary<Vector2s, int> NonDistantCount = new Dictionary<Vector2s, int>();
 
         internal struct Slot {
-            public Vector2i m_zone;
+            public Vector2s m_zone;
             public int m_index;
         }
 
         // Slots is keyed on the view's instance id rather than the view because removal paths
         // null the ZDO before OnDestroy runs, and because an int key avoids a native Equals per
         // probe; see TeardownHooks.
-        internal static readonly Dictionary<Vector2i, List<ZNetView>> ByZone = new Dictionary<Vector2i, List<ZNetView>>();
+        internal static readonly Dictionary<Vector2s, List<ZNetView>> ByZone = new Dictionary<Vector2s, List<ZNetView>>();
         internal static readonly Dictionary<int, Slot> Slots = new Dictionary<int, Slot>();
 
         // Without all three maintenance hooks the index silently drifts, so every consumer (the
@@ -72,13 +72,20 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- index maintenance (unconditional) -----------------------------------------------
 
-        private static void Bump(Vector2i sector, int delta) {
+        // Everything outside the +/-256 zone grid is filed under index 0, which maps back to
+        // zone (-256,-256). Both the add and the move go through here so a ZDO that leaves the
+        // grid cannot be indexed under one key and removed under another.
+        private static Vector2s ZoneOf(ZoneSystem.SectorIndex sectorIndex) {
+            return ZoneSystem.IndexToSector(sectorIndex.Sector);
+        }
+
+        private static void Bump(Vector2s sector, int delta) {
             NonDistantCount.TryGetValue(sector, out int count);
             count += delta;
             if (count > 0) { NonDistantCount[sector] = count; } else { NonDistantCount.Remove(sector); }
         }
 
-        private static void IndexAdd(ZNetView view, int id, Vector2i zone) {
+        private static void IndexAdd(ZNetView view, int id, Vector2s zone) {
             if (!ByZone.TryGetValue(zone, out List<ZNetView> list)) {
                 list = new List<ZNetView>();
                 ByZone.Add(zone, list);
@@ -125,17 +132,21 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             // A re-added view must not be double-indexed.
             IndexRemove(nview, id);
-            IndexAdd(nview, id, zdo.GetSector());
+            IndexAdd(nview, id, ZoneOf(zdo.GetSectorIndex()));
         }
 
         [HarmonyPatch(typeof(ZDOMan))]
         internal static class SectorMoveHooks {
             [HarmonyPostfix]
             [HarmonyPatch("AddToSector")]
-            private static void AddToSectorPostfix(ZDO zdo, Vector2i sector) {
+            // The parameter name has to stay 'sectorIndex' for Harmony to bind it. It arrives
+            // before ZDO.m_position is updated, so the ZDO cannot be asked for the new zone here.
+            private static void AddToSectorPostfix(ZDO zdo, ZoneSystem.SectorIndex sectorIndex) {
                 ZNetScene scene = ZNetScene.instance;
                 if (ReferenceEquals(scene, null)) { return; }
                 if (!scene.m_instances.TryGetValue(zdo, out ZNetView view)) { return; }
+
+                Vector2s sector = ZoneOf(sectorIndex);
 
                 int id = view.GetInstanceID();
                 if (!Slots.TryGetValue(id, out Slot slot) || slot.m_zone == sector) { return; }
@@ -159,7 +170,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         [HarmonyPrefix]
         [HarmonyPatch("HaveInstanceInSector")]
-        private static bool HaveInstanceInSectorPrefix(ZNetScene __instance, Vector2i sector, ref bool __result) {
+        private static bool HaveInstanceInSectorPrefix(ZNetScene __instance, Vector2s sector, ref bool __result) {
             if (!Hooks.Healthy) { return true; }
 
             bool indexed = NonDistantCount.ContainsKey(sector);
@@ -200,7 +211,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Vanilla's walk, for the verify path only.
-        private static bool WalkedAnswer(ZNetScene scene, Vector2i sector) {
+        private static bool WalkedAnswer(ZNetScene scene, Vector2s sector) {
             foreach (KeyValuePair<ZDO, ZNetView> instance in scene.m_instances) {
                 if ((bool)(Object)instance.Value && !instance.Value.m_distant
                     && ZoneSystem.GetZone(instance.Value.transform.position) == sector) {

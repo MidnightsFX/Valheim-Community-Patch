@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -48,7 +48,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // Same membership and order as s_heightmaps; ByZone is the fast path on top.
         private static readonly List<Entry> Registered = new List<Entry>();
-        private static readonly Dictionary<Vector2i, Entry> ByZone = new Dictionary<Vector2i, Entry>();
+        private static readonly Dictionary<Vector2s, Entry> ByZone = new Dictionary<Vector2s, Entry>();
 
         // A missing hook means the registry diverges from s_heightmaps and a wrong FindHeightmap
         // answer feeds terrain queries game-wide, so the answer gates the fix entirely.
@@ -104,7 +104,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         private static void FileByZone(Entry entry) {
-            Vector2i zone = ZoneSystem.GetZone(new Vector3(entry.m_cx, 0f, entry.m_cz));
+            Vector2s zone = ZoneSystem.GetZone(new Vector3(entry.m_cx, 0f, entry.m_cz));
 
             // Two maps claiming one zone should not happen for zone terrain, but a mod-created
             // heightmap could. Last writer wins; the containment check and scan keep lookups right.
@@ -116,7 +116,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         private static void Unfile(Heightmap hmap, float cx, float cz) {
-            Vector2i zone = ZoneSystem.GetZone(new Vector3(cx, 0f, cz));
+            Vector2s zone = ZoneSystem.GetZone(new Vector3(cx, 0f, cz));
             if (ByZone.TryGetValue(zone, out Entry existing) && ReferenceEquals(existing.m_hmap, hmap)) {
                 ByZone.Remove(zone);
             }

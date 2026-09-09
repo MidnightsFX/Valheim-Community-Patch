@@ -42,10 +42,11 @@ public class PrefabIconExporter : EditorWindow
     private static readonly string[] PresetLabels = { "64", "128", "256", "512", "1024" };
 
     private float cameraDistance = 1f;
-    private float cameraElevation = -15f;
-    private float cameraRotationY = -145f;
     private float cameraVerticalOffset;
-    private float objectRotationY;
+    private float cameraHorizontalOffset;
+    private float objectRotationX = -50f;
+    private float objectRotationY = 75f;
+    private float objectRotationZ;
     private float fieldOfView = 30f;
 
     private Color lightColor = Color.white;
@@ -67,6 +68,7 @@ public class PrefabIconExporter : EditorWindow
     private Vector2 scroll;
     private Texture2D previewTexture;
     private bool previewDirty = true;
+    private string previewError;
 
     private bool showDimensions = true;
     private bool showCamera = true;
@@ -102,6 +104,15 @@ public class PrefabIconExporter : EditorWindow
         EditorGUILayout.EndScrollView();
     }
 
+    private void OnDisable()
+    {
+        if (previewTexture != null)
+        {
+            DestroyImmediate(previewTexture);
+            previewTexture = null;
+        }
+    }
+
     private void DrawPrefabField()
     {
         EditorGUI.BeginChangeCheck();
@@ -114,6 +125,7 @@ public class PrefabIconExporter : EditorWindow
         if (EditorGUI.EndChangeCheck())
         {
             prefab = newPrefab;
+            previewError = null;
             previewDirty = true;
         }
     }
@@ -150,24 +162,33 @@ public class PrefabIconExporter : EditorWindow
         EditorGUI.BeginChangeCheck();
 
         cameraDistance =
-            EditorGUILayout.Slider(new GUIContent("Distance", "How far the camera sits from the object's pivot."),
-                cameraDistance, 0.1f, 20f);
-        cameraRotationY =
-            EditorGUILayout.Slider(new GUIContent("Horizontal", "Orbit angle around the Y axis (degrees)."),
-                cameraRotationY, -180f, 180f);
-        cameraElevation =
             EditorGUILayout.Slider(
-                new GUIContent("Elevation", "Angle above (positive) or below (negative) the horizon (degrees)."),
-                cameraElevation, -89f, 89f);
+                new GUIContent("Distance",
+                    "How far the camera sits from the object's pivot. Type an exact value for fine "
+                    + "control at the low end of the slider."),
+                cameraDistance, 0.01f, 20f);
         cameraVerticalOffset =
             EditorGUILayout.Slider(
                 new GUIContent("Vertical Offset",
                     "Slides the object up (positive) or down (negative) within the frame, relative to its size."),
                 cameraVerticalOffset, -1f, 1f);
+        cameraHorizontalOffset =
+            EditorGUILayout.Slider(
+                new GUIContent("Horizontal Offset",
+                    "Slides the object right (positive) or left (negative) within the frame, relative to its size."),
+                cameraHorizontalOffset, -1f, 1f);
+        objectRotationX =
+            EditorGUILayout.Slider(
+                new GUIContent("Object Spin (X)", "Tilts the object about Unity's X axis (degrees)."),
+                objectRotationX, -180f, 180f);
         objectRotationY =
             EditorGUILayout.Slider(
                 new GUIContent("Object Spin (Y)", "Rotates the object about Unity's Y axis (degrees)."),
                 objectRotationY, -180f, 180f);
+        objectRotationZ =
+            EditorGUILayout.Slider(
+                new GUIContent("Object Spin (Z)", "Rolls the object about Unity's Z axis (degrees)."),
+                objectRotationZ, -180f, 180f);
         fieldOfView = EditorGUILayout.Slider(new GUIContent("Field of View"), fieldOfView, 5f, 120f);
 
         if (EditorGUI.EndChangeCheck())
@@ -178,10 +199,11 @@ public class PrefabIconExporter : EditorWindow
         if (GUILayout.Button("Reset Camera", EditorStyles.miniButton))
         {
             cameraDistance = 1f;
-            cameraElevation = -15f;
-            cameraRotationY = -120f;
             cameraVerticalOffset = 0f;
-            objectRotationY = 0f;
+            cameraHorizontalOffset = 0f;
+            objectRotationX = -50f;
+            objectRotationY = 75f;
+            objectRotationZ = 0f;
             fieldOfView = 30f;
             previewDirty = true;
         }
@@ -365,9 +387,28 @@ public class PrefabIconExporter : EditorWindow
 
         if (canRender && previewDirty)
         {
-            DestroyImmediate(previewTexture);
-            previewTexture = RenderIcon(prefab, Mathf.Min(width, 256), Mathf.Min(height, 256));
+            // Cleared before rendering: if RenderIcon throws, OnGUI would otherwise retry on every
+            // single repaint, flooding the console and re-breaking the layout stack each frame.
             previewDirty = false;
+
+            DestroyImmediate(previewTexture);
+            previewTexture = null;
+
+            try
+            {
+                previewTexture = RenderIcon(prefab, Mathf.Min(width, 256), Mathf.Min(height, 256));
+                previewError = null;
+            }
+            catch (Exception ex)
+            {
+                previewError = ex.Message;
+                Debug.LogError($"PrefabIconExporter: preview failed for '{prefab.name}' - {ex}");
+            }
+        }
+
+        if (previewError != null)
+        {
+            EditorGUILayout.HelpBox(previewError, MessageType.Error);
         }
 
         if (previewTexture != null)
@@ -502,89 +543,162 @@ public class PrefabIconExporter : EditorWindow
         }
     }
     
-    private Texture2D RenderIcon(GameObject sourcePrefab, int texWidth, int texHeight)
+    private Texture2D RenderIcon(GameObject source, int texWidth, int texHeight)
     {
-        var instance = (GameObject)PrefabUtility.InstantiatePrefab(sourcePrefab);
-        instance.hideFlags = HideFlags.HideAndDontSave;
-        SetLayerRecursively(instance, HiddenLayer);
-        instance.transform.position = Vector3.zero;
-        instance.transform.rotation = Quaternion.Euler(0f, objectRotationY, 0f);
-        instance.transform.localScale = Vector3.one;
+        if (source == null)
+        {
+            throw new ArgumentNullException(nameof(source));
+        }
 
-        Bounds bounds = ComputeBounds(instance);
-        float radius = bounds.extents.magnitude;
-        if (radius < 0.0001f) radius = 1f;
-
-        float autoDistance = radius / Mathf.Sin(Mathf.Deg2Rad * fieldOfView * 0.5f) * cameraDistance;
-        Quaternion camRot = Quaternion.Euler(-cameraElevation, cameraRotationY, 0f);
-
-        // Slide the whole view down by the offset so the object appears to move up in the
-        // frame (and vice versa) without altering the viewing angle. Scaled by the object's size.
-        Vector3 framingShift = Vector3.down * (cameraVerticalOffset * radius);
-        Vector3 lookTarget = bounds.center + framingShift;
-        Vector3 camPos = lookTarget + camRot * (Vector3.forward * -autoDistance);
-
-        GameObject camGO = new GameObject("__IconExportCam") { hideFlags = HideFlags.HideAndDontSave };
-        Camera cam = camGO.AddComponent<Camera>();
-        cam.clearFlags = CameraClearFlags.SolidColor;
-        cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
-        cam.cullingMask = 1 << HiddenLayer;
-        cam.fieldOfView = fieldOfView;
-        cam.nearClipPlane = autoDistance * 0.01f;
-        cam.farClipPlane = autoDistance * 10f;
-        cam.transform.position = camPos;
-        cam.transform.LookAt(lookTarget);
-        cam.allowMSAA = antiAliasingSamples > 1;
-        cam.forceIntoRenderTexture = true;
-
-        GameObject keyLightGO = CreateDirectionalLight("__KeyLight", lightColor, lightIntensity, lightRotationY, lightElevation, HiddenLayer);
+        GameObject instance = null;
+        GameObject camGO = null;
+        GameObject keyLightGO = null;
         GameObject fillLightGO = null;
-        if (addFillLight)
-        {
-            fillLightGO = CreateDirectionalLight("__FillLight", fillLightColor, fillIntensity, lightRotationY + 180f, -lightElevation * 0.5f, HiddenLayer);
-        }
-
-        RenderTextureDescriptor rtDesc = new RenderTextureDescriptor(texWidth, texHeight, RenderTextureFormat.ARGB32, 24)
-        {
-            msaaSamples = antiAliasingSamples
-        };
-
-        RenderTexture rt = new RenderTexture(rtDesc);
-        RenderTexture rtResolved = new RenderTexture(texWidth, texHeight, 0, RenderTextureFormat.ARGB32);
-
-        cam.targetTexture = rt;
-        cam.Render();
-        Graphics.Blit(rt, rtResolved);
-
+        RenderTexture rt = null;
+        RenderTexture rtResolved = null;
         RenderTexture previous = RenderTexture.active;
-        RenderTexture.active = rtResolved;
-        Texture2D result = new Texture2D(texWidth, texHeight, TextureFormat.RGBA32, false, false);
-        result.ReadPixels(new Rect(0, 0, texWidth, texHeight), 0, 0);
-        result.Apply();
 
-        RenderTexture.active = previous;
-
-        DestroyImmediate(camGO);
-        DestroyImmediate(keyLightGO);
-        if (fillLightGO != null)
+        try
         {
-            DestroyImmediate(fillLightGO);
-        }
-        DestroyImmediate(instance);
-        rt.Release();
-        DestroyImmediate(rt);
-        rtResolved.Release();
-        DestroyImmediate(rtResolved);
+            instance = InstantiateForRender(source);
+            instance.hideFlags = HideFlags.HideAndDontSave;
+            SetLayerRecursively(instance, HiddenLayer);
+            instance.transform.position = Vector3.zero;
+            instance.transform.rotation =
+                Quaternion.Euler(objectRotationX, objectRotationY, objectRotationZ);
+            instance.transform.localScale = Vector3.one;
 
-        return result;
+            Bounds bounds = ComputeBounds(instance);
+            float radius = bounds.extents.magnitude;
+            if (radius < 0.0001f) radius = 1f;
+
+            float autoDistance = radius / Mathf.Sin(Mathf.Deg2Rad * fieldOfView * 0.5f) * cameraDistance;
+            // The camera no longer orbits: it sits on -Z looking at the object, and the pose is
+            // set with Object Spin X/Y instead. That means the framing offsets can use world axes
+            // directly - with a fixed rig, world left is the camera's left. Both are slid opposite
+            // the offset so the object appears to move with it, and scaled by the object's size so
+            // framing holds at any scale.
+            Vector3 framingShift = Vector3.down * (cameraVerticalOffset * radius)
+                                   + Vector3.left * (cameraHorizontalOffset * radius);
+            Vector3 lookTarget = bounds.center + framingShift;
+            Vector3 camPos = lookTarget + Vector3.back * autoDistance;
+
+            camGO = new GameObject("__IconExportCam") { hideFlags = HideFlags.HideAndDontSave };
+            Camera cam = camGO.AddComponent<Camera>();
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
+            cam.cullingMask = 1 << HiddenLayer;
+            cam.fieldOfView = fieldOfView;
+            // Far has to enclose the object itself, not merely scale with the camera distance.
+            // The old autoDistance * 10 shrinks as Distance drops while the object stays the same
+            // size, so below roughly 0.07 the far plane cut through the model and by 0.01 it
+            // clipped everything away to an empty frame.
+            cam.nearClipPlane = Mathf.Max(0.0001f, autoDistance * 0.01f);
+            cam.farClipPlane = autoDistance + radius * 4f;
+            cam.transform.position = camPos;
+            cam.transform.LookAt(lookTarget);
+            cam.allowMSAA = antiAliasingSamples > 1;
+            cam.forceIntoRenderTexture = true;
+
+            keyLightGO = CreateDirectionalLight("__KeyLight", lightColor, lightIntensity, lightRotationY,
+                lightElevation, HiddenLayer);
+            if (addFillLight)
+            {
+                fillLightGO = CreateDirectionalLight("__FillLight", fillLightColor, fillIntensity,
+                    lightRotationY + 180f, -lightElevation * 0.5f, HiddenLayer);
+            }
+
+            RenderTextureDescriptor rtDesc =
+                new RenderTextureDescriptor(texWidth, texHeight, RenderTextureFormat.ARGB32, 24)
+                {
+                    msaaSamples = antiAliasingSamples
+                };
+
+            rt = new RenderTexture(rtDesc);
+            rtResolved = new RenderTexture(texWidth, texHeight, 0, RenderTextureFormat.ARGB32);
+
+            cam.targetTexture = rt;
+            cam.Render();
+            Graphics.Blit(rt, rtResolved);
+
+            RenderTexture.active = rtResolved;
+            Texture2D result = new Texture2D(texWidth, texHeight, TextureFormat.RGBA32, false, false);
+            result.ReadPixels(new Rect(0, 0, texWidth, texHeight), 0, 0);
+            result.Apply();
+
+            return result;
+        }
+        finally
+        {
+            // Runs even when the render throws. Without it every failed attempt strands a hidden
+            // prefab instance, a camera, two lights and two RenderTextures in the scene - and the
+            // preview retries on every repaint, so that adds up fast.
+            RenderTexture.active = previous;
+
+            if (camGO != null) DestroyImmediate(camGO);
+            if (keyLightGO != null) DestroyImmediate(keyLightGO);
+            if (fillLightGO != null) DestroyImmediate(fillLightGO);
+            if (instance != null) DestroyImmediate(instance);
+
+            if (rt != null)
+            {
+                rt.Release();
+                DestroyImmediate(rt);
+            }
+
+            if (rtResolved != null)
+            {
+                rtResolved.Release();
+                DestroyImmediate(rtResolved);
+            }
+        }
+    }
+
+    /// <summary>
+    ///     Prefab assets go through PrefabUtility so variant and override data survives the copy.
+    ///     Anything else - a scene GameObject, or a child dragged out of a prefab asset - makes
+    ///     PrefabUtility.InstantiatePrefab return null rather than throw, so fall back to a plain
+    ///     Instantiate. The Prefab field accepts scene objects, so this path is reachable from the UI.
+    /// </summary>
+    private static GameObject InstantiateForRender(GameObject source)
+    {
+        GameObject instance = null;
+
+        if (EditorUtility.IsPersistent(source))
+        {
+            instance = PrefabUtility.InstantiatePrefab(source) as GameObject;
+        }
+
+        if (instance == null)
+        {
+            instance = Instantiate(source);
+        }
+
+        if (instance == null)
+        {
+            throw new InvalidOperationException($"Could not instantiate '{source.name}' for rendering.");
+        }
+
+        // An inactive source renders nothing at all, so force the copy's root on.
+        if (!instance.activeSelf)
+        {
+            instance.SetActive(true);
+        }
+
+        return instance;
     }
 
     private void ExportIcon()
     {
-        Texture2D tex = RenderIcon(prefab, width, height);
-        if (tex == null)
+        Texture2D tex;
+        try
         {
-            Debug.LogError("PrefabIconExporter: render returned null.");
+            tex = RenderIcon(prefab, width, height);
+        }
+        catch (Exception ex)
+        {
+            previewError = ex.Message;
+            Debug.LogError($"PrefabIconExporter: export failed for '{prefab.name}' - {ex}");
             return;
         }
 

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using BepInEx.Configuration;
 using HarmonyLib;
@@ -78,22 +78,38 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (!SectorInstanceIndexPatch.MaintenanceHealthy) { return true; }
             if (ZNet.instance == null || ZoneSystem.instance == null) { return true; }
 
-            Vector2i center = ZoneSystem.GetZone(ZNet.instance.GetReferencePosition());
-            int near = ZoneSystem.instance.m_activeArea;
-            int full = near + ZoneSystem.instance.m_activeDistantArea;
+            Vector2s center = ZoneSystem.GetZone(ZNet.instance.GetReferencePosition());
+            SimulationDistance simulationDistance = ZNet.instance.GetSyncedSimulationDistance();
+            int near = simulationDistance.NearSimulationDistance;
+            int full = simulationDistance.TotalSimulationDistance;
+            bool classic = simulationDistance.IsClassic;
+
+            // ZDOMan.FindSectorObjects gates each ring zone on ZoneSystem.ZonesWithinRadius, which
+            // is a disc, not a box - except on the classic distance, whose loops take the whole
+            // square. That test compares world distance against (radius + 0.5 or 0.8) zone sizes,
+            // and ZoneSystem.GetZonePos lays zone centres on a 64 m grid, so it reduces exactly to
+            // a comparison of zone deltas against these radii. The scale factor is 1 in vanilla
+            // and keeps the reduction exact if anything ever changes the zone size.
+            float zoneScale = ZoneSystem.instance.m_zoneSize / 64f;
+            float nearRadius = (near + 0.5f) * zoneScale;
+            float fullRadius = (full + 0.8f) * zoneScale;
+            float nearRadiusSq = nearRadius * nearRadius;
+            float fullRadiusSq = fullRadius * fullRadius;
 
             Removed.Clear();
-            foreach (KeyValuePair<Vector2i, List<ZNetView>> pair in SectorInstanceIndexPatch.ByZone) {
+            foreach (KeyValuePair<Vector2s, List<ZNetView>> pair in SectorInstanceIndexPatch.ByZone) {
                 int dx = pair.Key.x - center.x;
                 int dy = pair.Key.y - center.y;
                 if (dx < 0) { dx = -dx; }
                 if (dy < 0) { dy = -dy; }
-                int ring = dx > dy ? dx : dy;
 
-                if (ring <= near) { continue; }
+                int ring = dx > dy ? dx : dy;
+                int distanceSq = dx * dx + dy * dy;
+
+                if (classic ? ring <= near : distanceSq < nearRadiusSq) { continue; }
 
                 List<ZNetView> zone = pair.Value;
-                if (ring > full) {
+                if (classic ? ring > full : distanceSq >= fullRadiusSq) {
                     Removed.AddRange(zone);
                     continue;
                 }
@@ -142,10 +158,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // Reported only while the destroy-storm instrument is on: a pass this large is the
         // loaded set leaving the ring at once, and these fields say what moved it.
         private const int StormReportThreshold = 500;
-        private static Vector2i _lastCenter;
+        private static Vector2s _lastCenter;
         private static bool _haveLastCenter;
 
-        private static void ReportStorm(ZNetScene scene, Vector2i center, int near, int full, int count) {
+        private static void ReportStorm(ZNetScene scene, Vector2s center, int near, int full, int count) {
             int moved = -1;
             if (_haveLastCenter) {
                 int dx = center.x - _lastCenter.x;

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -45,9 +45,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // Rebuild cadence in passes: ~100 ms of maximum staleness at 30 Hz.
         private const int RebuildInterval = 3;
 
+        // A zone id no world position maps to: the grid runs to +/-256, and Vector2s holds shorts.
+        private static readonly Vector2s NoZone = new Vector2s(short.MinValue, short.MinValue);
+
         private static int _passesSinceRebuild = int.MaxValue;
         private static int _cursor;
-        private static Vector2i _rebuildZone = new Vector2i(int.MinValue, int.MinValue);
+        private static Vector2s _rebuildZone = NoZone;
 
         // Ids captured at rebuild, parallel to the cached list, so a recycled ZDO can be told
         // apart from a live one.
@@ -61,7 +64,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             List<ZDO> pending = __instance.m_tempCurrentObjects2;
             Vector3 referencePosition = ZNet.instance.GetReferencePosition();
-            Vector2i referenceZone = ZoneSystem.GetZone(referencePosition);
+            Vector2s referenceZone = ZoneSystem.GetZone(referencePosition);
 
             // The length check re-establishes the parallel-list invariant if anything else
             // rewrote the list.
@@ -123,7 +126,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 CachedIds.Clear();
                 _cursor = 0;
                 _passesSinceRebuild = int.MaxValue;
-                _rebuildZone = new Vector2i(int.MinValue, int.MinValue);
+                _rebuildZone = NoZone;
             }
         }
     }

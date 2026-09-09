@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -207,15 +207,21 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly SpawnQueue Near = new SpawnQueue();
         private static readonly SpawnQueue Distant = new SpawnQueue();
 
-        private static readonly HashSet<Vector2i> NearZones = new HashSet<Vector2i>();
-        private static readonly HashSet<Vector2i> DistantZones = new HashSet<Vector2i>();
-        private static readonly HashSet<Vector2i> ScratchNearZones = new HashSet<Vector2i>();
-        private static readonly HashSet<Vector2i> ScratchDistantZones = new HashSet<Vector2i>();
+        private static readonly HashSet<Vector2s> NearZones = new HashSet<Vector2s>();
+        private static readonly HashSet<Vector2s> DistantZones = new HashSet<Vector2s>();
+        private static readonly HashSet<Vector2s> ScratchNearZones = new HashSet<Vector2s>();
+        private static readonly HashSet<Vector2s> ScratchDistantZones = new HashSet<Vector2s>();
         private static readonly List<ZDO> ScratchSector = new List<ZDO>();
 
-        private static Vector2i _snapshotZone = new Vector2i(int.MinValue, int.MinValue);
-        private static int _snapshotArea = -1;
-        private static int _snapshotDistantArea = -1;
+        // FindObjects and FindDistantObjects dedupe against a caller-owned visited set. One
+        // sector per call here, so it is cleared before each and never carries state across.
+        private static readonly HashSet<ZoneSystem.SectorIndex> ScratchVisited = new HashSet<ZoneSystem.SectorIndex>();
+
+        // A zone id no world position maps to: the grid runs to +/-256, and Vector2s holds shorts.
+        private static readonly Vector2s NoZone = new Vector2s(short.MinValue, short.MinValue);
+
+        private static Vector2s _snapshotZone = NoZone;
+        private static SimulationDistance _snapshotSimulationDistance;
         private static ZNetScene _snapshotScene;
 
         private static Vector3 _lastSortPosition;
@@ -249,12 +255,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 // A new scene is a new world: the queue indexes into ZDOs the old session owned.
                 if (!ReferenceEquals(__instance, _snapshotScene)) { ResetSession(__instance); }
 
-                ZoneSystem zoneSystem = ZoneSystem.instance;
-                Vector2i zone = ZoneSystem.GetZone(ZNet.instance.GetReferencePosition());
-                SyncZoneSets(zone, zoneSystem.m_activeArea, zoneSystem.m_activeDistantArea);
+                Vector2s zone = ZoneSystem.GetZone(ZNet.instance.GetReferencePosition());
+                SimulationDistance simulationDistance = ZNet.instance.GetSyncedSimulationDistance();
+                SyncZoneSets(zone, simulationDistance);
 
                 if (Verify != null && Verify.Value) {
-                    RunVerify(zone, zoneSystem);
+                    RunVerify(zone, simulationDistance);
                     return true;
                 }
             }
@@ -421,78 +427,93 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- feed 1: the zone-set diff -------------------------------------------------------
 
-        private static void SyncZoneSets(Vector2i zone, int area, int distantArea) {
-            if (zone == _snapshotZone && area == _snapshotArea && distantArea == _snapshotDistantArea) {
+        private static void SyncZoneSets(Vector2s zone, SimulationDistance simulationDistance) {
+            if (zone == _snapshotZone && simulationDistance.Equals(_snapshotSimulationDistance)) {
                 return;
             }
 
             _snapshotZone = zone;
-            _snapshotArea = area;
-            _snapshotDistantArea = distantArea;
+            _snapshotSimulationDistance = simulationDistance;
 
-            BuildZoneSets(zone, area, distantArea, ScratchNearZones, ScratchDistantZones);
+            BuildZoneSets(zone, simulationDistance, ScratchNearZones, ScratchDistantZones);
 
-            foreach (Vector2i entering in ScratchNearZones) {
+            foreach (Vector2s entering in ScratchNearZones) {
                 if (NearZones.Contains(entering)) { continue; }
                 EnqueueSector(entering, Near, false);
             }
 
-            foreach (Vector2i leaving in NearZones) {
+            foreach (Vector2s leaving in NearZones) {
                 if (ScratchNearZones.Contains(leaving)) { continue; }
                 DequeueSector(leaving, Near);
             }
 
-            foreach (Vector2i entering in ScratchDistantZones) {
+            foreach (Vector2s entering in ScratchDistantZones) {
                 if (DistantZones.Contains(entering)) { continue; }
                 EnqueueSector(entering, Distant, true);
             }
 
-            foreach (Vector2i leaving in DistantZones) {
+            foreach (Vector2s leaving in DistantZones) {
                 if (ScratchDistantZones.Contains(leaving)) { continue; }
                 DequeueSector(leaving, Distant);
             }
 
             NearZones.Clear();
-            foreach (Vector2i z in ScratchNearZones) { NearZones.Add(z); }
+            foreach (Vector2s z in ScratchNearZones) { NearZones.Add(z); }
             DistantZones.Clear();
-            foreach (Vector2i z in ScratchDistantZones) { DistantZones.Add(z); }
+            foreach (Vector2s z in ScratchDistantZones) { DistantZones.Add(z); }
         }
 
-        /// The two rings FindSectorObjects walks (ZDOMan.cs:693-728): the near set is the
-        /// Chebyshev square of radius area and takes ALL its ZDOs - no Distant filter, which is
-        /// where ontrigger's version diverges - and the distant band is the shell from area+1 to
-        /// area+distantArea, taking Distant-flagged ZDOs only.
+        /// The two rings ZDOMan.FindSectorObjects walks: the near set takes ALL its ZDOs - no
+        /// Distant filter, which is where ontrigger's version diverges - and the band outside it
+        /// takes Distant-flagged ZDOs only. Both are discs now, gated on
+        /// ZoneSystem.ZonesWithinRadius, except on the classic simulation distance whose loops
+        /// take the whole square. That test compares world distance against (radius + 0.5 or 0.8)
+        /// zone sizes, and ZoneSystem.GetZonePos lays zone centres on a 64 m grid, so it reduces
+        /// exactly to a comparison of zone deltas against those radii.
         private static void BuildZoneSets(
-            Vector2i center, int area, int distantArea,
-            HashSet<Vector2i> nearZones, HashSet<Vector2i> distantZones) {
+            Vector2s center, SimulationDistance simulationDistance,
+            HashSet<Vector2s> nearZones, HashSet<Vector2s> distantZones) {
             nearZones.Clear();
             distantZones.Clear();
 
-            for (int x = center.x - area; x <= center.x + area; x++) {
-                for (int y = center.y - area; y <= center.y + area; y++) {
-                    nearZones.Add(new Vector2i(x, y));
-                }
-            }
+            int near = simulationDistance.NearSimulationDistance;
+            int full = simulationDistance.TotalSimulationDistance;
+            bool classic = simulationDistance.IsClassic;
 
-            int full = area + distantArea;
+            // 1 in vanilla; keeps the reduction exact if anything ever changes the zone size.
+            float zoneScale = ZoneSystem.instance.m_zoneSize / 64f;
+            float nearRadius = (near + 0.5f) * zoneScale;
+            float fullRadius = (full + 0.8f) * zoneScale;
+            float nearRadiusSq = nearRadius * nearRadius;
+            float fullRadiusSq = fullRadius * fullRadius;
+
             for (int x = center.x - full; x <= center.x + full; x++) {
                 for (int y = center.y - full; y <= center.y + full; y++) {
                     int dx = x - center.x;
                     int dy = y - center.y;
                     if (dx < 0) { dx = -dx; }
                     if (dy < 0) { dy = -dy; }
-                    if ((dx > dy ? dx : dy) <= area) { continue; }
-                    distantZones.Add(new Vector2i(x, y));
+
+                    int ring = dx > dy ? dx : dy;
+                    int distanceSq = dx * dx + dy * dy;
+
+                    if (classic ? ring <= near : distanceSq < nearRadiusSq) {
+                        nearZones.Add(new Vector2s(x, y));
+                        continue;
+                    }
+
+                    if (classic || distanceSq < fullRadiusSq) { distantZones.Add(new Vector2s(x, y)); }
                 }
             }
         }
 
-        private static void EnqueueSector(Vector2i sector, SpawnQueue queue, bool distantOnly) {
+        private static void EnqueueSector(Vector2s sector, SpawnQueue queue, bool distantOnly) {
             ScratchSector.Clear();
+            ScratchVisited.Clear();
             if (distantOnly) {
-                ZDOMan.instance.FindDistantObjects(sector, ScratchSector);
+                ZDOMan.instance.FindDistantObjects(sector, ScratchSector, ScratchVisited);
             } else {
-                ZDOMan.instance.FindObjects(sector, ScratchSector);
+                ZDOMan.instance.FindObjects(sector, ScratchSector, ScratchVisited);
             }
 
             for (int i = 0; i < ScratchSector.Count; i++) {
@@ -504,9 +525,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
             ScratchSector.Clear();
         }
 
-        private static void DequeueSector(Vector2i sector, SpawnQueue queue) {
+        private static void DequeueSector(Vector2s sector, SpawnQueue queue) {
             ScratchSector.Clear();
-            ZDOMan.instance.FindObjects(sector, ScratchSector);
+            ScratchVisited.Clear();
+            ZDOMan.instance.FindObjects(sector, ScratchSector, ScratchVisited);
             for (int i = 0; i < ScratchSector.Count; i++) { queue.Dequeue(ScratchSector[i].m_uid); }
             ScratchSector.Clear();
         }
@@ -520,7 +542,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(typeof(ZDOMan), "AddToSector")]
         internal static class AddToSectorHook {
             [HarmonyPostfix]
-            private static void Postfix(ZDO zdo, Vector2i sector) {
+            // The parameter name has to stay 'sectorIndex' for Harmony to bind it, and it arrives
+            // before ZDO.m_position is updated, so the ZDO cannot be asked for the new zone here.
+            private static void Postfix(ZDO zdo, ZoneSystem.SectorIndex sectorIndex) {
                 if (zdo.Created) { return; }
 
                 if (_inZdoData) {
@@ -530,7 +554,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     return;
                 }
 
-                EnqueueIfInRing(zdo, sector);
+                EnqueueIfInRing(zdo, ZoneSystem.IndexToSector(sectorIndex.Sector));
             }
         }
 
@@ -580,7 +604,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        private static void EnqueueIfInRing(ZDO zdo, Vector2i sector) {
+        private static void EnqueueIfInRing(ZDO zdo, Vector2s sector) {
             if (NearZones.Contains(sector)) {
                 Near.Enqueue(zdo);
                 return;
@@ -618,9 +642,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             PendingRpc.Clear();
             _inZdoData = false;
             _sortPositionValid = false;
-            _snapshotZone = new Vector2i(int.MinValue, int.MinValue);
-            _snapshotArea = -1;
-            _snapshotDistantArea = -1;
+            _snapshotZone = NoZone;
+            _snapshotSimulationDistance = default;
             _snapshotScene = scene;
         }
 
@@ -647,14 +670,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
         /// Builds the candidate set the vanilla way and compares it against the queue. Anything
         /// vanilla would spawn that the queue does not hold is a missed feed - an object that
         /// would simply never appear - so that is what this counts and names.
-        private static void RunVerify(Vector2i zone, ZoneSystem zoneSystem) {
+        private static void RunVerify(Vector2s zone, SimulationDistance simulationDistance) {
             _verifyActive = true;
             _verifyPasses++;
 
             VerifyNear.Clear();
             VerifyDistant.Clear();
-            ZDOMan.instance.FindSectorObjects(
-                zone, zoneSystem.m_activeArea, zoneSystem.m_activeDistantArea, VerifyNear, VerifyDistant);
+            ZDOMan.instance.FindSectorObjects(zone, simulationDistance, VerifyNear, VerifyDistant);
 
             _verifyQueued += Near.Pending + Distant.Pending;
 
@@ -678,7 +700,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 _verifyMissing++;
                 Logger.LogError(
                     $"Spawn queue verify: MISSING from the {side} queue - ZDO {zdo.m_uid} " +
-                    $"(prefab {zdo.GetPrefab()}, sector {zdo.m_sector}) is an uncreated candidate " +
+                    $"(prefab {zdo.GetPrefab()}, sector {zdo.GetSector()}) is an uncreated candidate " +
                     "vanilla would spawn. A feed is missing. Please report this - leave 'Fix " +
                     "Object Stream Rescan' off until it is understood.");
             }

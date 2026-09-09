@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -21,7 +21,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // and every save.
     //
     // Four signature-identical replacements answer both questions with one TryGetValue, and a
-    // transpiler swaps the call operand inside each of ZDOExtraData's 34 accessors. Equivalence is
+    // transpiler swaps the call operand inside each of ZDOExtraData's 19 accessors. Equivalence is
     // exact, including a present-but-null table throwing the same NullReferenceException. Patched
     // on the accessors rather than on the generic helpers themselves because Mono compiles one
     // shared body for all reference-type instantiations of a generic, so a patch aimed at
@@ -31,19 +31,22 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class ZdoReadLookupPatch {
-        // Every accessor on ZDOExtraData that reaches one of the four helpers. The seven scalar
-        // getters each have an out-parameter and a default-value overload, so 27 names cover 34
-        // methods.
+        // Every accessor on ZDOExtraData that reaches one of the four helpers with exactly one
+        // call, which is what the transpiler below requires. The seven scalar getters each have an
+        // out-parameter and a default-value overload, so 12 names cover 19 methods.
+        //
+        // The plural accessors this list used to carry (GetFloats, GetSaveFloats and their
+        // siblings) no longer exist: the game folded them into ZDOExtraData.GetData and
+        // GetSaveData, which make seven and eight helper calls respectively and so fall outside
+        // the one-call contract below. The save and serialise paths that went through them keep
+        // vanilla's doubled lookup.
         private static readonly HashSet<string> AccessorNames = new HashSet<string> {
             "GetFloat", "GetVec3", "GetQuaternion", "GetInt", "GetLong", "GetString", "GetByteArray",
             "GetBool",
             "GetConnection", "GetConnectionZDOID", "GetConnectionType", "GetConnectionHashData",
-            "GetFloats", "GetVec3s", "GetQuaternions", "GetInts", "GetLongs", "GetStrings", "GetByteArrays",
-            "GetSaveFloats", "GetSaveVec3s", "GetSaveQuaternions", "GetSaveInts", "GetSaveLongs",
-            "GetSaveStrings", "GetSaveByteArrays", "GetSaveConnections",
         };
 
-        private const int ExpectedAccessors = 34;
+        private const int ExpectedAccessors = 19;
 
         [HarmonyTargetMethods]
         private static IEnumerable<MethodBase> TargetMethods() {

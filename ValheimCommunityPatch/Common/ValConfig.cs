@@ -76,12 +76,9 @@ namespace ValheimCommunityPatch {
             Patches.Performance.ReflectionSlicePatch.BindConfig();
             Patches.Performance.PhysicsCatchupPatch.BindConfig();
             Patches.Performance.SpawnEventQueuePatch.BindConfig();
-            Patches.Performance.LocationBiomeAreaCachePatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();
-            Patches.Correctness.RunAttackStaminaPatch.BindConfig();
-            Patches.Correctness.UnlitFireCookingPatch.BindConfig();
             Patches.Correctness.ZdoLoadDuplicatePatch.BindConfig();
             Patches.Correctness.RemoveObjectsNrePatch.BindConfig();
             Patches.Correctness.EffectAreaPatch.BindConfig();

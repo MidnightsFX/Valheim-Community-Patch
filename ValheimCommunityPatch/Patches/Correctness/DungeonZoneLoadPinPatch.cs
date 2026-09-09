@@ -123,15 +123,15 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             // Nothing to unregister; vanilla's answer to either is a NullReferenceException.
             if (zdo == null || __instance.m_loadingObjectsInZones == null) { return false; }
 
-            Dictionary<Vector2i, List<ZDO>> loading = __instance.m_loadingObjectsInZones;
+            Dictionary<Vector2s, List<ZDO>> loading = __instance.m_loadingObjectsInZones;
 
             if (RemoveFrom(loading, zdo.GetSector(), zdo)) { return false; }
 
-            foreach (KeyValuePair<Vector2i, List<ZDO>> pair in loading) {
+            foreach (KeyValuePair<Vector2s, List<ZDO>> pair in loading) {
                 if (pair.Value == null || !pair.Value.Contains(zdo)) { continue; }
 
                 // Outside the enumeration, because RemoveFrom can drop the key.
-                Vector2i actual = pair.Key;
+                Vector2s actual = pair.Key;
                 RemoveFrom(loading, actual, zdo);
                 Logger.LogWarning(
                     $"A dungeon or other loading object reported sector {zdo.GetSector()} but was " +
@@ -147,7 +147,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
         // Drops the zone when its list empties, which is what keeps ContainsKey meaningful in
         // ZoneSystem.IsZoneLoaded.
-        private static bool RemoveFrom(Dictionary<Vector2i, List<ZDO>> loading, Vector2i sector, ZDO zdo) {
+        private static bool RemoveFrom(Dictionary<Vector2s, List<ZDO>> loading, Vector2s sector, ZDO zdo) {
             if (!loading.TryGetValue(sector, out List<ZDO> inZone)) { return false; }
             if (!inZone.Remove(zdo)) { return false; }
 
