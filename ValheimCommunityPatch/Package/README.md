@@ -122,7 +122,8 @@ fix under [Credit and sources](#credit-and-sources).
   collision object serves every callback; the first suspect if a physics-touching mod that stores
   collision objects misbehaves.
 - **Fix Equipment Visual Refresh** *(client)* — re-applies a character's skin and hair colour only
-  when an input changed, and reads its equipment fields with one table lookup instead of thirty.
+  when an input changed or another system overwrote it, and reads its equipment fields with one
+  table lookup instead of thirty.
 - **Fix Light Settings Subscription** *(client)* — registers lights for graphics-setting changes in a
   lookup table instead of a static event whose unsubscribe scans every other lit light.
 - **Fix Portal Idle Updates** *(client)* — stops a portal re-writing its emission colour, light and

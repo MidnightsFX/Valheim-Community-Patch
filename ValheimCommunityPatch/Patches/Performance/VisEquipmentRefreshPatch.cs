@@ -18,6 +18,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //    applied, and only lets vanilla run on a difference. The snapshot is recorded in a
     //    postfix so a vanilla method that threw is retried rather than marked applied.
     //
+    //    The hair tint lives only in the beard and hair renderers' property blocks, and vanilla
+    //    MaterialMan replaces every property block it holds for a character whenever an item is
+    //    attached (RefreshSnowLevel), which vanilla's per-frame re-write silently covered. So the
+    //    prefix also lets vanilla run when the tint it last wrote is no longer in those blocks;
+    //    without that, a character whose beard MaterialMan captured (attached before any gear,
+    //    as on a naked spawn) turns white on the next equip and stays white.
+    //
     // 2. UpdateEquipmentVisuals opens with fifteen ZDO.GetInt calls, and each is two dictionary
     //    lookups (ZDOHelper.GetValueOrDefault does ContainsKey then indexes) hashing a ZDOID
     //    twice. A prefix fetches the character's int table once, and a transpiler routes the
@@ -40,6 +47,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
             internal SkinnedMeshRenderer Body;
             internal int ModelIndex;
 
+            // Where vanilla wrote the hair tint, recorded by the postfix so the prefix can see it
+            // overwritten. Null when there was no instance to tint.
+            internal Renderer[] BeardRenderers;
+            internal Renderer[] HairRenderers;
+
             internal bool Matches(ColorState other) =>
                 Primed && other.Primed
                 && Skin.Equals(other.Skin)
@@ -52,6 +64,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly Dictionary<VisEquipment, ColorState> Applied =
             new Dictionary<VisEquipment, ColorState>();
+
+        // Reused for every property block read; GetPropertyBlock fills it in place.
+        private static readonly MaterialPropertyBlock Scratch = new MaterialPropertyBlock();
 
         [HarmonyPrefix]
         [HarmonyPatch("UpdateColors")]
@@ -80,13 +95,52 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ModelIndex = __instance.m_currentModelIndex,
             };
 
-            return !(Applied.TryGetValue(__instance, out ColorState last) && last.Matches(__state));
+            if (!Applied.TryGetValue(__instance, out ColorState last) || !last.Matches(__state)) { return true; }
+
+            // Nothing vanilla reads has changed, but something else may have replaced the blocks
+            // the tint was written into. Utils.Vec3ToColor: the three channels, alpha one.
+            Color tint = new Color(last.Hair.x, last.Hair.y, last.Hair.z);
+            if (StillApplied(last.BeardRenderers, tint) && StillApplied(last.HairRenderers, tint)) { return false; }
+
+            if (Logger.DebugEnabled) {
+                Logger.LogDebug($"VisEquipment: hair tint overwritten on {__instance.name}, re-applying.");
+            }
+
+            return true;
+        }
+
+        // True when every renderer vanilla tinted still carries that tint in its property block.
+        // A destroyed renderer under a live instance also defers to vanilla, which re-walks it.
+        private static bool StillApplied(Renderer[] renderers, Color expected) {
+            if (renderers == null) { return true; }
+
+            for (int i = 0; i < renderers.Length; i++) {
+                Renderer renderer = renderers[i];
+                if (renderer == null) { return false; }
+
+                renderer.GetPropertyBlock(Scratch);
+
+                // A block without the property reads back clear, never equal to an opaque tint.
+                if (Scratch.GetColor(VisEquipment.s_skinColorID) != expected) { return false; }
+            }
+
+            return true;
         }
 
         [HarmonyPostfix]
         [HarmonyPatch("UpdateColors")]
         private static void UpdateColorsPostfix(VisEquipment __instance, ColorState __state) {
-            if (__state.Primed) { Applied[__instance] = __state; }
+            if (!__state.Primed) { return; }
+
+            // The walk vanilla just made, on a frame it ran, so these are the renderers it tinted.
+            __state.BeardRenderers = __instance.m_beardItemInstance != null
+                ? __instance.m_beardItemInstance.GetComponentsInChildren<Renderer>()
+                : null;
+            __state.HairRenderers = __instance.m_hairItemInstance != null
+                ? __instance.m_hairItemInstance.GetComponentsInChildren<Renderer>()
+                : null;
+
+            Applied[__instance] = __state;
         }
 
         // Vanilla unregisters the instance from MonoUpdaters here; the snapshot goes with it.
