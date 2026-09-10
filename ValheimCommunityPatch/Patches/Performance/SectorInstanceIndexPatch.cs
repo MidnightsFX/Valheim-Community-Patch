@@ -132,7 +132,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             // A re-added view must not be double-indexed.
             IndexRemove(nview, id);
-            IndexAdd(nview, id, ZoneOf(zdo.GetSectorIndex()));
+
+            // Keyed on the sector ZDOMan filed the ZDO under, as the move hook is: an invalidated
+            // ZDO sits in sector 0 while its position still reads as the last synced spot.
+            IndexAdd(nview, id, ZoneOf(zdo.OutsideZones ? ZoneSystem.SectorZero : zdo.GetSectorIndex()));
         }
 
         [HarmonyPatch(typeof(ZDOMan))]

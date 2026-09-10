@@ -185,6 +185,8 @@ every side.
   character that loads in broken, and drops a `UseStamina` network message carrying `NaN` or infinity.
 - **Fix Dungeon Load Stall** *(both)* — counts a dungeon room whose asset failed to load as finished
   and drops it, so the zone is not left flagged as loading forever.
+- **Fix Teleport Ghost Players** *(server)* — tells a client to drop a player who teleported out of its
+  loaded area, instead of leaving them standing frozen where they left (and still in local chat range).
 
 The two log fixes redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
 
@@ -286,6 +288,7 @@ The mods involved:
 | Fix Item Icon Crash | ComfyMods — LetMePlay | The defect; a smaller fix here that leaves the shared item data alone |
 | Fix Negative Stamina | MidnightsFX | — |
 | Fix Dungeon Load Stall | MidnightsFX | — |
+| Fix Teleport Ghost Players | MidnightsFX | — |
 
 ## Installation
 

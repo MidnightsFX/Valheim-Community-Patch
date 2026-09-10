@@ -11,8 +11,7 @@ assembly: ValheimCommunityPatch
 author_name: MidnightMods
 
 # Copy the build into this machine's mod manager profiles after every
-# build. Destinations live in /mnt/c/Users/carls/Documents/projects/Valheim_Stuff/mod-tools/.config/config.yml,
-# because they differ per machine.
+# build.
 deploy:
   enabled: true
 
@@ -20,12 +19,9 @@ publish:
   thunderstore:
     enabled: true
   nexus:
-    # Both ids come from the mod page, which has to exist first: this
-    # uploads a new file version, it cannot create a page. Fill them in
-    # and set enabled: true.
-    enabled: false
-    # mod_id: 0000     # the number in the mod page URL
-    # file_id: 000000  # the EXISTING file this replaces
+    enabled: true
+    mod_id: 3617
+    file_id: 7939494
   github:
     enabled: true
   discord:
