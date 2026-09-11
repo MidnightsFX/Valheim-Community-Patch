@@ -1,5 +1,13 @@
 # Changelog
 
+**0.25.0**
+```
+- Fix Water Colour Seams (client): shallow and deep water colour now blends smoothly across zone
+  borders. The water shader coloured each 64 m water tile by the depth at its south-west corner only,
+  so near shores the sea changed colour in a hard straight line along the zone grid while the waves
+  across the same line stayed smooth.
+```
+
 **0.24.0**
 ```
 - Fix Unsaved Client Changes (server): an object a connected player placed or changed is now written

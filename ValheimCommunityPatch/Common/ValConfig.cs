@@ -91,6 +91,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.DungeonZoneLoadPinPatch.BindConfig();
             Patches.Correctness.SectorJumpInvalidatePatch.BindConfig();
             Patches.Correctness.ReceivedZdoDirtyPatch.BindConfig();
+            Patches.Correctness.WaterColourSeamPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();

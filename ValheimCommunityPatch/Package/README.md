@@ -37,6 +37,11 @@ allocation, socket logging — and almost everything else is worth having on the
 |---|---|
 | ![Terrain Tears](https://github.com/MidnightsFX/Valheim-Community-Patch/blob/master/Media/Terrain_Tears.png?raw=true)   |  ![Terrain Fixed](https://github.com/MidnightsFX/Valheim-Community-Patch/blob/master/Media/Terrain_Fixed.png?raw=true) |
 
+| Shore Shade Tears | Shore Shade Fixed |
+|---|---|
+| ![Shore Tears](https://github.com/MidnightsFX/Valheim-Community-Patch/blob/master/Media/Terrain_Tears.png?raw=true)   |  ![Shore Fixed](https://github.com/MidnightsFX/Valheim-Community-Patch/blob/master/Media/Terrain_Fixed.png?raw=true) |
+
+
 ## Fixes in this release
 
 Where a fix was sourced from, or corroborated against, another modder's work, that is recorded per
@@ -191,6 +196,8 @@ every side.
 - **Fix Unsaved Client Changes** *(server)* — marks an object a connected player placed or changed for
   the next world save; the chunked save format only rewrites chunks the game marked as changed, and it
   never marks one for a change that arrives from another player.
+- **Fix Water Colour Seams** *(client)* — colours each water tile by the depth blended across it, as its
+  waves already are, instead of by one corner, removing the hard colour line along the 64 m grid.
 
 The two log fixes redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
 
@@ -294,6 +301,7 @@ The mods involved:
 | Fix Dungeon Load Stall | MidnightsFX | — |
 | Fix Teleport Ghost Players | MidnightsFX | — |
 | Fix Unsaved Client Changes | MidnightsFX | — |
+| Fix Water Colour Seams | MidnightsFX | — |
 
 ## Installation
 
