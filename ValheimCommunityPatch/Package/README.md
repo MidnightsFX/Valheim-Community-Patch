@@ -39,8 +39,9 @@ allocation, socket logging — and almost everything else is worth having on the
 
 | Shore Shade Tears | Shore Shade Fixed |
 |---|---|
-| ![Shore Tears](https://github.com/MidnightsFX/Valheim-Community-Patch/blob/master/Media/Terrain_Tears.png?raw=true)   |  ![Shore Fixed](https://github.com/MidnightsFX/Valheim-Community-Patch/blob/master/Media/Terrain_Fixed.png?raw=true) |
+| ![Shore Tears](https://github.com/MidnightsFX/Valheim-Community-Patch/blob/master/Media/Shore_Tears.png?raw=true)   |  ![Shore Fixed](https://github.com/MidnightsFX/Valheim-Community-Patch/blob/master/Media/Shore_Fixed.png?raw=true) |
 
+Shore tears are much more subtle as it is a shading issue. On the right side of the first image directly above the head you can see the shading issue.
 
 ## Fixes in this release
 
