@@ -115,7 +115,8 @@ Where a fix was sourced from, or corroborated against, another modder's work, th
 [*][b]Fix Dungeon Load Stall[/b] [i](both)[/i] — counts a dungeon room whose asset failed to load as finished and drops it, so the zone is not left flagged as loading forever.
 [*][b]Fix Teleport Ghost Players[/b] [i](server)[/i] — tells a client to drop a player who teleported out of its loaded area, instead of leaving them standing frozen where they left (and still in local chat range).
 [*][b]Fix Unsaved Client Changes[/b] [i](server)[/i] — marks an object a connected player placed or changed for the next world save; the chunked save format only rewrites chunks the game marked as changed, and it never marks one for a change that arrives from another player.
-[*][b]Fix Water Colour Seams[/b] [i](client)[/i] — colours each water tile by the depth blended across it, as its waves already are, instead of by one corner, removing the hard colour line along the 64 m grid.
+[*][b]Fix Water Colour Seams[/b] [i](client)[/i] — colours each water tile by the depth blended across it, as its waves already are, instead of by one corner, removing the hard colour line along the 64 m grid. [font=Courier New]Water Colour Depth Scale[/font] (default 2) sets how soon shading reaches deep water; above 1 it also makes shallow-water waves look taller than the ones boats ride.
+[*][b]Fix Non-Item ObjectDB Entries[/b] [i](both)[/i] — drops prefabs that are not items from the game's item list on load; the 2026-09-09 update listed three ([font=Courier New]PropFeastDeepNorth[/font], [font=Courier New]SnowRoller[/font], [font=Courier New]FrozenKing_Summon[/font]) that break mods treating every entry as an item. They can still be spawned.
 [/list]
 
 The two log fixes redirect rather than delete: turn on [font=Courier New]EnableDebugMode[/font] and the messages come back.
@@ -172,7 +173,7 @@ The mods involved:
 [*][b]Fix Send Failure Log Spam[/b] — ComfyMods, BetterZeeLog: the defect; that mod removes the call, this one redirects it.
 [*][b]Fix Container Log Spam[/b] — ComfyMods, BetterZeeLog: the defect; that mod removes the calls, this one redirects them.
 [*][b]Fix Item Icon Crash[/b] — ComfyMods, LetMePlay: the defect; a smaller fix here that leaves the shared item data alone.
-[*][b]Fix Negative Stamina[/b], [b]Fix Dungeon Load Stall[/b], [b]Fix Teleport Ghost Players[/b], [b]Fix Unsaved Client Changes[/b] and [b]Fix Water Colour Seams[/b] — MidnightsFX.
+[*][b]Fix Negative Stamina[/b], [b]Fix Dungeon Load Stall[/b], [b]Fix Teleport Ghost Players[/b], [b]Fix Unsaved Client Changes[/b], [b]Fix Water Colour Seams[/b] and [b]Fix Non-Item ObjectDB Entries[/b] — MidnightsFX.
 [/list]
 
 [line]

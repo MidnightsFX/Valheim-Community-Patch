@@ -199,6 +199,11 @@ every side.
   never marks one for a change that arrives from another player.
 - **Fix Water Colour Seams** *(client)* — colours each water tile by the depth blended across it, as its
   waves already are, instead of by one corner, removing the hard colour line along the 64 m grid.
+  `Water Colour Depth Scale` (default 2) sets how soon shading reaches deep water; above 1 it also makes
+  shallow-water waves look taller than the ones boats ride.
+- **Fix Non-Item ObjectDB Entries** *(both)* — drops prefabs that are not items from the game's item
+  list on load; the 2026-09-09 update listed three (`PropFeastDeepNorth`, `SnowRoller`,
+  `FrozenKing_Summon`) that break mods treating every entry as an item. They can still be spawned.
 
 The two log fixes redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
 
@@ -303,6 +308,7 @@ The mods involved:
 | Fix Teleport Ghost Players | MidnightsFX | — |
 | Fix Unsaved Client Changes | MidnightsFX | — |
 | Fix Water Colour Seams | MidnightsFX | — |
+| Fix Non-Item ObjectDB Entries | MidnightsFX | — |
 
 ## Installation
 

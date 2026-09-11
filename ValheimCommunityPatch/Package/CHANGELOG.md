@@ -5,7 +5,13 @@
 - Fix Water Colour Seams (client): shallow and deep water colour now blends smoothly across zone
   borders. The water shader coloured each 64 m water tile by the depth at its south-west corner only,
   so near shores the sea changed colour in a hard straight line along the zone grid while the waves
-  across the same line stayed smooth.
+  across the same line stayed smooth. Shading now reaches its deep-water look at 5 m rather than 10 m
+  ("Water Colour Depth Scale", default 2), so one shallow corner no longer tints a whole tile of deep
+  water; the visible waves in shallow water run up to that factor taller than the waves boats ride.
+- Fix Non-Item ObjectDB Entries (both): prefabs that are not items are now removed from the game's item
+  list (ObjectDB) when it is built. The 2026-09-09 Valheim update listed three prefabs with no item
+  component (PropFeastDeepNorth, SnowRoller and FrozenKing_Summon) among the items, so mods that treat
+  every entry as an item threw or logged errors on them. They can still be spawned.
 ```
 
 **0.24.0**
