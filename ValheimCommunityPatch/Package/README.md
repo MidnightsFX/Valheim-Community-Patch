@@ -188,6 +188,9 @@ every side.
   and drops it, so the zone is not left flagged as loading forever.
 - **Fix Teleport Ghost Players** *(server)* — tells a client to drop a player who teleported out of its
   loaded area, instead of leaving them standing frozen where they left (and still in local chat range).
+- **Fix Unsaved Client Changes** *(server)* — marks an object a connected player placed or changed for
+  the next world save; the chunked save format only rewrites chunks the game marked as changed, and it
+  never marks one for a change that arrives from another player.
 
 The two log fixes redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
 
@@ -290,6 +293,7 @@ The mods involved:
 | Fix Negative Stamina | MidnightsFX | — |
 | Fix Dungeon Load Stall | MidnightsFX | — |
 | Fix Teleport Ghost Players | MidnightsFX | — |
+| Fix Unsaved Client Changes | MidnightsFX | — |
 
 ## Installation
 
