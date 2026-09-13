@@ -87,18 +87,14 @@ fix under [Credit and sources](#credit-and-sources).
   change-tracking proves nothing changed, keeping one full pass per second as a safety sweep.
 - **Fix Support Lookup Cost** *(both)* — resolves which building piece owns a collider through a
   lookup table instead of a hierarchy walk per collider.
-- **Fix Light Flicker Overhead** *(client)* — stops updating torch flicker beyond a configurable
-  distance, and exposes the game's dormant point-light cap as a client-local "Point Light Limit"
-  (-1 is vanilla).
+- **Fix Light Flicker Overhead** *(client)* — stops updating torch flicker for lights past both a
+  configurable distance and their own light LOD distance.
 - **Fix Piece Event Stall** *(both)* — registers building pieces for terrain-rebuild cache clears in a
   per-heightmap table instead of an event whose subscribe copies and unsubscribe scans the whole list.
 - **Fix Unload Sweep Cost** *(both)* — runs the object-unload sweep on a configurable wall-clock
   interval (default 100 ms) instead of on every pass.
 - **Fix Spawn Queue Churn** *(both)* — keeps the sorted spawn backlog between frames instead of
   rebuilding and re-sorting it thirty times a second.
-- **Fix Object Stream Rescan** *(both)* — keeps the set of objects waiting to spawn as a running queue
-  fed by the events that change it, instead of rediscovering it from every zone around you thirty
-  times a second.
 - **Fix Zone Occupancy Scan** *(both)* — answers whether a zone still holds objects from a per-zone
   tally instead of walking every loaded object.
 - **Fix Piece Material Polling** *(both)* — waits for a piece's random material seed on one shared
@@ -118,7 +114,7 @@ fix under [Credit and sources](#credit-and-sources).
   without boxing it.
 - **Fix Doubled ZDO Lookups** *(both)* — reads ZDO data with one dictionary lookup instead of two.
 - **Fix Collision Contact Allocation** *(both)* — reads a collision's contact points into a reused
-  buffer instead of allocating an array per read.
+  buffer instead of allocating an array per collision callback.
 - **Fix Collision Callback Allocation** *(both)* — turns on Unity's `reuseCollisionCallbacks` so one
   collision object serves every callback; the first suspect if a physics-touching mod that stores
   collision objects misbehaves.
@@ -216,8 +212,7 @@ The mods involved:
   this project. Seven of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Compress,
   Effectual and Atlas — account for eleven of the entries below.
 - **[ValheimPerformanceOptimizations](https://github.com/ontrigger/ValheimPerformanceOptimizations)**
-  — ontrigger (MIT). One of the performance entries below, the event-fed spawn queue the
-  object-stream rescan fix is built on, plus independent corroboration of two more.
+  — ontrigger (MIT). Independent corroboration of one of the performance entries below.
 - **[MyPitsDontLeak](https://github.com/AzumattDev/MyPitsDontLeak)** — Azumatt (MIT).
 - **Zen.ModLib** — ZenDragon. Used as a reference; no code was used.
 - **Iron Gate Studio** — Valheim itself. The decompiled game source is the reference used to locate
@@ -245,7 +240,7 @@ The mods involved:
 | Fix Distant Terrain Hitch | MidnightsFX | — |
 | Fix Idle Scene Sweep | MidnightsFX | — |
 | Fix Support Lookup Cost | MidnightsFX; corroborated by [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | Arrived at the same map-probe and lazy-default forms, and the single-fetch centre of mass |
-| Fix Light Flicker Overhead | MidnightsFX | — (Point Light Limit exposes a dormant vanilla mechanism) |
+| Fix Light Flicker Overhead | MidnightsFX | — |
 | Fix Piece Event Stall | MidnightsFX | — |
 | Fix Unload Sweep Cost | MidnightsFX | — |
 | Fix Spawn Queue Churn | MidnightsFX | — |
@@ -255,7 +250,6 @@ The mods involved:
 | Fix Smoke Overhead | MidnightsFX | — |
 | Fix Unload Discovery Scan | MidnightsFX | — |
 | Fix Idle Wear Visits | MidnightsFX | — |
-| Fix Object Stream Rescan | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | Event-fed spawn queue, the zone-set diff, and the 8 m re-sort threshold |
 | Fix ZDO Value Write Allocation | MidnightsFX | — |
 | Fix Doubled ZDO Lookups | MidnightsFX | — |
 | Fix Collision Contact Allocation | MidnightsFX | — |

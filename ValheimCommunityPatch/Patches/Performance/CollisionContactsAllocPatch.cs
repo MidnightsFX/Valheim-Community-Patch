@@ -5,12 +5,14 @@ using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
     // Fix Collision Contact Allocation: reading a collision's contact points fills a reused
-    // buffer instead of allocating an array per read.
+    // buffer instead of allocating an array per collision callback.
     //
-    // Collision.contacts builds a new ContactPoint[] on every read, and the game reads it inside
-    // physics callbacks that fire every fixed step: Character.OnCollisionStay once per contacting
-    // collider for every owned character, ImpactEffect.OnCollisionEnter twice for one collision,
-    // FloatingTerrain.OnCollisionStay once. Each array is read once and dropped.
+    // With reuseCollisionCallbacks on (Fix Collision Callback Allocation), Unity hands every
+    // callback the same Collision object and drops its cached contact array in between, so the
+    // first Collision.contacts read in each callback builds a new ContactPoint[]. The game reads it
+    // inside physics callbacks that fire every fixed step: Character.OnCollisionStay once per
+    // contacting collider for every owned character, ImpactEffect.OnCollisionEnter twice for one
+    // collision (the second read gets the cached array), FloatingTerrain.OnCollisionStay once.
     //
     // Transpilers route those reads through a buffer sized to the real contact count and filled
     // by Collision.GetContacts. Sizing to the exact count is what keeps this a single edit: the

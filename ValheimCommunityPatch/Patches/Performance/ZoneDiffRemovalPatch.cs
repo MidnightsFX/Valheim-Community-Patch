@@ -215,9 +215,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
                 byte earmark = (byte)(Time.frameCount & byte.MaxValue);
 
-                // Earmark the keep-set from what is actually loaded, not from the caller's lists:
-                // SpawnEventQueuePatch drives this pass with both lists empty, and stamping from
-                // them would hand the sweep an empty keep-set and unload the world.
+                // Earmark the keep-set from what is actually loaded, not from the caller's lists, so
+                // the sweep removes exactly the departures chosen above.
                 foreach (ZNetView loaded in scene.m_instances.Values) {
                     ZDO zdo = ReferenceEquals(loaded, null) ? null : loaded.m_zdo;
                     if (zdo != null) { zdo.m_tempRemoveEarmark = earmark; }

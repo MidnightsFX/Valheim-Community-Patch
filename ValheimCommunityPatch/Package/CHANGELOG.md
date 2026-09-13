@@ -1,5 +1,18 @@
 # Changelog
 
+**0.26.1**
+```
+- Removed Object Stream Rescan (both): on multiplayer clients it could re-create and destroy objects many
+  times a second, in newly generated areas it left distant objects such as large trees unspawned until
+  you came close, and it handed other mods' spawn and unload patches empty object lists. Spawning uses
+  Spawn Queue Churn's cached version of the game's own pass instead.
+- Fix Light Flicker Overhead (client): distant torches and fires no longer stay dark until you walk
+  close, or after changing graphics settings. The Point Light Limit setting is removed; the game's
+  Point Lights graphics option controls that cap.
+- Fix Zone Collider Stall (client): ships, carts and placed location props always have terrain
+  collision under them when they load.
+```
+
 **0.26.0**
 ```
 - Fix Non-Item ObjectDB Entries (both): prefabs that are not items are now removed from the game's item

@@ -185,15 +185,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 $"{_verifyDivergences} divergence(s).");
         }
 
-        // Replaces ((IEnumerable<Collider>)m_colliders).Contains(collider). A piece's own
-        // colliders are registered before UpdateSupport can reach this check, so "is this
-        // collider mine" is one probe plus a reference compare against the array vanilla pushed.
+        // Replaces ((IEnumerable<Collider>)m_colliders).Contains(collider) with the same answer
+        // and no enumerator. It reads the piece's own array rather than the owner table, which
+        // also holds colliders learned after the array was built (an item stand's attached item).
         public static bool IsOwnCollider(IEnumerable<Collider> ownColliders, Collider candidate) {
-            if (Hooks.Healthy && ColliderOwner.TryGetValue(candidate.GetInstanceID(), out WearNTear owner)) {
-                return ReferenceEquals(owner.m_colliders, ownColliders);
-            }
-
-            // Not a piece collider, or unhealthy hooks: vanilla's answer without the enumerator.
             if (ownColliders is Collider[] array) {
                 for (int i = 0; i < array.Length; i++) {
                     if (ReferenceEquals(array[i], candidate)) { return true; }

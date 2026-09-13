@@ -58,11 +58,10 @@ Where a fix was sourced from, or corroborated against, another modder's work, th
 [*][b]Fix Distant Terrain Hitch[/b] [i](client)[/i] — rebuilds the far-terrain ring a few tiles per frame (configurable; 9 is vanilla) instead of all nine at once.
 [*][b]Fix Idle Scene Sweep[/b] [i](both)[/i] — skips the 30 Hz object create/destroy pass when cheap change-tracking proves nothing changed, keeping one full pass per second as a safety sweep.
 [*][b]Fix Support Lookup Cost[/b] [i](both)[/i] — resolves which building piece owns a collider through a lookup table instead of a hierarchy walk per collider.
-[*][b]Fix Light Flicker Overhead[/b] [i](client)[/i] — stops updating torch flicker beyond a configurable distance, and exposes the game's dormant point-light cap as a client-local "Point Light Limit" (-1 is vanilla).
+[*][b]Fix Light Flicker Overhead[/b] [i](client)[/i] — stops updating torch flicker for lights past both a configurable distance and their own light LOD distance.
 [*][b]Fix Piece Event Stall[/b] [i](both)[/i] — registers building pieces for terrain-rebuild cache clears in a per-heightmap table instead of an event whose subscribe copies and unsubscribe scans the whole list.
 [*][b]Fix Unload Sweep Cost[/b] [i](both)[/i] — runs the object-unload sweep on a configurable wall-clock interval (default 100 ms) instead of on every pass.
 [*][b]Fix Spawn Queue Churn[/b] [i](both)[/i] — keeps the sorted spawn backlog between frames instead of rebuilding and re-sorting it thirty times a second.
-[*][b]Fix Object Stream Rescan[/b] [i](both)[/i] — keeps the set of objects waiting to spawn as a running queue fed by the events that change it, instead of rediscovering it from every zone around you thirty times a second.
 [*][b]Fix Zone Occupancy Scan[/b] [i](both)[/i] — answers whether a zone still holds objects from a per-zone tally instead of walking every loaded object.
 [*][b]Fix Piece Material Polling[/b] [i](both)[/i] — waits for a piece's random material seed on one shared ticker and stops polling once the values are applied.
 [*][b]Fix Idle Support Checks[/b] [i](both)[/i] — lets a building piece skip its structural support re-check until a neighbour is built, destroyed or changed or the terrain is edited; "Support Change Threshold" and "Settled Piece Patience" tune how a neighbour's small drift wakes it.
@@ -71,7 +70,7 @@ Where a fix was sourced from, or corroborated against, another modder's work, th
 [*][b]Fix Idle Wear Visits[/b] [i](both)[/i] — skips a building piece's whole wear visit while it is provably quiet: support asleep, locally owned, dry or roofed while wet, above the waterline, outside the Ashlands, and undamaged since the last visit.
 [*][b]Fix ZDO Value Write Allocation[/b] [i](both)[/i] — compares a ZDO field write against its stored value without boxing it.
 [*][b]Fix Doubled ZDO Lookups[/b] [i](both)[/i] — reads ZDO data with one dictionary lookup instead of two.
-[*][b]Fix Collision Contact Allocation[/b] [i](both)[/i] — reads a collision's contact points into a reused buffer instead of allocating an array per read.
+[*][b]Fix Collision Contact Allocation[/b] [i](both)[/i] — reads a collision's contact points into a reused buffer instead of allocating an array per collision callback.
 [*][b]Fix Collision Callback Allocation[/b] [i](both)[/i] — turns on Unity's [font=Courier New]reuseCollisionCallbacks[/font] so one collision object serves every callback; the first suspect if a physics-touching mod that stores collision objects misbehaves.
 [*][b]Fix Equipment Visual Refresh[/b] [i](client)[/i] — re-applies a character's skin and hair colour only when an input changed, and reads its equipment fields with one table lookup instead of thirty.
 [*][b]Fix Light Settings Subscription[/b] [i](client)[/i] — registers lights for graphics-setting changes in a lookup table instead of a static event whose unsubscribe scans every other lit light.
@@ -129,7 +128,7 @@ The mods involved:
 
 [list]
 [*][b][url=https://github.com/redseiko/ComfyMods]ComfyMods[/url][/b] — redseiko (GPL-3.0), the same licence as this project. Seven of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Compress, Effectual and Atlas — account for eleven of the entries below.
-[*][b][url=https://github.com/ontrigger/ValheimPerformanceOptimizations]ValheimPerformanceOptimizations[/url][/b] — ontrigger (MIT). One of the performance entries below, the event-fed spawn queue the object-stream rescan fix is built on, plus independent corroboration of two more.
+[*][b][url=https://github.com/ontrigger/ValheimPerformanceOptimizations]ValheimPerformanceOptimizations[/url][/b] — ontrigger (MIT). Independent corroboration of one of the performance entries below.
 [*][b][url=https://github.com/AzumattDev/MyPitsDontLeak]MyPitsDontLeak[/url][/b] — Azumatt (MIT).
 [*][b]Zen.ModLib[/b] — ZenDragon. Used as a reference; no code was used.
 [*][b]Iron Gate Studio[/b] — Valheim itself. The decompiled game source is the reference used to locate defects; no game code is redistributed.
@@ -143,8 +142,6 @@ The mods involved:
 [*][b]Fix Tar Pit Buffer Disposal[/b] — MyPitsDontLeak, Azumatt: the root cause; our implementation is a transpiler rather than wholesale method replacement.
 [*][b]Fix ZDO Packet Allocation[/b] — ComfyMods, Compress: the technique, taken on its own without that mod's GZip protocol change.
 [*][b]Fix Support Lookup Cost[/b] — MidnightsFX, corroborated by ontrigger's ValheimPerformanceOptimizations (MIT): arrived at the same map-probe and lazy-default forms, and the single-fetch centre of mass.
-[*][b]Fix Light Flicker Overhead[/b] — MidnightsFX. Point Light Limit exposes a dormant vanilla mechanism.
-[*][b]Fix Object Stream Rescan[/b] — ontrigger's ValheimPerformanceOptimizations (MIT): event-fed spawn queue, the zone-set diff, and the 8 m re-sort threshold.
 [*][b]Fix Cooking Slot Keys[/b] — Iron Gate Studio: the key-hash pattern, taken from [font=Courier New]ArmorStand.InitKeys[/font].
 [*]Every other performance fix — MidnightsFX.
 [/list]

@@ -17,10 +17,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // vanilla's exact filter and sort only every third pass or when the player's zone changes.
     // Creation itself is unchanged: same per-pass budget, same order. A cached entry is guarded at
     // consume time against having been created meanwhile and against its pooled ZDO having been
-    // recycled into a different object (the captured id no longer matches). This is the fallback
-    // path when SpawnEventQueuePatch is not driving; that patch's prefix runs first and skips this
-    // one while it is. Other mods' prefixes on this method are bypassed; re-check the copied filter
-    // against the game source on updates.
+    // recycled into a different object (the captured id no longer matches). Other mods' prefixes
+    // on this method are bypassed; re-check the copied filter against the game source on updates.
     //
     // Both: a dedicated server streams objects for connected players through this path.
     [PatchSide(Side.Both)]
@@ -108,7 +106,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
                 if (__instance.CreateObject(zdo) != null) {
                     ++created;
-                    if (created > countCap) { break; }
+                    if (created >= countCap) { break; }
                 } else if (ZNet.instance.IsServer()) {
                     zdo.SetOwner(ZDOMan.GetSessionID());
                     ZLog.Log("Destroyed invalid predab ZDO:" + zdo.m_uid);

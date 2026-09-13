@@ -73,7 +73,6 @@ namespace ValheimCommunityPatch {
             Patches.Performance.SectorInstanceIndexPatch.BindConfig();
             Patches.Performance.SupportSleepPatch.BindConfig();
             Patches.Performance.ZoneDiffRemovalPatch.BindConfig();
-            Patches.Performance.SpawnEventQueuePatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();
