@@ -114,11 +114,6 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Idle Wear Visits** *(both)* — skips a building piece's whole wear visit while it is provably
   quiet: support asleep, locally owned, dry or roofed while wet, above the waterline, outside the
   Ashlands, and undamaged since the last visit.
-- **Fix Reflection Probe Spikes** *(client)* — renders the realtime reflection cubemap one face per
-  frame at a configurable resolution and reduced quality, holding a face back while the frame is over
-  budget.
-- **Fix Physics Catchup Spiral** *(both)* — caps how many fixed physics steps one frame may run to
-  catch up after a stall (default 8; vanilla is about 16).
 - **Fix ZDO Value Write Allocation** *(both)* — compares a ZDO field write against its stored value
   without boxing it.
 - **Fix Doubled ZDO Lookups** *(both)* — reads ZDO data with one dictionary lookup instead of two.
@@ -221,7 +216,7 @@ The mods involved:
   this project. Seven of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Compress,
   Effectual and Atlas — account for eleven of the entries below.
 - **[ValheimPerformanceOptimizations](https://github.com/ontrigger/ValheimPerformanceOptimizations)**
-  — ontrigger (MIT). Three of the performance entries below, including the event-fed spawn queue the
+  — ontrigger (MIT). One of the performance entries below, the event-fed spawn queue the
   object-stream rescan fix is built on, plus independent corroboration of two more.
 - **[MyPitsDontLeak](https://github.com/AzumattDev/MyPitsDontLeak)** — Azumatt (MIT).
 - **Zen.ModLib** — ZenDragon. Used as a reference; no code was used.
@@ -260,8 +255,6 @@ The mods involved:
 | Fix Smoke Overhead | MidnightsFX | — |
 | Fix Unload Discovery Scan | MidnightsFX | — |
 | Fix Idle Wear Visits | MidnightsFX | — |
-| Fix Reflection Probe Spikes | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | Face-sliced probe rendering with quality clamps |
-| Fix Physics Catchup Spiral | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | The maximumDeltaTime cap and its default |
 | Fix Object Stream Rescan | [ontrigger's ValheimPerformanceOptimizations][vpo] (MIT) | Event-fed spawn queue, the zone-set diff, and the 8 m re-sort threshold |
 | Fix ZDO Value Write Allocation | MidnightsFX | — |
 | Fix Doubled ZDO Lookups | MidnightsFX | — |

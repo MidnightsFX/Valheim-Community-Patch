@@ -69,8 +69,6 @@ Where a fix was sourced from, or corroborated against, another modder's work, th
 [*][b]Fix Smoke Overhead[/b] [i](client)[/i] — writes each smoke puff's physics mass on 2% lifetime steps, rechecks its render chunk four times a second, and reads its position once per frame.
 [*][b]Fix Unload Discovery Scan[/b] [i](both)[/i] — finds objects that left the loaded area through a per-zone instance index instead of walking every loaded object; "Object Unload Frame Budget" caps how many are handed to the engine per pass (default 250, 0 is vanilla).
 [*][b]Fix Idle Wear Visits[/b] [i](both)[/i] — skips a building piece's whole wear visit while it is provably quiet: support asleep, locally owned, dry or roofed while wet, above the waterline, outside the Ashlands, and undamaged since the last visit.
-[*][b]Fix Reflection Probe Spikes[/b] [i](client)[/i] — renders the realtime reflection cubemap one face per frame at a configurable resolution and reduced quality, holding a face back while the frame is over budget.
-[*][b]Fix Physics Catchup Spiral[/b] [i](both)[/i] — caps how many fixed physics steps one frame may run to catch up after a stall (default 8; vanilla is about 16).
 [*][b]Fix ZDO Value Write Allocation[/b] [i](both)[/i] — compares a ZDO field write against its stored value without boxing it.
 [*][b]Fix Doubled ZDO Lookups[/b] [i](both)[/i] — reads ZDO data with one dictionary lookup instead of two.
 [*][b]Fix Collision Contact Allocation[/b] [i](both)[/i] — reads a collision's contact points into a reused buffer instead of allocating an array per read.
@@ -131,7 +129,7 @@ The mods involved:
 
 [list]
 [*][b][url=https://github.com/redseiko/ComfyMods]ComfyMods[/url][/b] — redseiko (GPL-3.0), the same licence as this project. Seven of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Compress, Effectual and Atlas — account for eleven of the entries below.
-[*][b][url=https://github.com/ontrigger/ValheimPerformanceOptimizations]ValheimPerformanceOptimizations[/url][/b] — ontrigger (MIT). Three of the performance entries below, including the event-fed spawn queue the object-stream rescan fix is built on, plus independent corroboration of two more.
+[*][b][url=https://github.com/ontrigger/ValheimPerformanceOptimizations]ValheimPerformanceOptimizations[/url][/b] — ontrigger (MIT). One of the performance entries below, the event-fed spawn queue the object-stream rescan fix is built on, plus independent corroboration of two more.
 [*][b][url=https://github.com/AzumattDev/MyPitsDontLeak]MyPitsDontLeak[/url][/b] — Azumatt (MIT).
 [*][b]Zen.ModLib[/b] — ZenDragon. Used as a reference; no code was used.
 [*][b]Iron Gate Studio[/b] — Valheim itself. The decompiled game source is the reference used to locate defects; no game code is redistributed.
@@ -146,8 +144,6 @@ The mods involved:
 [*][b]Fix ZDO Packet Allocation[/b] — ComfyMods, Compress: the technique, taken on its own without that mod's GZip protocol change.
 [*][b]Fix Support Lookup Cost[/b] — MidnightsFX, corroborated by ontrigger's ValheimPerformanceOptimizations (MIT): arrived at the same map-probe and lazy-default forms, and the single-fetch centre of mass.
 [*][b]Fix Light Flicker Overhead[/b] — MidnightsFX. Point Light Limit exposes a dormant vanilla mechanism.
-[*][b]Fix Reflection Probe Spikes[/b] — ontrigger's ValheimPerformanceOptimizations (MIT): face-sliced probe rendering with quality clamps.
-[*][b]Fix Physics Catchup Spiral[/b] — ontrigger's ValheimPerformanceOptimizations (MIT): the maximumDeltaTime cap and its default.
 [*][b]Fix Object Stream Rescan[/b] — ontrigger's ValheimPerformanceOptimizations (MIT): event-fed spawn queue, the zone-set diff, and the 8 m re-sort threshold.
 [*][b]Fix Cooking Slot Keys[/b] — Iron Gate Studio: the key-hash pattern, taken from [font=Courier New]ArmorStand.InitKeys[/font].
 [*]Every other performance fix — MidnightsFX.

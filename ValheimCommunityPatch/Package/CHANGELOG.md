@@ -10,6 +10,9 @@
   waves in shallow water are no longer tinted by the deep-water colour. The 2026-09-09 Valheim update
   changed the water shader to shade shallow water by the deep-water colour, so a shallow corner of a
   tile could tint the whole tile's waves.
+- Removed two performance patches, both had extremely minimal gains and ended up showing side effects on some systems
+	- Reflection Probe Spikes (client)
+	- Physics Catchup Spiral (both)
 ```
 
 **0.25.0**
