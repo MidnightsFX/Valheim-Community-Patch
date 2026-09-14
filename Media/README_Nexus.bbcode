@@ -101,6 +101,7 @@ Where a fix was sourced from, or corroborated against, another modder's work, th
 [*][b]Tolerate Duplicate ZDOs On Load[/b] [i](server)[/i] — loads a save containing duplicate ZDO ids, keeping the later one and logging a warning, instead of refusing to load.
 [*][b]Fix Effect Areas[/b] [i](both)[/i] — grows the fixed 128-collider buffer behind fire warmth and wetness checks when it fills, and removes destroyed characters from effect areas instead of throwing every physics step.
 [*][b]Fix Fuel And Ore Loss[/b] [i](client)[/i] — takes ownership of a smelter, kiln or fireplace before adding fuel or ore, so the item cannot be lost to a dropped network message.
+[*][b]Refund Rejected Station Items[/b] [i](both)[/i] — drops an item back at the player when a smelter, kiln, fireplace, cooking station or fermenter discards it on arrival because the station changed owner or filled up after the item left their inventory; covers a vanilla sender and the "last slot" race.
 [*][b]Share Boss Defeat Keys[/b] [i](client)[/i] — gives every nearby player the per-player boss defeat key, not only the one whose client owned the boss; works against a vanilla server.
 [*][b]Fix Recipe Amount Crash[/b] [i](client)[/i] — guards the null dereference that broke the crafting panel for a "requires any one of these" recipe with none of the ingredients carried.
 [*][b]Fix Spawner Null Prefabs[/b] [i](both)[/i] — drops null entries from a spawner's creature table on load instead of letting one kill the spawner.

@@ -80,6 +80,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.RemoveObjectsNrePatch.BindConfig();
             Patches.Correctness.EffectAreaPatch.BindConfig();
             Patches.Correctness.FuelLossPatch.BindConfig();
+            Patches.Correctness.StationRefundPatch.BindConfig();
             Patches.Correctness.BossKeySharePatch.BindConfig();
             Patches.Correctness.ItemIconVariantPatch.BindConfig();
             Patches.Correctness.SendFailureLogSpamPatch.BindConfig();

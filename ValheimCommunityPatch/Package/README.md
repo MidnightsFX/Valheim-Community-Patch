@@ -165,6 +165,9 @@ every side.
   physics step.
 - **Fix Fuel And Ore Loss** *(client)* — takes ownership of a smelter, kiln or fireplace before adding
   fuel or ore, so the item cannot be lost to a dropped network message.
+- **Refund Rejected Station Items** *(both)* — drops an item back at the player when a smelter, kiln,
+  fireplace, cooking station or fermenter discards it on arrival because the station changed owner or
+  filled up after the item left their inventory; covers a vanilla sender and the "last slot" race.
 - **Share Boss Defeat Keys** *(client)* — gives every nearby player the per-player boss defeat key,
   not only the one whose client owned the boss; works against a vanilla server.
 - **Fix Recipe Amount Crash** *(client)* — guards the null dereference that broke the crafting panel

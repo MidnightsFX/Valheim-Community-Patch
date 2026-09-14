@@ -1,5 +1,16 @@
 # Changelog
 
+**0.27.0**
+```
+- Refund Rejected Station Items (both): an item that a smelter, kiln, fireplace, cooking station or
+  fermenter discards on arrival is dropped back at the player who sent it, within auto-pickup range.
+  Vanilla removes the item from your inventory and then sends a network message to whoever owned the
+  station; the owner silently discards it if it no longer owns the station or, for a fireplace,
+  cooking station or fermenter, if the station filled up in the meantime. Fix Fuel And Ore Loss
+  protects a sender running this mod; this protects a vanilla sender, and the "last slot" race
+  between two players, from whichever side receives the message.
+```
+
 **0.26.1**
 ```
 - Removed Object Stream Rescan (both): on multiplayer clients it could re-create and destroy objects many
