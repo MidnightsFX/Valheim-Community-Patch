@@ -1,5 +1,10 @@
 # Changelog
 
+**0.27.1**
+```
+- Compatibility improvement for mods which load live ZDOs in the near sector which are far away
+```
+
 **0.27.0**
 ```
 - Refund Rejected Station Items (both): an item that a smelter, kiln, fireplace, cooking station or

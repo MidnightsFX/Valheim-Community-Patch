@@ -37,12 +37,17 @@ namespace ValheimCommunityPatch
         // Each patch class is applied on its own rather than through Harmony.PatchAll, so a game
         // update that breaks one target logs one error and leaves every other fix working.
         //
-        // Two rules every patch class follows:
+        // Three rules every patch class follows:
         //
         //  - Transpilers run at Priority.Last. Harmony applies transpilers in priority order, so
         //    ours see IL that other mods have already rewritten. Each of ours counts what it
         //    changed and stands down when the count is wrong, so where another mod has fixed the
         //    same defect its version wins instead of both mods breaking the method.
+        //
+        //  - A prefix that replaces a method other mods steer through its arguments runs at
+        //    Priority.Last and honours __runOriginal, so it acts on what their prefixes changed and
+        //    stands down when one of them already replaced the call. ZNetScene.RemoveObjects is
+        //    the known case: mods keep objects loaded by adding them to its lists.
         //
         //  - Client-only fixes (see PatchSide) are not applied on a dedicated server. Whether the
         //    process is headless is the only environment fact known this early, and it never

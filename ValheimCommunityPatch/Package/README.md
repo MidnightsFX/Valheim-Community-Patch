@@ -349,6 +349,13 @@ When that happens you will see a line like *"found no ZLog.Log calls to redirect
 inactive"* in the log. That is the mechanism working, not a failure. A real failure looks different —
 `fix(es) failed` on the startup line, with the exception above it.
 
+Object unloading follows the same principle. Fix Unload Discovery Scan and Fix Object Unload Crash
+decide what to unload only after every other mod has had its say, so a mod that keeps an object
+loaded (SeidrChest's remote chest, for example) still keeps it loaded, and a mod that replaces the
+unload pass itself takes over from both. When another mod does change what stays loaded, the log
+says so once with *"Unload discovery: another mod changed which objects stay loaded"*; that is also
+the mechanism working.
+
 Known overlap: **ComfyMods BetterZeeLog** fixes three of the same defects (container request logging,
 "Failed to send data", and the projectile zero-velocity rotation warning). The two are safe to run
 together, and BetterZeeLog's versions of those three take effect.

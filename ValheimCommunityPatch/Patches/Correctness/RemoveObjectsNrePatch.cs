@@ -21,9 +21,11 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // so the entry that threw is still visible to the guarded pass.
     //
     // Composition: SceneIdleSkipPatch and RemoveSweepPacingPatch decide above this whether a pass
-    // runs at all; the __runOriginal check honours the pacing prefix. ZoneDiffRemovalPatch replaces
-    // this prefix entirely while its index is healthy and borrows GuardedSweep as its own
-    // fallback. Both: every peer runs this pass. Provenance: ComfyMods/Scenic (GPL-3.0, redseiko).
+    // runs at all; the __runOriginal check honours the pacing prefix and any other mod that
+    // replaced the pass. Priority.Last so other mods' prefixes have already added what they keep
+    // loaded to the lists this stamps. ZoneDiffRemovalPatch replaces this prefix entirely while
+    // engaged and borrows GuardedSweep as its own fallback. Both: every peer runs this pass.
+    // Provenance: ComfyMods/Scenic (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class RemoveObjectsNrePatch {
@@ -43,12 +45,16 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly List<ZDO> OrphanedKeys = new List<ZDO>();
 
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("RemoveObjects")]
         private static bool RemoveObjectsPrefix(
             ZNetScene __instance, List<ZDO> currentNearObjects, List<ZDO> currentDistantObjects,
             bool __runOriginal) {
-            // A higher-priority prefix (RemoveSweepPacingPatch) already skipped this sweep.
+            // An earlier prefix (RemoveSweepPacingPatch or another mod's) already skipped this sweep.
             if (!__runOriginal) { return false; }
+
+            // It shares this priority, so it may run after this prefix; it finishes every pass itself.
+            if (Performance.ZoneDiffRemovalPatch.Engaged) { return true; }
 
             if (Enabled == null || !Enabled.Value) { return true; }
 

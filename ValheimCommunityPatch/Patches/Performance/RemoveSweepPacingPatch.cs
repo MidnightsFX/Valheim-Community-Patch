@@ -16,8 +16,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // loaded distance. Time-based rather than every-Nth-pass so that SceneIdleSkipPatch's 1 Hz
     // hygiene pass is always due.
     //
-    // Composition: ZoneDiffRemovalPatch replaces this whole stack while its index is healthy, and
-    // RemoveObjectsNrePatch honours this prefix's decision through __runOriginal. Both.
+    // Composition: this stands down while ZoneDiffRemovalPatch is engaged, because that prefix runs
+    // below this one and must see every pass; otherwise RemoveObjectsNrePatch honours this
+    // prefix's decision through __runOriginal. Both.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class RemoveSweepPacingPatch {
@@ -42,6 +43,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPriority(Priority.High)]
         [HarmonyPatch("RemoveObjects")]
         private static bool RemoveObjectsPrefix() {
+            if (ZoneDiffRemovalPatch.Engaged) { return true; }
+
             int intervalMs = SweepIntervalMs != null ? SweepIntervalMs.Value : 100;
             if (intervalMs <= 0) { return true; }
 
