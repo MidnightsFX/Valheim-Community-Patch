@@ -1,5 +1,21 @@
 # Changelog
 
+**0.28.0**
+```
+- Three opt-in server memory fixes, all off by default, in a new `Fixes - Server Memory` config
+  section. They target a dedicated server whose memory climbs with uptime under many players:
+  - Evict Dead ZDO Records (server): drops the record of a destroyed object after a few minutes.
+    Vanilla keeps the id of every object destroyed since the world loaded for the life of the process.
+  - Trim ZDO Data Pool (server): caps the pools that recycle objects' field tables and clears the
+    strings and byte arrays a recycled table still points at, so memory can come back down from
+    the busiest moment since the world loaded.
+  - Fix ZDO Serialize Allocation (server): writes an object's fields to the network straight from
+    their tables instead of copying all seven into fresh lists per object per player per send tick.
+- `vcp_zdomem` server console command (admins can run it remotely) and the `Log ZDO Memory Stats`
+  diagnostic, reporting the per-player table sizes, dead-object records, field table pool depths,
+  what each memory fix has removed so far, and the managed heap, so the effect can be measured.
+```
+
 **0.27.1**
 ```
 - Compatibility improvement for mods which load live ZDOs in the near sector which are far away

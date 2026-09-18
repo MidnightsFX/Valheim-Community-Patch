@@ -18,6 +18,10 @@ namespace ValheimCommunityPatch {
         public const string SectionCorrectness = "Fixes - Correctness";
         public const string SectionTerrain = "Fixes - Terrain";
 
+        // Opt-in, off by default: each trades a little re-allocation or a shorter safety margin
+        // for memory a long-running server never otherwise gets back, the operator's call to make.
+        public const string SectionServerMemory = "Fixes - Server Memory";
+
         // Verify toggles and other diagnostics. Kept apart from the fixes so nobody mistakes them
         // for one: each deliberately costs the work its fix exists to avoid.
         public const string SectionDebug = "Debug";
@@ -73,6 +77,10 @@ namespace ValheimCommunityPatch {
             Patches.Performance.SectorInstanceIndexPatch.BindConfig();
             Patches.Performance.SupportSleepPatch.BindConfig();
             Patches.Performance.ZoneDiffRemovalPatch.BindConfig();
+            Patches.Performance.DeadZdoEvictPatch.BindConfig();
+            Patches.Performance.ZdoDataPoolTrimPatch.BindConfig();
+            Patches.Performance.ZdoSerializeAllocPatch.BindConfig();
+            Patches.Performance.ZdoMemoryStats.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();

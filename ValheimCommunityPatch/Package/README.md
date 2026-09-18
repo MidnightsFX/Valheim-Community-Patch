@@ -8,8 +8,9 @@ spam. It deliberately ships no quality-of-life features, no balance changes, and
 can install it on a server without anyone having to agree about how the game should play.
 
 Performance fixes are always on; the config holds only their tuning values and the admin-only Verify
-diagnostics. Correctness and terrain fixes each have their own toggle. Config values are admin-only
-and server-synced.
+diagnostics. Correctness and terrain fixes each have their own toggle. Server memory fixes are the
+exception: they are off by default and opt-in, see [Server memory](#server-memory-opt-in). Config
+values are admin-only and server-synced.
 
 Each fix is tagged with the side it is worth installing on. *(server)* fixes only do something on
 the machine hosting the world — a dedicated server or a listen host. *(client)* fixes need a local
@@ -201,6 +202,28 @@ every side.
 
 The two log fixes redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
 
+### Server memory (opt-in)
+
+These are **off by default**. Each trades a little re-allocation or a shorter safety margin for
+memory a busy dedicated server otherwise never gets back, which is the operator's call, so each
+has its own toggle in the `Fixes - Server Memory` config section. They exist for servers whose
+memory climbs with uptime under many players; a small server gains little from them. The `vcp_zdomem` server
+console command (an admin can run it remotely) and the `Log ZDO Memory Stats` diagnostic print the
+sizes involved, so the effect can be seen before and after turning one on.
+
+- **Evict Dead ZDO Records** *(server)* — drops the record of a destroyed object after `Dead ZDO
+  Retain Seconds` (default 600). Vanilla keeps the id of every object destroyed since the world
+  loaded, to reject a stale copy a player might still send back, and never clears that list while the
+  world is loaded; the stale copies it guards against arrive within seconds of the destroy.
+- **Trim ZDO Data Pool** *(server)* — caps, at `ZDO Data Pool Max Depth` per field type, the pools
+  that recycle objects' field tables, and clears the strings and byte arrays a recycled table still
+  points at. Without it the pools hold as many tables as were ever in use at once, each keeping its
+  last contents alive, so memory never comes back down from the busiest moment since the world
+  loaded. A plateau rather than a climb, and the smallest of the three.
+- **Fix ZDO Serialize Allocation** *(server)* — writes an object's fields to the network straight
+  from their tables instead of copying all seven into fresh lists, plus seven callbacks, per object
+  per player per send tick. Garbage-collector churn rather than a leak; the bytes sent are identical.
+
 ## Credit and sources
 
 This mod fixes vanilla defects, and other modders found — and in several cases already fixed — a good
@@ -299,6 +322,14 @@ The mods involved:
 | Fix Unsaved Client Changes | MidnightsFX | — |
 | Fix Water Colour Seams | MidnightsFX | — |
 | Fix Non-Item ObjectDB Entries | MidnightsFX | — |
+
+### Server memory
+
+| Fix | Sourced from | What came from there |
+| --- | --- | --- |
+| Evict Dead ZDO Records | MidnightsFX | — |
+| Trim ZDO Data Pool | MidnightsFX | — |
+| Fix ZDO Serialize Allocation | MidnightsFX | — |
 
 ## Installation
 
