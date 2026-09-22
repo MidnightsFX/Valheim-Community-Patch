@@ -26,8 +26,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly HashSet<ZDOID> ToForceSend = new HashSet<ZDOID>();
 
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(Game.ConnectPortals))]
-        private static bool ConnectPortalsPrefix(Game __instance) {
+        private static bool ConnectPortalsPrefix(Game __instance, bool __runOriginal) {
+            if (!__runOriginal) { return false; }
+
             ZDOMan zdoMan = ZDOMan.instance;
             if (zdoMan == null) { return true; }
 
