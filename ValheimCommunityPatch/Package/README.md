@@ -199,6 +199,14 @@ every side.
 - **Fix Non-Item ObjectDB Entries** *(both)* — drops prefabs that are not items from the game's item
   list on load; the 2026-09-09 update listed three (`PropFeastDeepNorth`, `SnowRoller`,
   `FrozenKing_Summon`) that break mods treating every entry as an item. They can still be spawned.
+- **Clear Patrol Point On Taming** *(both)* — clears the patrol point a spawner stamped on a creature
+  when you tame it, so it settles where you keep it instead of running back to where it spawned.
+  Mostly boars, which cannot be told to follow or stay and so had no way to clear it. Telling a tamed
+  creature to stay still sets a patrol point as normal.
+- **Fix Map Auto-Close** *(client)* — stops the map closing for every player on the server whenever
+  anyone wakes or kills a boss; vanilla closes an open map on every world key change. It still closes
+  for a player with a boss within `Map Auto-Close Boss Range` (default 100 m, the boss health bar
+  range).
 
 The two log fixes redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
 
@@ -322,6 +330,8 @@ The mods involved:
 | Fix Unsaved Client Changes | MidnightsFX | — |
 | Fix Water Colour Seams | MidnightsFX | — |
 | Fix Non-Item ObjectDB Entries | MidnightsFX | — |
+| Clear Patrol Point On Taming | MidnightsFX | — |
+| Fix Map Auto-Close | MidnightsFX | — |
 
 ### Server memory
 

@@ -1,5 +1,20 @@
 # Changelog
 
+**0.29.0**
+```
+- Fix compatibility with Portal mods which rewrite how portals work
+- Clear Patrol Point On Taming (both): a creature spawned by a spawner that sets a patrol point kept
+  that point after being tamed, so it ran back to where it spawned instead of staying where you kept
+  it. The patrol point is now cleared when the creature is tamed. Boars were worst affected: they
+  cannot be told to follow or stay, so nothing in the game could clear it. Telling a tamed creature
+  to stay still sets a patrol point as before. Creatures tamed before this version keep their old
+  point.
+- Fix Map Auto-Close (client): the map closed for every player on the server whenever anyone woke
+  or killed a boss. Vanilla closes an open map on every world key change, and a boss fight makes
+  several. The map now stays open unless a boss is within `Map Auto-Close Boss Range` (default
+  100 m, the boss health bar range), where it closes as before.
+```
+
 **0.28.0**
 ```
 - Three opt-in server memory fixes, all off by default, in a new `Fixes - Server Memory` config

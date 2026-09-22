@@ -99,6 +99,8 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.ReceivedZdoDirtyPatch.BindConfig();
             Patches.Correctness.WaterColourSeamPatch.BindConfig();
             Patches.Correctness.ObjectDbNonItemPatch.BindConfig();
+            Patches.Correctness.TamedPatrolPointPatch.BindConfig();
+            Patches.Correctness.MapAutoClosePatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
