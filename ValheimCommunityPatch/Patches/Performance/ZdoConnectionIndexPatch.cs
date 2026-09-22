@@ -15,7 +15,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // on every inner iteration), ConnectSpawners and ConnectSyncTransforms keep the first match
     // per hash and never consume (vanilla breaks on the first match), and ConnectSyncTransforms
     // works purely through the static ZDOExtraData maps with no ZDO lookup or null check, so a
-    // connection whose ZDO is gone is still paired, as in vanilla.
+    // connection whose ZDO is gone is still paired, as in vanilla. Priority.Last and
+    // __runOriginal, so a mod that replaces the pairing (XPortalNetworks restores portals from its
+    // own targets) keeps its say instead of gaining vanilla's two-way links on top.
     //
     // Server: all three are private and only reached from ZDOMan.Load on the host.
     // Provenance: ComfyMods/Atlas's ConnectSpawners rewrite (GPL-3.0, redseiko), extended here
@@ -31,8 +33,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private const ZDOExtraData.ConnectionType SyncTransformTargetType = ZDOExtraData.ConnectionType.SyncTransform | ZDOExtraData.ConnectionType.Target;
 
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("ConnectPortals")]
-        private static bool ConnectPortalsPrefix(ZDOMan __instance) {
+        private static bool ConnectPortalsPrefix(ZDOMan __instance, bool __runOriginal) {
+            if (!__runOriginal) { return false; }
+
             List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(PortalType);
             List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(PortalTargetType);
 
@@ -95,8 +100,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("ConnectSpawners")]
-        private static bool ConnectSpawnersPrefix(ZDOMan __instance) {
+        private static bool ConnectSpawnersPrefix(ZDOMan __instance, bool __runOriginal) {
+            if (!__runOriginal) { return false; }
+
             List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(SpawnedType);
             List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(SpawnedTargetType);
 
@@ -142,8 +150,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("ConnectSyncTransforms")]
-        private static bool ConnectSyncTransformsPrefix() {
+        private static bool ConnectSyncTransformsPrefix(bool __runOriginal) {
+            if (!__runOriginal) { return false; }
+
             List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(SyncTransformType);
             List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(SyncTransformTargetType);
 
