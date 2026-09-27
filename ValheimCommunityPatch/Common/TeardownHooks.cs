@@ -9,7 +9,8 @@ namespace ValheimCommunityPatch {
 
     /// <summary>
     /// One OnDestroy postfix per destroyed ZNetView and WearNTear, fanning out to every registry
-    /// in this mod that tracks them, plus the "Log Destroy Storm Stats" diagnostic.
+    /// in this mod that tracks them and to Fix Loading Screen Hang, plus the "Log Destroy Storm
+    /// Stats" diagnostic.
     /// </summary>
     /// <remarks>
     /// Object teardown is the most zone-boundary-correlated cost in the game, and before this
@@ -64,6 +65,7 @@ namespace ValheimCommunityPatch {
                 }
 
                 SectorInstanceIndexPatch.OnViewDestroyed(__instance);
+                Patches.Correctness.DeadInstancePatch.OnViewDestroyed(__instance);
             }
         }
 

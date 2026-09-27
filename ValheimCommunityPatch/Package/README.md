@@ -136,12 +136,17 @@ fix under [Credit and sources](#credit-and-sources).
   revision, so an hour of missed production is not re-read once per simulated second.
 - **Fix Idle Sound Updates** *(client)* — drops a finished one-shot sound out of the per-frame audio
   updater list until something plays it again.
+- **Fix Idle Creature Sync** *(both)* — stops a standing creature's owner re-sending it to every
+  player each frame over physics jitter: its position, velocity and ground tilt are sent once they
+  move more than 2 cm, 0.05 m/s or 1 degree from what was last sent, instead of on any change at
+  all. Players, ships, carts and items are untouched. The one performance fix with a toggle, since
+  it changes what other players see, by at most those amounts.
 
 ### Terrain
 
-**Fix Terrain Seams** and **Fix Terrain Paint Seams** change only what is drawn, never what is saved,
-so they are client-only. **Fix Terrain Paint Zone Fanout** changes what is recorded, so it runs on
-every side.
+**Fix Terrain Seams**, **Fix Terrain Paint Seams** and **Fix Swamp Plains Shore Seams** change only
+what is drawn, never what is saved, so they are client-only. **Fix Terrain Paint Zone Fanout** and **Fix Terrain Paint Doubling** change
+what is recorded, so they run on every side.
 
 - **Fix Terrain Seams** *(client)* — computes terrain lighting normals across zone boundaries,
   removing the hard crease along the 64 m grid.
@@ -150,6 +155,15 @@ every side.
 - **Fix Terrain Paint Zone Fanout** *(both)* — records terrain paint into every zone it actually
   covers, including the neighbour about a metre west or south that vanilla left out; affects edits
   made from now on.
+- **Fix Terrain Paint Doubling** *(both)* — applies an edit that reaches two zones once to the
+  ground they share, instead of twice (four times at a corner); in the Deep North that stops
+  piling or clearing snow from leaving a ridge or trench along the zone line.
+- **Fix Swamp Plains Shore Seams** *(client)* — stops shores where swamp blends into plains from being
+  drawn with the Ashlands shoreline in hard straight lines along the zone grid. The game's terrain
+  colours cannot express that blend without also meaning Ashlands, so the two are bridged by a
+  narrow strip where they meet instead: black forest ground by default, or Ashlands ground that
+  follows the crossover rather than the zone grid ("Swamp Plains Bridge Ground"; "Swamp Plains
+  Blend Sharpness" sets the strip's width).
 - **Fix Terrain Paint Mask Indexing** *(client)* — corrects the stride and bounds the `optterrain`
   console command uses to walk terrain paint data.
 - **Fix Terrain Compiler Init Race** *(both)* — recovers a zone's terrain compiler that loaded before
@@ -207,8 +221,18 @@ every side.
   anyone wakes or kills a boss; vanilla closes an open map on every world key change. It still closes
   for a player with a boss within `Map Auto-Close Boss Range` (default 100 m, the boss health bar
   range).
+- **Fix Biome Sector Lookup** *(both)* — makes the biome sector lookup agree with the actual biome near
+  borders. Vanilla reads its 12 m biome grid rounded down, so within about 12 m of a border the player's
+  biome, weather, spawn levels, the map's biome name and terrain colouring follow the neighbouring biome,
+  and a `GetBiome error` warning is logged every second. Location placement keeps vanilla's lookup, so
+  seeds still place locations where unmodded Valheim does.
+- **Fix Loading Screen Hang** *(both)* — unregisters a networked object that was destroyed without the
+  game's object manager being told, so a dungeon exit, portal trip or respawn next to it can finish
+  loading. Vanilla leaves one behind on your client each time another player opens an Infested Mine
+  treasure pile near you, and the loading screen then waits on it until you quit.
 
-The two log fixes redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
+The two log fixes, and Fix Biome Sector Lookup's warning, redirect rather than delete: turn on
+`EnableDebugMode` and the messages come back.
 
 ### Server memory (opt-in)
 
@@ -296,6 +320,7 @@ The mods involved:
 | Fix Station Range Scans | MidnightsFX | — |
 | Fix Smelter Catch-up Reads | MidnightsFX | — |
 | Fix Idle Sound Updates | MidnightsFX | — |
+| Fix Idle Creature Sync | MidnightsFX | — |
 
 ### Terrain
 
@@ -304,6 +329,8 @@ The mods involved:
 | Fix Terrain Seams | MidnightsFX | — |
 | Fix Terrain Paint Seams | MidnightsFX | — |
 | Fix Terrain Paint Zone Fanout | MidnightsFX | — |
+| Fix Terrain Paint Doubling | MidnightsFX | — |
+| Fix Swamp Plains Shore Seams | MidnightsFX | — |
 | Fix Terrain Paint Mask Indexing | MidnightsFX | — |
 | Fix Terrain Compiler Init Race | MidnightsFX | — |
 
@@ -332,6 +359,8 @@ The mods involved:
 | Fix Non-Item ObjectDB Entries | MidnightsFX | — |
 | Clear Patrol Point On Taming | MidnightsFX | — |
 | Fix Map Auto-Close | MidnightsFX | — |
+| Fix Biome Sector Lookup | MidnightsFX | — |
+| Fix Loading Screen Hang | MidnightsFX | — |
 
 ### Server memory
 
@@ -400,6 +429,15 @@ the mechanism working.
 Known overlap: **ComfyMods BetterZeeLog** fixes three of the same defects (container request logging,
 "Failed to send data", and the projectile zero-velocity rotation warning). The two are safe to run
 together, and BetterZeeLog's versions of those three take effect.
+
+Known overlap: **Network Performance System** 1.9.1 and later apply the same idle creature fix as Fix
+Idle Creature Sync. When it is installed this mod's version stands down and says so once in the log.
+
+Known overlap: **ZenPortal** has its own rules for which portals may pair: portals without a rune
+shard never link, each rune links one pair, and wood and stone portals can be kept apart. Fix Portal
+Connection Scan replaces the game's pairing pass, which would skip those rules, so it stands down
+whenever another mod patches that pass and says so once in the log with *"Portal pairing is changed
+by ..."*. The game's own pairing then runs with the other mod's rules applied.
 
 ## Reporting a bug
 

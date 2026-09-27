@@ -1,0 +1,317 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Reflection;
+using System.Reflection.Emit;
+using BepInEx.Configuration;
+using HarmonyLib;
+using UnityEngine;
+
+namespace ValheimCommunityPatch.Patches.Correctness {
+    // Fix Biome Sector Lookup: the biome sector at a point always has the biome GetBiome reports
+    // there, and the "GetBiome error" warning no longer fills the log.
+    //
+    // AltBiomeWorldData samples GetBiome on a 12 m grid and flood-fills the samples into
+    // BiomeSectors, which carry the alt-biome modifiers. GetBiomeSector reads that grid, and it now
+    // decides the player's biome, the weather, spawn level-ups and the terrain's corner biomes. Its
+    // lookup, (int)((x - 6) / 12 + 1024), rounds down to the sample at or below the point, so up to
+    // 12 m from a border it returns the neighbouring biome's sector. Player.UpdateBiome notices
+    // every second and logs a warning. GetBiomeHeight also looks a sector up on every height
+    // sample and never uses it (the alt-biome height hook behind it is compiled out).
+    //
+    // Prefixes on the two world-space GetBiomeSector overloads return the sector of the 2x2
+    // samples around the point when all four agree, which is almost everywhere and costs no
+    // GetBiome call. Near a border they call GetBiome and take the nearest sample of that biome
+    // within two cells, or a shared sector of that biome with no alt biomes when the biome is a
+    // sliver the grid never sampled. A sliver passing between four agreeing samples is still
+    // missed. Location placement keeps vanilla's lookup, so a seed places locations exactly where
+    // unmodded Valheim does, and distant terrain colours read the nearest sample without the
+    // border check. A transpiler removes GetBiomeHeight's unused lookup, or points it at vanilla's
+    // lookup if a future build reads the result, since heights must match vanilla clients.
+    // Another points UpdateBiome's warning at the debug sink.
+    //
+    // Both: servers place vegetation and roll spawn levels through the same lookup.
+    [PatchSide(Side.Both)]
+    [HarmonyPatch(typeof(WorldGenerator))]
+    internal static class BiomeSectorLookupPatch {
+        private const string FixName = "Fix Biome Sector Lookup";
+
+        internal static ConfigEntry<bool> Enabled;
+
+        internal static void BindConfig() {
+            Enabled = ValConfig.BindFixToggle(
+                typeof(BiomeSectorLookupPatch),
+                ValConfig.SectionCorrectness,
+                FixName,
+                true,
+                "Makes the biome sector lookup agree with the actual biome near biome borders. Vanilla " +
+                "reads a 12 m grid rounded down, so within about 12 m of a border the player's biome, " +
+                "weather, spawn levels, the map's biome name and terrain colouring follow the " +
+                "neighbouring biome, and a 'GetBiome error' warning is logged every second. Location " +
+                "placement keeps vanilla's lookup so seeds generate the same locations. The warning is " +
+                "still visible with EnableDebugMode on. Changing this requires a game restart.");
+        }
+
+        // Sample j sits at (j - c_halfWidth) * c_pixelSize + c_pixelSize / 2; this offset puts
+        // every sample on an integer grid coordinate.
+        private const float CellSize = AltBiomeWorldData.c_pixelSize;
+        private const float GridOffset = AltBiomeWorldData.c_halfWidth - 0.5f;
+
+        // Set while location placement runs, which keeps vanilla's lookup. Thread-static because
+        // HeightmapBuilder looks sectors up on its own thread at the same time.
+        [ThreadStatic] private static bool _inLocationPlacement;
+
+        private static readonly ConcurrentDictionary<Heightmap.Biome, BiomeSector> Fallbacks =
+            new ConcurrentDictionary<Heightmap.Biome, BiomeSector>();
+
+        // Without the location hook, placement would silently stop matching vanilla, so a missing
+        // hook stands the whole fix down.
+        private static readonly HookHealth Hooks = new HookHealth(
+            FixName,
+            () => PatchHelper.HasHook(LocationPlacementHook.Target, typeof(LocationPlacementHook)));
+
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
+        [HarmonyPatch(nameof(WorldGenerator.GetBiomeSector), typeof(float), typeof(float), typeof(bool))]
+        private static bool GetBiomeSectorPrefix(
+            WorldGenerator __instance, float wx, float wy, ref BiomeSector __result, bool __runOriginal) {
+            if (!__runOriginal) { return false; }
+
+            BiomeSector sector = CorrectedSector(__instance, wx, wy);
+            if (sector == null) { return true; }
+
+            __result = sector;
+            return false;
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
+        [HarmonyPatch(nameof(WorldGenerator.GetBiomeSector), typeof(Vector3), typeof(bool))]
+        private static bool GetBiomeSectorVectorPrefix(
+            WorldGenerator __instance, Vector3 worldPos, ref BiomeSector __result, bool __runOriginal) {
+            if (!__runOriginal) { return false; }
+
+            BiomeSector sector = CorrectedSector(__instance, worldPos.x, worldPos.z);
+            if (sector == null) { return true; }
+
+            __result = sector;
+            return false;
+        }
+
+        // Null means vanilla answers: the fix is off, location placement is running, or the grid
+        // is missing or unfinished (vanilla returns its placeholder sectors then).
+        private static BiomeSector CorrectedSector(WorldGenerator gen, float wx, float wz) {
+            if (Enabled == null || !Enabled.Value || _inLocationPlacement) { return null; }
+
+            AltBiomeWorldData data = gen.m_world?.m_biomeData;
+            if (data == null || !data.IsReady || !Hooks.Healthy) { return null; }
+
+            return Lookup(gen, data, wx, wz);
+        }
+
+        private static BiomeSector Lookup(WorldGenerator gen, AltBiomeWorldData data, float wx, float wz) {
+            BiomeSector[,] sectors = data.PointSectors;
+            int last = data.Size - 1;
+
+            float fx = wx / CellSize + GridOffset;
+            float fz = wz / CellSize + GridOffset;
+            int x0 = Mathf.Clamp(Mathf.FloorToInt(fx), 0, last - 1);
+            int z0 = Mathf.Clamp(Mathf.FloorToInt(fz), 0, last - 1);
+
+            // Four samples of one sector around the point: a 2x2 block of one biome is always a
+            // single sector, since the flood fill joins 4-connected samples.
+            BiomeSector sector = sectors[x0, z0];
+            if (sector != null && sectors[x0 + 1, z0] == sector && sectors[x0, z0 + 1] == sector
+                && sectors[x0 + 1, z0 + 1] == sector) {
+                return sector;
+            }
+
+            // Default arguments, as the grid was sampled with.
+            Heightmap.Biome biome = gen.GetBiome(wx, wz);
+
+            BiomeSector nearest = null;
+            float nearestDistance = float.MaxValue;
+            for (int z = Math.Max(z0 - 1, 0); z <= Math.Min(z0 + 2, last); z++) {
+                for (int x = Math.Max(x0 - 1, 0); x <= Math.Min(x0 + 2, last); x++) {
+                    BiomeSector candidate = sectors[x, z];
+                    if (candidate == null || candidate.Biome != biome) { continue; }
+
+                    float dx = x - fx;
+                    float dz = z - fz;
+                    float distance = dx * dx + dz * dz;
+                    if (distance >= nearestDistance) { continue; }
+
+                    nearest = candidate;
+                    nearestDistance = distance;
+                }
+            }
+
+            return nearest ?? FallbackSector(biome);
+        }
+
+        private static BiomeSector FallbackSector(Heightmap.Biome biome) {
+            if (Fallbacks.TryGetValue(biome, out BiomeSector sector)) { return sector; }
+
+            return Fallbacks.GetOrAdd(biome, CreateFallback);
+        }
+
+        private static BiomeSector CreateFallback(Heightmap.Biome biome) {
+            Logger.LogDebug(
+                $"{FixName}: a patch of {biome} narrower than the 12 m biome grid; it gets a {biome} " +
+                "sector with no alt biomes.");
+            return new BiomeSector(null, biome);
+        }
+
+        // ---- GetBiomeHeight's unused lookup ---------------------------------------------------
+
+        private static readonly MethodInfo GetBiomeSectorMethod = AccessTools.Method(
+            typeof(WorldGenerator), nameof(WorldGenerator.GetBiomeSector),
+            new[] { typeof(float), typeof(float), typeof(bool) });
+
+        private static readonly MethodInfo SkippedSectorMethod =
+            AccessTools.Method(typeof(BiomeSectorLookupPatch), nameof(SkippedSector));
+
+        private static readonly MethodInfo VanillaSectorMethod =
+            AccessTools.Method(typeof(BiomeSectorLookupPatch), nameof(VanillaSector));
+
+        private static BiomeSector SkippedSector(WorldGenerator gen, float wx, float wy, bool clamp) => null;
+
+        // Vanilla's arithmetic through the grid-coordinate overload, which this fix leaves alone.
+        private static BiomeSector VanillaSector(WorldGenerator gen, float wx, float wy, bool clamp) {
+            return gen.GetBiomeSector(
+                AltBiomeWorldData.WorldSpaceToMapSpace(wx), AltBiomeWorldData.WorldSpaceToMapSpace(wy), clamp);
+        }
+
+        // The nearest sample, unbiased but never exact, through the same overload (which clamps).
+        private static BiomeSector NearestSector(WorldGenerator gen, float wx, float wy, bool clamp) {
+            return gen.GetBiomeSector(
+                Mathf.FloorToInt(wx / CellSize + AltBiomeWorldData.c_halfWidth),
+                Mathf.FloorToInt(wy / CellSize + AltBiomeWorldData.c_halfWidth), clamp);
+        }
+
+        // Load-bearing: without it every height sample near a border would pay for a GetBiome call
+        // through the prefix above.
+        [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
+        [HarmonyPatch(nameof(WorldGenerator.GetBiomeHeight))]
+        private static IEnumerable<CodeInstruction> GetBiomeHeightTranspiler(IEnumerable<CodeInstruction> instructions) {
+            if (Enabled == null || !Enabled.Value) { return instructions; }
+
+            List<CodeInstruction> codes = PatchHelper.Copy(instructions);
+
+            int site = -1;
+            int found = 0;
+            for (int i = 0; i < codes.Count - 1; i++) {
+                if (!codes[i].Calls(GetBiomeSectorMethod)) { continue; }
+
+                site = i;
+                found++;
+            }
+
+            if (found != 1 || !codes[site + 1].IsStloc()) {
+                Logger.LogWarning(
+                    $"WorldGenerator.GetBiomeHeight: expected one stored GetBiomeSector call, found {found}, " +
+                    $"so '{FixName}' leaves it alone and height sampling near borders costs more. Another " +
+                    "mod has most likely already rewritten the method.");
+                return instructions;
+            }
+
+            int slot = LocalSlot(codes[site + 1]);
+            bool read = false;
+            for (int i = 0; i < codes.Count; i++) {
+                if (codes[i].IsLdloc() && LocalSlot(codes[i]) == slot) { read = true; }
+            }
+
+            codes[site].opcode = OpCodes.Call;
+            codes[site].operand = read ? VanillaSectorMethod : SkippedSectorMethod;
+            return codes;
+        }
+
+        private static int LocalSlot(CodeInstruction code) {
+            if (code.opcode == OpCodes.Ldloc_0 || code.opcode == OpCodes.Stloc_0) { return 0; }
+            if (code.opcode == OpCodes.Ldloc_1 || code.opcode == OpCodes.Stloc_1) { return 1; }
+            if (code.opcode == OpCodes.Ldloc_2 || code.opcode == OpCodes.Stloc_2) { return 2; }
+            if (code.opcode == OpCodes.Ldloc_3 || code.opcode == OpCodes.Stloc_3) { return 3; }
+
+            return code.operand is LocalVariableInfo local ? local.LocalIndex : Convert.ToInt32(code.operand);
+        }
+
+        // ---- hooks ----------------------------------------------------------------------------
+
+        [HarmonyPatch(typeof(Player), "UpdateBiome")]
+        internal static class UpdateBiomeWarningHook {
+            private static readonly MethodInfo ZLogWarningMethod =
+                AccessTools.Method(typeof(ZLog), nameof(ZLog.LogWarning), new[] { typeof(object) });
+
+            private static readonly MethodInfo SinkMethod = AccessTools.Method(typeof(Logger), nameof(Logger.DebugSink));
+
+            // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+            [HarmonyTranspiler]
+            [HarmonyPriority(Priority.Last)]
+            private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) {
+                if (Enabled == null || !Enabled.Value) { return instructions; }
+
+                return PatchHelper.ReplaceCalls(instructions, ZLogWarningMethod, SinkMethod, "Player.UpdateBiome", expected: 1);
+            }
+        }
+
+        // Distant terrain colours one vertex every 10 m across a 2.4 km ring on the main thread,
+        // where a GetBiome call per border vertex would cost more than the exact colour is worth.
+        [HarmonyPatch(typeof(Heightmap), "RebuildRenderMesh")]
+        internal static class DistantLodColourHook {
+            private static readonly MethodInfo NearestSectorMethod =
+                AccessTools.Method(typeof(BiomeSectorLookupPatch), nameof(NearestSector));
+
+            [HarmonyTranspiler]
+            [HarmonyPriority(Priority.Last)]
+            private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) {
+                if (Enabled == null || !Enabled.Value) { return instructions; }
+
+                return PatchHelper.ReplaceCalls(
+                    instructions, GetBiomeSectorMethod, NearestSectorMethod, "Heightmap.RebuildRenderMesh", expected: 1);
+            }
+        }
+
+        // The coroutine's MoveNext returns at every yield, so the flag never outlives one step.
+        [HarmonyPatch]
+        internal static class LocationPlacementHook {
+            // Null until Harmony resolves it, and still null if it could not, which HookHealth reads
+            // as not attached.
+            internal static MethodBase Target { get; private set; }
+
+            [HarmonyTargetMethod]
+            private static MethodBase TargetMethod() {
+                Target = AccessTools.EnumeratorMoveNext(AccessTools.Method(
+                    typeof(ZoneSystem), "GenerateLocationsTimeSliced",
+                    new[] { typeof(ZoneSystem.ZoneLocation), typeof(Stopwatch), typeof(ZPackage) }));
+                return Target;
+            }
+
+            [HarmonyPrefix]
+            private static void Prefix() => _inLocationPlacement = true;
+
+            // Finalizer rather than postfix so an exception cannot leave the flag latched.
+            [HarmonyFinalizer]
+            private static void Finalizer() => _inLocationPlacement = false;
+        }
+
+        // Diagnostic only: vanilla rebuilds the grid from scratch on every world load and join.
+        [HarmonyPatch(typeof(AltBiomeWorldData), nameof(AltBiomeWorldData.VerifyBiomeData))]
+        internal static class GridBuildHook {
+            [HarmonyPrefix]
+            private static void Prefix(out Stopwatch __state) => __state = Stopwatch.StartNew();
+
+            [HarmonyPostfix]
+            private static void Postfix(World world, Stopwatch __state) {
+                Logger.LogDebug(
+                    $"Biome grid for '{world?.m_name}' built in {__state.ElapsedMilliseconds} ms, " +
+                    $"{world?.m_biomeData?.Sectors.Count ?? 0} sectors.");
+
+                // Settle the hook check here, on the main thread with every patch attached, rather
+                // than on whichever thread looks a sector up first.
+                if (Enabled != null && Enabled.Value) { _ = Hooks.Healthy; }
+            }
+        }
+    }
+}

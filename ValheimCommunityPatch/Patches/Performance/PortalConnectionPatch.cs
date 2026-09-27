@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Reflection;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
@@ -13,7 +15,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // A prefix replaces it with three O(n) passes over a tag-keyed dictionary with no per-call
     // allocation: validate existing connections and bucket the rest by tag, pair each bucket two
     // at a time after seizing ownership, then one force-send union per peer. Pairing is in list
-    // order rather than random and completes in one tick.
+    // order rather than random and completes in one tick. Stands down to vanilla's pass when
+    // another mod changes the pairing from inside it, which a replacement would silently skip: a
+    // transpiler on ConnectPortals, or any patch on a helper vanilla calls and this pass does not.
+    // ZenPortal is the known case: it keeps untagged portals apart, allows one pair per tag and
+    // can keep wood and stone portals apart.
     //
     // Server: vanilla only starts the coroutine inside Game.Start's IsServer branch.
     // Provenance: ComfyMods/BetterServerPortals (GPL-3.0, redseiko), without its random-portal
@@ -25,11 +31,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly Stack<List<ZDO>> ListPool = new Stack<List<ZDO>>();
         private static readonly HashSet<ZDOID> ToForceSend = new HashSet<ZDOID>();
 
+        private static Game _checkedFor;
+        private static bool _standDown;
+
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(Game.ConnectPortals))]
         private static bool ConnectPortalsPrefix(Game __instance, bool __runOriginal) {
             if (!__runOriginal) { return false; }
+            if (StandDown(__instance)) { return true; }
 
             ZDOMan zdoMan = ZDOMan.instance;
             if (zdoMan == null) { return true; }
@@ -40,6 +50,51 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             ConnectPortals(zdoMan);
             return false;
+        }
+
+        // Asked once per Game, on its first pass: every mod has patched by then, and a new
+        // session asks again. Prefixes and postfixes on ConnectPortals itself still run around
+        // this replacement, so only its transpilers count.
+        private static bool StandDown(Game game) {
+            if (ReferenceEquals(game, _checkedFor)) { return _standDown; }
+            _checkedFor = game;
+
+            SortedSet<string> owners = new SortedSet<string>(StringComparer.Ordinal);
+            AddOtherOwners(AccessTools.DeclaredMethod(typeof(Game), nameof(Game.ConnectPortals)), owners, transpilersOnly: true);
+
+            // What vanilla's pass calls and this one does not.
+            AddOtherOwners(AccessTools.DeclaredMethod(typeof(ZDOMan), nameof(ZDOMan.GetPortalList)), owners);
+            AddOtherOwners(AccessTools.DeclaredMethod(typeof(Game), nameof(Game.FindRandomUnconnectedPortal)), owners);
+            AddOtherOwners(AccessTools.DeclaredMethod(typeof(Game), nameof(Game.IsCurrentlyConnectingPortal)), owners);
+            AddOtherOwners(AccessTools.DeclaredMethod(typeof(Game), nameof(Game.AddToCurrentlyConnectingPortals)), owners);
+            AddOtherOwners(AccessTools.DeclaredMethod(
+                typeof(Game), nameof(Game.SetConnection), new[] { typeof(ZDO), typeof(ZDOID), typeof(bool) }), owners);
+
+            _standDown = owners.Count > 0;
+            if (_standDown) {
+                Logger.LogInfo(
+                    $"Portal pairing is changed by {string.Join(", ", owners)}, so 'Fix Portal Connection " +
+                    "Scan' stands down and the game's own pairing runs with that mod's rules.");
+            }
+
+            return _standDown;
+        }
+
+        private static void AddOtherOwners(MethodBase method, ISet<string> owners, bool transpilersOnly = false) {
+            // Fully qualified: HarmonyLib.Patches collides with this mod's Patches namespace.
+            HarmonyLib.Patches info = method == null ? null : Harmony.GetPatchInfo(method);
+            if (info == null) { return; }
+
+            if (!transpilersOnly) {
+                foreach (string owner in info.Owners) {
+                    if (owner != ValheimCommunityPatch.PluginGUID) { owners.Add(owner); }
+                }
+                return;
+            }
+
+            foreach (Patch patch in info.Transpilers) {
+                if (patch.owner != ValheimCommunityPatch.PluginGUID) { owners.Add(patch.owner); }
+            }
         }
 
         private static void ConnectPortals(ZDOMan zdoMan) {

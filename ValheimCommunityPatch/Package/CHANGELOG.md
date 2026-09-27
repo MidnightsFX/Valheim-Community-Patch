@@ -1,5 +1,37 @@
 # Changelog
 
+**0.30.0**
+```
+- Fixes Deep North snow piling excessively specifically on zone boundaries
+- Fix terrain changes for 1.0 being silently dropped
+- Removes unpatchall on destroy
+- Fix Biome Sector Lookup (both): the biome grid added in the Deep North update reads the sample at
+  or below a point, so within about 12 m of a biome border the player's biome, weather, spawn
+  levels, the map's biome name and terrain colouring followed the neighbouring biome, and a
+  `GetBiome error` warning was logged every second. Lookups now match the actual biome. Location
+  placement keeps vanilla's lookup, so seeds place locations as before. The warning is still
+  visible with EnableDebugMode on.
+- Fix Idle Creature Sync (both): a standing creature's owner re-sent its whole network record to
+  every player many times a second, because its position, velocity and ground tilt were compared
+  exactly and physics jitter changes them every frame. In a base with about 60 idle tamed wolves
+  this saturated the owners' upload and sent each other player about 118 KB/s. Changes smaller than
+  2 cm, 0.05 m/s or 1 degree from what was last sent are no longer sent on their own; a moving
+  creature is sent as before, and players, ships, carts and items are unaffected. On by default,
+  with a toggle in `Fixes - Performance`. Stands down when Network Performance System 1.9.1 or
+  later is installed, which applies the same fix.
+- Fix Portal Connection Scan stands down when another mod changes how the game pairs portals, and
+  says so once in the log. With ZenPortal installed it had been skipping ZenPortal's pairing rules,
+  so portals without a rune shard linked to each other, a rune already in use could link a second
+  pair, and wood portals linked to stone ones with `Connection - Same Type Only` on.
+- Fix Loading Screen Hang (both): leaving a dungeon, taking a portal or respawning could stay on
+  the loading screen until the player quit. Opening an Infested Mine treasure pile plays a coin
+  effect with a second network object nested inside it, and on every other player's client that
+  inner object was destroyed without the game being told. The loading check then waited forever
+  for an object that no longer existed, anywhere within one zone of the pile. Such objects are now
+  unregistered as they are destroyed, and one the loading check is found waiting on is repaired
+  and named in the log.
+```
+
 **0.29.0**
 ```
 - Fix compatibility with Portal mods which rewrite how portals work

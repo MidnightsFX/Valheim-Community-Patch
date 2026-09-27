@@ -8,7 +8,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // existed recovers once the heightmap appears, instead of throwing every frame.
     //
     // TerrainComp.Awake gives up when Heightmap.FindHeightmap returns null: no Initialize, no
-    // ApplyOperation RPC registration, no entry in s_instances. Update then calls CheckLoad every
+    // RPC_ApplyOperation registration, no entry in s_instances. Update then calls CheckLoad every
     // frame regardless, which dereferences the null heightmap. The zone's terrain edits are inert
     // from then on because nothing can find or drive the compiler.
     //
@@ -17,6 +17,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // compiler for the zone (the deduplication Awake would have done, without which two compilers
     // hold diverging edits for one zone), register in s_instances, register the RPC, Initialize,
     // CheckLoad. A compiler whose recovery throws is abandoned rather than retried every frame.
+    // The RPC name must match the string Awake registers, which the Deep North update renamed.
     //
     // Both: the race is more likely on a loaded server, and the RPC it re-registers is what lets
     // that zone accept edits at all.
@@ -76,13 +77,21 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                             $"Found another terrain compiler at {comp.transform.position}, removing it. " +
                             "Two compilers in one zone means one of their saved terrain edits would be " +
                             "discarded at random, so this resolves it the way TerrainComp.Awake does.");
+
+                        // As Awake: ZNetScene.Destroy only deletes the ZDO of an owned object, so an
+                        // unowned rival is claimed first or it would respawn with the zone.
+                        if (other.m_nview != null && other.m_nview.IsValid() && !other.m_nview.HasOwner()) {
+                            other.m_nview.ClaimOwnership();
+                        }
+
                         ZNetScene.instance.Destroy(other.gameObject);
+                        TerrainComp.s_instances.Remove(other);
                     }
 
                     if (!TerrainComp.s_instances.Contains(comp)) { TerrainComp.s_instances.Add(comp); }
 
                     comp.m_nview.Register<ZPackage>(
-                        "ApplyOperation", new Action<long, ZPackage>(comp.RPC_ApplyOperation));
+                        "RPC_ApplyOperation", new Action<long, ZPackage>(comp.RPC_ApplyOperation));
                     comp.Initialize();
                 } else if (!TerrainComp.s_instances.Contains(comp)) {
                     TerrainComp.s_instances.Add(comp);

@@ -13,7 +13,9 @@ namespace ValheimCommunityPatch {
         public static ConfigEntry<bool> PatchEverySide;
 
         // Correctness and terrain fixes each have an on/off toggle. Performance fixes are always
-        // on; the Performance section holds only their tuning values.
+        // on; the Performance section holds only their tuning values. The exception is Fix Idle
+        // Creature Sync, which changes what other players see, by a bounded amount, so it can be
+        // turned off.
         public const string SectionPerformance = "Fixes - Performance";
         public const string SectionCorrectness = "Fixes - Correctness";
         public const string SectionTerrain = "Fixes - Terrain";
@@ -81,6 +83,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.ZdoDataPoolTrimPatch.BindConfig();
             Patches.Performance.ZdoSerializeAllocPatch.BindConfig();
             Patches.Performance.ZdoMemoryStats.BindConfig();
+            Patches.Performance.CreatureSyncDeadbandPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();
@@ -101,9 +104,13 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.ObjectDbNonItemPatch.BindConfig();
             Patches.Correctness.TamedPatrolPointPatch.BindConfig();
             Patches.Correctness.MapAutoClosePatch.BindConfig();
+            Patches.Correctness.BiomeSectorLookupPatch.BindConfig();
+            Patches.Correctness.DeadInstancePatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
+            Patches.Terrain.PaintSpreadOncePatch.BindConfig();
+            Patches.Terrain.BiomeColourAliasPatch.BindConfig();
             Patches.Terrain.PaintMaskStridePatch.BindConfig();
             Patches.Terrain.TerrainCompNullHmapPatch.BindConfig();
         }
@@ -138,6 +145,13 @@ namespace ValheimCommunityPatch {
         public static ConfigEntry<float> BindServerConfig(string category, string key, float value, string description, bool advanced = false, float valMin = 0, float valMax = 150) {
             return cfg.Bind(category, key, value,
                 new ConfigDescription(description, new AcceptableValueRange<float>(valMin, valMax),
+                    new ConfigurationManagerAttributes { IsAdminOnly = true, IsAdvanced = advanced }));
+        }
+
+        // BepInEx lists an enum's values itself, so no acceptable-values range is needed.
+        public static ConfigEntry<T> BindServerConfig<T>(string category, string key, T value, string description, bool advanced = false) where T : Enum {
+            return cfg.Bind(category, key, value,
+                new ConfigDescription(description, null,
                     new ConfigurationManagerAttributes { IsAdminOnly = true, IsAdvanced = advanced }));
         }
     }

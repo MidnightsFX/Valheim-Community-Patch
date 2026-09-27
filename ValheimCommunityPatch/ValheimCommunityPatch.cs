@@ -13,19 +13,29 @@ namespace ValheimCommunityPatch
     // the two sides could disagree about behaviour.
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [BepInDependency(Jotunn.Main.ModGuid)]
+    // Load order only: Fix Idle Creature Sync stands down for NPS 1.9.1+, and can only see it if
+    // NPS loaded first.
+    [BepInDependency(Patches.Performance.CreatureSyncDeadbandPatch.NpsGuid, BepInDependency.DependencyFlags.SoftDependency)]
     [NetworkCompatibility(CompatibilityLevel.VersionCheckOnly, VersionStrictness.Minor)]
     internal class ValheimCommunityPatch : BaseUnityPlugin
     {
         public const string PluginGUID = "MidnightsFX.ValheimCommunityPatch";
         public const string PluginName = "ValheimCommunityPatch";
-        public const string PluginVersion = "0.29.0";
+        public const string PluginVersion = "0.30.0";
 
         internal static ManualLogSource Log;
 
         private readonly Harmony harmony = new Harmony(PluginGUID);
 
+        // Set when the game quits. Unpatching is for unloading the mod from a running game (a
+        // script-engine reload). On quit it would rebuild every patched method one patch at a
+        // time, re-running every other mod's transpilers against a game that is being torn down,
+        // and those can throw.
+        private static bool _quitting;
+
         public void Awake() {
             Log = Logger;
+            UnityEngine.Application.quitting += OnQuitting;
             ValConfig.Bind(Config);
 
             // An engine flag with no Harmony patch behind it.
@@ -108,7 +118,14 @@ namespace ValheimCommunityPatch
             }
         }
 
+        private static void OnQuitting() => _quitting = true;
+
         public void OnDestroy() {
+            // Nothing to restore or unpatch for a process that is exiting.
+            if (_quitting) { return; }
+
+            UnityEngine.Application.quitting -= OnQuitting;
+
             // Fixes that removed entries from a vanilla collection have to put them back before
             // the patches that would have restored them go away.
             Patches.Performance.ZsfxIdleDormancyPatch.RestoreAll();
