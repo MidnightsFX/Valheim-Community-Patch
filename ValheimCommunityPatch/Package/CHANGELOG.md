@@ -1,5 +1,24 @@
 # Changelog
 
+**0.31.0**
+```
+- Server garbage collector settings (dedicated server): a new `Server - Garbage Collector` config
+  section and a `vcp_gc` server console command that prints the collector's state and changes each
+  setting live. On a busy server Valheim's incremental collector ends every collection with an
+  unbounded stop-the-world pass, measured at 150-380 ms every 12 s on a large world.
+  Dedicated servers get these defaults on update; setting an entry to 0 (or off) gives back the
+  game's own value. Clients and listen hosts ignore all of it.
+  - GC Time Slice Milliseconds (Windows and Linux), default 10: the incremental collector's
+    per-frame budget, which Valheim ships at 3 ms. Shortens that final pass.
+  - GC Free Space Divisor (Linux), default 2: how far the heap grows between collections. Collects
+    about a third less often for a few hundred MB more heap on a large world.
+  - GC Mark Stack Target Entries (Linux), default 4194304 (64 MiB): grows the collector's mark stack
+    ahead of need, so a large heap is far less likely to abort the server with "Unexpected mark
+    stack overflow".
+  `vcp_gc stats on|off` (Linux) switches the collector's own per-collection log, written to the
+  server's standard error.
+```
+
 **0.30.1**
 ```
 - Fix Equipment Texture Errors (client): Fix a Deep North creature causing error spam and lag due to its visual setup.

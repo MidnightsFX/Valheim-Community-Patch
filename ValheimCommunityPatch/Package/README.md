@@ -9,8 +9,10 @@ can install it on a server without anyone having to agree about how the game sho
 
 Performance fixes are always on; the config holds only their tuning values and the admin-only Verify
 diagnostics. Correctness and terrain fixes each have their own toggle. Server memory fixes are the
-exception: they are off by default and opt-in, see [Server memory](#server-memory-opt-in). Config
-values are admin-only and server-synced.
+exception: they are off by default and opt-in, see [Server memory](#server-memory-opt-in). The
+dedicated-server garbage collector settings are tuning rather than fixes, see
+[Server garbage collector](#server-garbage-collector). Config values are admin-only and
+server-synced.
 
 Each fix is tagged with the side it is worth installing on. *(server)* fixes only do something on
 the machine hosting the world — a dedicated server or a listen host. *(client)* fixes need a local
@@ -259,6 +261,40 @@ sizes involved, so the effect can be seen before and after turning one on.
   from their tables instead of copying all seven into fresh lists, plus seven callbacks, per object
   per player per send tick. Garbage-collector churn rather than a leak; the bytes sent are identical.
 
+### Server garbage collector
+
+Dedicated servers only; clients and listen hosts ignore these. Valheim runs Unity's incremental
+garbage collector with a 3 ms budget per frame. A busy server has no idle frame time to add to that,
+so each collection's rescan drags over about a second of frames and then finishes in one
+stop-the-world pass with no time limit. On a large world that pass measured 150-380 ms every 12
+seconds, longer the more the server allocates. The same slow pass is where a large server can abort
+with `Unexpected mark stack overflow`.
+
+The settings live in the `Server - Garbage Collector` config section. The defaults come from that
+server's pause data. Setting any of them to 0 (or off) gives back the game's own value. The
+`vcp_gc` server console command prints the collector's current state and changes each setting live,
+so the effect can be watched on a profiler; an admin can run it remotely, and its replies are
+written to the server log.
+
+- **GC Time Slice Milliseconds** *(server)*, default 10 — the incremental collector's per-frame
+  budget. A longer slice finishes the rescan in fewer frames, leaving less for the final pause to
+  redo, at a few milliseconds more frame time for the frames a collection is running.
+- **GC Free Space Divisor** *(server, Linux)*, default 2 — how far the heap grows between
+  collections; the collector's own value is 3. Collects about a third less often for a few hundred
+  MB more heap on a large world.
+- **GC Mark Stack Target Entries** *(server, Linux)*, default 4194304 (64 MiB) — grows the
+  collector's mark stack ahead of need. The collector normally grows it only after a pass that
+  nearly overflowed it, and a pass that does overflow it aborts the server.
+- **Disable Incremental GC** *(server)*, off by default, experimental — every collection becomes one
+  stop-the-world pass over the whole heap. Turning it on runs one full collection straight away and
+  logs how long it took, which is how long every collection will then pause the server. Turning it
+  back off needs a restart.
+
+On Linux, `vcp_gc stats on` switches on the collector's own log: a few lines per collection with
+its stop-the-world times and how much it rescanned. It goes to the server's standard error (or
+`GC_LOG_FILE`, if that was set when the server started), not to the BepInEx log. `vcp_gc stats off`
+switches it back off.
+
 ## Credit and sources
 
 This mod fixes vanilla defects, and other modders found — and in several cases already fixed — a good
@@ -278,6 +314,8 @@ The mods involved:
 - **Zen.ModLib** — ZenDragon. Used as a reference; no code was used.
 - **Iron Gate Studio** — Valheim itself. The decompiled game source is the reference used to locate
   defects; no game code is redistributed.
+- **[bdwgc](https://github.com/ivmai/bdwgc)** and Unity's fork of it and of Mono — the collector's
+  source is the reference for the garbage collector settings; no code was used.
 
 ### Performance
 
@@ -372,6 +410,12 @@ The mods involved:
 | Evict Dead ZDO Records | MidnightsFX | — |
 | Trim ZDO Data Pool | MidnightsFX | — |
 | Fix ZDO Serialize Allocation | MidnightsFX | — |
+
+### Server garbage collector
+
+| Setting | Sourced from | What came from there |
+| --- | --- | --- |
+| Server GC Tuning | MidnightsFX | — |
 
 ## Installation
 

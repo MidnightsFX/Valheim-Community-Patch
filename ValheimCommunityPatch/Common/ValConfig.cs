@@ -24,6 +24,11 @@ namespace ValheimCommunityPatch {
         // for memory a long-running server never otherwise gets back, the operator's call to make.
         public const string SectionServerMemory = "Fixes - Server Memory";
 
+        // Dedicated server only. Not a "Fixes -" section: none of these corrects a defect, each
+        // trades pause length against pause frequency and memory. The defaults come from a busy
+        // server's pause data; 0 or off in any of them gives back the game's own value.
+        public const string SectionServerGc = "Server - Garbage Collector";
+
         // Verify toggles and other diagnostics. Kept apart from the fixes so nobody mistakes them
         // for one: each deliberately costs the work its fix exists to avoid.
         public const string SectionDebug = "Debug";
@@ -83,6 +88,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.ZdoDataPoolTrimPatch.BindConfig();
             Patches.Performance.ZdoSerializeAllocPatch.BindConfig();
             Patches.Performance.ZdoMemoryStats.BindConfig();
+            Patches.Performance.ServerGcTuning.BindConfig();
             Patches.Performance.CreatureSyncDeadbandPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
