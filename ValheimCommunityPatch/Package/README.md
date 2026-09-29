@@ -199,8 +199,6 @@ what is recorded, so they run on every side.
   out of range instead of throwing from every UI panel.
 - **Fix Negative Stamina** *(client)* — floors player stamina at zero (`NaN` included), repairs a
   character that loads in broken, and drops a `UseStamina` network message carrying `NaN` or infinity.
-- **Fix Dungeon Load Stall** *(both)* — counts a dungeon room whose asset failed to load as finished
-  and drops it, so the zone is not left flagged as loading forever.
 - **Fix Teleport Ghost Players** *(server)* — tells a client to drop a player who teleported out of its
   loaded area, instead of leaving them standing frozen where they left (and still in local chat range).
 - **Fix Unsaved Client Changes** *(server)* — marks an object a connected player placed or changed for
@@ -230,9 +228,14 @@ what is recorded, so they run on every side.
   game's object manager being told, so a dungeon exit, portal trip or respawn next to it can finish
   loading. Vanilla leaves one behind on your client each time another player opens an Infested Mine
   treasure pile near you, and the loading screen then waits on it until you quit.
+- **Fix Equipment Texture Errors** *(client)* — stops the `doesn't have a texture property` errors each
+  Deep North Shadow logs when it is created, about eleven per Shadow and several Shadows per village.
+  The game copies its body and armour textures from a material that has none of them; a missing
+  texture is now read as empty, which is what the game ended up with anyway, and the Shadow looks the
+  same.
 
-The two log fixes, and Fix Biome Sector Lookup's warning, redirect rather than delete: turn on
-`EnableDebugMode` and the messages come back.
+The log fixes, Fix Biome Sector Lookup's warning and Fix Equipment Texture Errors redirect rather
+than delete: turn on `EnableDebugMode` and the messages come back.
 
 ### Server memory (opt-in)
 
@@ -352,7 +355,6 @@ The mods involved:
 | Fix Container Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the calls, this one redirects them |
 | Fix Item Icon Crash | ComfyMods — LetMePlay | The defect; a smaller fix here that leaves the shared item data alone |
 | Fix Negative Stamina | MidnightsFX | — |
-| Fix Dungeon Load Stall | MidnightsFX | — |
 | Fix Teleport Ghost Players | MidnightsFX | — |
 | Fix Unsaved Client Changes | MidnightsFX | — |
 | Fix Water Colour Seams | MidnightsFX | — |
@@ -361,6 +363,7 @@ The mods involved:
 | Fix Map Auto-Close | MidnightsFX | — |
 | Fix Biome Sector Lookup | MidnightsFX | — |
 | Fix Loading Screen Hang | MidnightsFX | — |
+| Fix Equipment Texture Errors | nezuma — ShadowPersonMaterialFix | The defect; that mod swaps the Shadow's shader, this one guards the reads |
 
 ### Server memory
 

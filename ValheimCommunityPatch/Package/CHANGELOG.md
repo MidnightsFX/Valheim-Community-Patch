@@ -1,5 +1,11 @@
 # Changelog
 
+**0.30.1**
+```
+- Fix Equipment Texture Errors (client): Fix a Deep North creature causing error spam and lag due to its visual setup.
+- Removed Fix Dungeon Load Stall (both), since the 1.0 update this can only apply to mods. Which should handle it themselves.
+```
+
 **0.30.0**
 ```
 - Fixes Deep North snow piling excessively specifically on zone boundaries

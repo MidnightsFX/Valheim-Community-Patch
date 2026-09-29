@@ -97,7 +97,6 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.SendFailureLogSpamPatch.BindConfig();
             Patches.Correctness.ContainerLogSpamPatch.BindConfig();
             Patches.Correctness.NegativeStaminaPatch.BindConfig();
-            Patches.Correctness.DungeonZoneLoadPinPatch.BindConfig();
             Patches.Correctness.SectorJumpInvalidatePatch.BindConfig();
             Patches.Correctness.ReceivedZdoDirtyPatch.BindConfig();
             Patches.Correctness.WaterColourSeamPatch.BindConfig();
@@ -106,6 +105,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.MapAutoClosePatch.BindConfig();
             Patches.Correctness.BiomeSectorLookupPatch.BindConfig();
             Patches.Correctness.DeadInstancePatch.BindConfig();
+            Patches.Correctness.EquipmentTextureErrorPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
