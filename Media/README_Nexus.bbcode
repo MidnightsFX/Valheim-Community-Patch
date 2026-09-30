@@ -72,7 +72,7 @@ Where a fix was sourced from, or corroborated against, another modder's work, th
 [*][b]Fix Doubled ZDO Lookups[/b] [i](both)[/i] — reads ZDO data with one dictionary lookup instead of two.
 [*][b]Fix Collision Contact Allocation[/b] [i](both)[/i] — reads a collision's contact points into a reused buffer instead of allocating an array per collision callback.
 [*][b]Fix Collision Callback Allocation[/b] [i](both)[/i] — turns on Unity's [font=Courier New]reuseCollisionCallbacks[/font] so one collision object serves every callback; the first suspect if a physics-touching mod that stores collision objects misbehaves.
-[*][b]Fix Equipment Visual Refresh[/b] [i](client)[/i] — re-applies a character's skin and hair colour only when an input changed, and reads its equipment fields with one table lookup instead of thirty.
+[*][b]Fix Equipment Visual Refresh[/b] [i](client)[/i] — re-applies a character's skin and hair colour only when an input changed or another system overwrote it, and reads its equipment fields with one table lookup instead of thirty.
 [*][b]Fix Light Settings Subscription[/b] [i](client)[/i] — registers lights for graphics-setting changes in a lookup table instead of a static event whose unsubscribe scans every other lit light.
 [*][b]Fix Portal Idle Updates[/b] [i](client)[/i] — stops a portal re-writing its emission colour, light and audio every frame once the connection fade has finished.
 [*][b]Fix Material Fader Settling[/b] [i](client)[/i] — stops a finished fade re-applying the same material property block to every renderer every frame; lingering corpses are the common case.
@@ -80,16 +80,19 @@ Where a fix was sourced from, or corroborated against, another modder's work, th
 [*][b]Fix Station Range Scans[/b] [i](client)[/i] — answers the per-frame build-mode station and extension range queries with squared distances and one position read per candidate instead of two.
 [*][b]Fix Smelter Catch-up Reads[/b] [i](both)[/i] — memoises a smelter's fuel and ore reads against its data revision, so an hour of missed production is not re-read once per simulated second.
 [*][b]Fix Idle Sound Updates[/b] [i](client)[/i] — drops a finished one-shot sound out of the per-frame audio updater list until something plays it again.
+[*][b]Fix Idle Creature Sync[/b] [i](both)[/i] — stops a standing creature's owner re-sending it to every player each frame over physics jitter: its position, velocity and ground tilt are sent once they move more than 2 cm, 0.05 m/s or 1 degree from what was last sent, instead of on any change at all. Players, ships, carts and items are untouched. The one performance fix with a toggle, since it changes what other players see, by at most those amounts.
 [/list]
 
 [size=4][b]Terrain[/b][/size]
 
-[b]Fix Terrain Seams[/b] and [b]Fix Terrain Paint Seams[/b] change only what is drawn, never what is saved, so they are client-only. [b]Fix Terrain Paint Zone Fanout[/b] changes what is recorded, so it runs on every side.
+[b]Fix Terrain Seams[/b], [b]Fix Terrain Paint Seams[/b] and [b]Fix Swamp Plains Shore Seams[/b] change only what is drawn, never what is saved, so they are client-only. [b]Fix Terrain Paint Zone Fanout[/b] and [b]Fix Terrain Paint Doubling[/b] change what is recorded, so they run on every side.
 
 [list]
 [*][b]Fix Terrain Seams[/b] [i](client)[/i] — computes terrain lighting normals across zone boundaries, removing the hard crease along the 64 m grid.
 [*][b]Fix Terrain Paint Seams[/b] [i](client)[/i] — merges the two copies of the paint on a zone boundary so dirt continues across the line instead of stopping dead; a lone stripe on the border is dropped.
 [*][b]Fix Terrain Paint Zone Fanout[/b] [i](both)[/i] — records terrain paint into every zone it actually covers, including the neighbour about a metre west or south that vanilla left out; affects edits made from now on.
+[*][b]Fix Terrain Paint Doubling[/b] [i](both)[/i] — applies an edit that reaches two zones once to the ground they share, instead of twice (four times at a corner); in the Deep North that stops piling or clearing snow from leaving a ridge or trench along the zone line.
+[*][b]Fix Swamp Plains Shore Seams[/b] [i](client)[/i] — stops shores where swamp blends into plains from being drawn with the Ashlands shoreline in hard straight lines along the zone grid. The game's terrain colours cannot express that blend without also meaning Ashlands, so the two are bridged by a narrow strip where they meet instead: black forest ground by default, or Ashlands ground that follows the crossover rather than the zone grid ("Swamp Plains Bridge Ground"; "Swamp Plains Blend Sharpness" sets the strip's width).
 [*][b]Fix Terrain Paint Mask Indexing[/b] [i](client)[/i] — corrects the stride and bounds the [font=Courier New]optterrain[/font] console command uses to walk terrain paint data.
 [*][b]Fix Terrain Compiler Init Race[/b] [i](both)[/i] — recovers a zone's terrain compiler that loaded before its heightmap existed, instead of throwing every frame and ignoring edits.
 [/list]
@@ -116,9 +119,28 @@ Where a fix was sourced from, or corroborated against, another modder's work, th
 [*][b]Fix Non-Item ObjectDB Entries[/b] [i](both)[/i] — drops prefabs that are not items from the game's item list on load; the 2026-09-09 update listed three ([font=Courier New]PropFeastDeepNorth[/font], [font=Courier New]SnowRoller[/font], [font=Courier New]FrozenKing_Summon[/font]) that break mods treating every entry as an item. They can still be spawned.
 [*][b]Clear Patrol Point On Taming[/b] [i](both)[/i] — clears the patrol point a spawner stamped on a creature when you tame it, so it settles where you keep it instead of running back to where it spawned. Mostly boars, which cannot be told to follow or stay and so had no way to clear it. Telling a tamed creature to stay still sets a patrol point as normal.
 [*][b]Fix Map Auto-Close[/b] [i](client)[/i] — stops the map closing for every player on the server whenever anyone wakes or kills a boss; vanilla closes an open map on every world key change. It still closes for a player with a boss within [font=Courier New]Map Auto-Close Boss Range[/font] (default 100 m, the boss health bar range).
+[*][b]Fix Biome Sector Lookup[/b] [i](both)[/i] — makes the biome sector lookup agree with the actual biome near borders. Vanilla reads its 12 m biome grid rounded down, so within about 12 m of a border the player's biome, weather, spawn levels, the map's biome name and terrain colouring follow the neighbouring biome, and a [font=Courier New]GetBiome error[/font] warning is logged every second. Location placement keeps vanilla's lookup, so seeds still place locations where unmodded Valheim does.
+[*][b]Fix Loading Screen Hang[/b] [i](both)[/i] — unregisters a networked object that was destroyed without the game's object manager being told, so a dungeon exit, portal trip or respawn next to it can finish loading. Vanilla leaves one behind on your client each time another player opens an Infested Mine treasure pile near you, and the loading screen then waits on it until you quit.
+[*][b]Fix Equipment Texture Errors[/b] [i](client)[/i] — stops the [font=Courier New]doesn't have a texture property[/font] errors each Deep North Shadow logs when it is created, about eleven per Shadow and several Shadows per village. The game copies its body and armour textures from a material that has none of them; a missing texture is now read as empty, which is what the game ended up with anyway, and the Shadow looks the same.
+[*][b]Fix Unkillable Creatures[/b] [i](both)[/i] — finishes the death of a creature left alive at zero health, which in vanilla ignores every hit for good. Mostly Deep North creatures whose owner changed during their death animation, which a busy server makes more likely, and creatures whose death another mod's code broke. A creature whose health another mod made [font=Courier New]NaN[/font] is put back to full health.
+[*][b]Fix Cloth Wind Shelter Errors[/b] [i](both)[/i] — stops the [font=Courier New]MagicaCloth component not found[/font] error the Root Crown logs, stack trace included, each time one is created: dropped, put on a stand, or worn by a player coming into range. Its hat model carries the Deep North cloth wind shelter without the cloth it controls; the shelter now switches itself off quietly, and the crown looks the same.
 [/list]
 
-The two log fixes redirect rather than delete: turn on [font=Courier New]EnableDebugMode[/font] and the messages come back.
+The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind Shelter Errors redirect rather than delete: turn on [font=Courier New]EnableDebugMode[/font] and the messages come back.
+
+[size=4][b]Server memory (opt-in)[/b][/size]
+
+These are [b]off by default[/b]. Each trades a little re-allocation or a shorter safety margin for memory a busy dedicated server otherwise never gets back, which is the operator's call, so each has its own toggle in the [font=Courier New]Fixes - Server Memory[/font] config section. They exist for servers whose memory climbs with uptime under many players; a small server gains little from them. The [font=Courier New]vcp_zdomem[/font] server console command (an admin can run it remotely) and the [font=Courier New]Log ZDO Memory Stats[/font] diagnostic print the sizes involved, so the effect can be seen before and after turning one on.
+
+[list]
+[*][b]Evict Dead ZDO Records[/b] [i](server)[/i] — drops the record of a destroyed object after [font=Courier New]Dead ZDO Retain Seconds[/font] (default 600). Vanilla keeps the id of every object destroyed since the world loaded, to reject a stale copy a player might still send back, and never clears that list while the world is loaded; the stale copies it guards against arrive within seconds of the destroy.
+[*][b]Trim ZDO Data Pool[/b] [i](server)[/i] — caps, at [font=Courier New]ZDO Data Pool Max Depth[/font] per field type, the pools that recycle objects' field tables, and clears the strings and byte arrays a recycled table still points at. Without it the pools hold as many tables as were ever in use at once, each keeping its last contents alive, so memory never comes back down from the busiest moment since the world loaded. A plateau rather than a climb, and the smallest of the three.
+[*][b]Fix ZDO Serialize Allocation[/b] [i](server)[/i] — writes an object's fields to the network straight from their tables instead of copying all seven into fresh lists, plus seven callbacks, per object per player per send tick. Garbage-collector churn rather than a leak; the bytes sent are identical.
+[/list]
+
+[size=4][b]Server garbage collector[/b][/size]
+
+The dedicated-server garbage collector settings and the [font=Courier New]vcp_gc[/font] console command that shipped in 0.31.0 are now a separate plugin, [url=https://thunderstore.io/c/valheim/p/MidnightMods/ValheimCommunityPatchGC/]Valheim Community Patch GC[/url]. They read and write the Mono runtime's own memory, which malware scanners flag. Install it on a dedicated server alongside this mod; it pre-grows the collector's mark stack against [font=Courier New]Unexpected mark stack overflow[/font] crashes on large worlds. The old [font=Courier New]Server - Garbage Collector[/font] section in this mod's config is no longer read and can be deleted.
 
 [line]
 
@@ -133,8 +155,7 @@ The mods involved:
 [*][b][url=https://github.com/ontrigger/ValheimPerformanceOptimizations]ValheimPerformanceOptimizations[/url][/b] — ontrigger (MIT). Independent corroboration of one of the performance entries below.
 [*][b][url=https://github.com/AzumattDev/MyPitsDontLeak]MyPitsDontLeak[/url][/b] — Azumatt (MIT).
 [*][b]Zen.ModLib[/b] — ZenDragon. Used as a reference; no code was used.
-[*][b]Iron Gate Studio[/b] — Valheim itself. The decompiled game source is the reference used to locate defects; no game code is redistributed.
-[/list]
+[*][b]Iron Gate Studio[/b] — Valheim itself. The decompiled game source is the reference used to locate defects; no game code is redistributed.[/list]
 
 [size=4][b]Performance[/b][/size]
 
@@ -151,7 +172,7 @@ The mods involved:
 [size=4][b]Terrain[/b][/size]
 
 [list]
-[*]All five terrain fixes — MidnightsFX.
+[*]All seven terrain fixes — MidnightsFX.
 [/list]
 
 [size=4][b]Correctness[/b][/size]
@@ -168,7 +189,15 @@ The mods involved:
 [*][b]Fix Send Failure Log Spam[/b] — ComfyMods, BetterZeeLog: the defect; that mod removes the call, this one redirects it.
 [*][b]Fix Container Log Spam[/b] — ComfyMods, BetterZeeLog: the defect; that mod removes the calls, this one redirects them.
 [*][b]Fix Item Icon Crash[/b] — ComfyMods, LetMePlay: the defect; a smaller fix here that leaves the shared item data alone.
-[*][b]Fix Negative Stamina[/b], [b]Fix Teleport Ghost Players[/b], [b]Fix Unsaved Client Changes[/b], [b]Fix Water Colour Seams[/b], [b]Fix Non-Item ObjectDB Entries[/b], [b]Clear Patrol Point On Taming[/b] and [b]Fix Map Auto-Close[/b] — MidnightsFX.
+[*][b]Fix Equipment Texture Errors[/b] — nezuma, ShadowPersonMaterialFix: the defect; that mod swaps the Shadow's shader, this one guards the reads.
+[*][b]Fix Unkillable Creatures[/b] — MidnightsFX: the [font=Courier New]NaN[/font] health handling follows StarLevelSystem's.
+[*][b]Fix Negative Stamina[/b], [b]Fix Teleport Ghost Players[/b], [b]Fix Unsaved Client Changes[/b], [b]Fix Water Colour Seams[/b], [b]Fix Non-Item ObjectDB Entries[/b], [b]Clear Patrol Point On Taming[/b], [b]Fix Map Auto-Close[/b], [b]Fix Biome Sector Lookup[/b] and [b]Fix Loading Screen Hang[/b] — MidnightsFX.
+[/list]
+
+[size=4][b]Server memory[/b][/size]
+
+[list]
+[*]All three server memory fixes — MidnightsFX.
 [/list]
 
 [line]

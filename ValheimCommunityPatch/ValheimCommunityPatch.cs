@@ -21,7 +21,7 @@ namespace ValheimCommunityPatch
     {
         public const string PluginGUID = "MidnightsFX.ValheimCommunityPatch";
         public const string PluginName = "ValheimCommunityPatch";
-        public const string PluginVersion = "0.31.0";
+        public const string PluginVersion = "0.32.0";
 
         internal static ManualLogSource Log;
 
@@ -40,11 +40,6 @@ namespace ValheimCommunityPatch
 
             // An engine flag with no Harmony patch behind it.
             Patches.Performance.CollisionCallbackReusePatch.Apply();
-
-            // Runtime garbage collector settings, dedicated server only. Early, while the heap is
-            // still small, since switching incremental collection off runs a full collection.
-            Patches.Performance.ServerGcTuning.Apply();
-
             ApplyPatches();
         }
 
@@ -133,7 +128,6 @@ namespace ValheimCommunityPatch
             // Fixes that removed entries from a vanilla collection have to put them back before
             // the patches that would have restored them go away.
             Patches.Performance.ZsfxIdleDormancyPatch.RestoreAll();
-            Patches.Performance.ServerGcTuning.Restore();
             harmony?.UnpatchSelf();
         }
     }

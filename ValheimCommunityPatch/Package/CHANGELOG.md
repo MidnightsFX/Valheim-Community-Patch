@@ -1,5 +1,27 @@
 # Changelog
 
+**0.32.0**
+```
+- Fix Unkillable Creatures (both): a creature could be left alive at zero health, ignoring every
+  hit and never dropping loot. The game decides death on the creature's owner after the damage
+  lands, and nothing retries a death that fails to finish. That happens to Deep North creatures
+  whose owner changes during their death animation, which a busy server makes more likely, and
+  to any creature whose death another mod's code breaks. Such a creature now finishes dying,
+  within a second where its death never started and about 20 s after a death animation that
+  never ended. A creature whose death threw an error is removed. A creature whose health another
+  mod made NaN is put back to full health, and NaN health is no longer written.
+- Fix Cloth Wind Shelter Errors (both): the Root Crown logged a `MagicaCloth component not found`
+  error, stack trace included, each time one was created: dropped, put on a stand, or worn by a
+  player coming into range. Its hat model carries the Deep North cloth wind shelter without the
+  cloth it controls, which also left the shelter running an empty update every frame. It now
+  switches itself off quietly, and the message goes to the debug log.
+- The server garbage collector settings and the `vcp_gc` console command moved out to a separate
+  plugin, Valheim Community Patch GC (ValheimCommunityPatchGC). They read and write the Mono
+  runtime's own memory, which malware scanners flag. This mod no longer touches the collector, and
+  its `Server - Garbage Collector` config section is no longer read and can be deleted. Install the
+  new plugin on a dedicated server to keep the pre-grown mark stack.
+```
+
 **0.31.0**
 ```
 - Server garbage collector settings (dedicated server): a new `Server - Garbage Collector` config

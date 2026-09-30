@@ -10,7 +10,7 @@ can install it on a server without anyone having to agree about how the game sho
 Performance fixes are always on; the config holds only their tuning values and the admin-only Verify
 diagnostics. Correctness and terrain fixes each have their own toggle. Server memory fixes are the
 exception: they are off by default and opt-in, see [Server memory](#server-memory-opt-in). The
-dedicated-server garbage collector settings are tuning rather than fixes, see
+dedicated-server garbage collector settings moved to a separate plugin, see
 [Server garbage collector](#server-garbage-collector). Config values are admin-only and
 server-synced.
 
@@ -235,9 +235,17 @@ what is recorded, so they run on every side.
   The game copies its body and armour textures from a material that has none of them; a missing
   texture is now read as empty, which is what the game ended up with anyway, and the Shadow looks the
   same.
+- **Fix Unkillable Creatures** *(both)* — finishes the death of a creature left alive at zero health,
+  which in vanilla ignores every hit for good. Mostly Deep North creatures whose owner changed during
+  their death animation, which a busy server makes more likely, and creatures whose death another
+  mod's code broke. A creature whose health another mod made `NaN` is put back to full health.
+- **Fix Cloth Wind Shelter Errors** *(both)* — stops the `MagicaCloth component not found` error the
+  Root Crown logs, stack trace included, each time one is created: dropped, put on a stand, or worn by
+  a player coming into range. Its hat model carries the Deep North cloth wind shelter without the cloth
+  it controls; the shelter now switches itself off quietly, and the crown looks the same.
 
-The log fixes, Fix Biome Sector Lookup's warning and Fix Equipment Texture Errors redirect rather
-than delete: turn on `EnableDebugMode` and the messages come back.
+The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
+Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
 
 ### Server memory (opt-in)
 
@@ -263,37 +271,13 @@ sizes involved, so the effect can be seen before and after turning one on.
 
 ### Server garbage collector
 
-Dedicated servers only; clients and listen hosts ignore these. Valheim runs Unity's incremental
-garbage collector with a 3 ms budget per frame. A busy server has no idle frame time to add to that,
-so each collection's rescan drags over about a second of frames and then finishes in one
-stop-the-world pass with no time limit. On a large world that pass measured 150-380 ms every 12
-seconds, longer the more the server allocates. The same slow pass is where a large server can abort
-with `Unexpected mark stack overflow`.
-
-The settings live in the `Server - Garbage Collector` config section. The defaults come from that
-server's pause data. Setting any of them to 0 (or off) gives back the game's own value. The
-`vcp_gc` server console command prints the collector's current state and changes each setting live,
-so the effect can be watched on a profiler; an admin can run it remotely, and its replies are
-written to the server log.
-
-- **GC Time Slice Milliseconds** *(server)*, default 10 — the incremental collector's per-frame
-  budget. A longer slice finishes the rescan in fewer frames, leaving less for the final pause to
-  redo, at a few milliseconds more frame time for the frames a collection is running.
-- **GC Free Space Divisor** *(server, Linux)*, default 2 — how far the heap grows between
-  collections; the collector's own value is 3. Collects about a third less often for a few hundred
-  MB more heap on a large world.
-- **GC Mark Stack Target Entries** *(server, Linux)*, default 4194304 (64 MiB) — grows the
-  collector's mark stack ahead of need. The collector normally grows it only after a pass that
-  nearly overflowed it, and a pass that does overflow it aborts the server.
-- **Disable Incremental GC** *(server)*, off by default, experimental — every collection becomes one
-  stop-the-world pass over the whole heap. Turning it on runs one full collection straight away and
-  logs how long it took, which is how long every collection will then pause the server. Turning it
-  back off needs a restart.
-
-On Linux, `vcp_gc stats on` switches on the collector's own log: a few lines per collection with
-its stop-the-world times and how much it rescanned. It goes to the server's standard error (or
-`GC_LOG_FILE`, if that was set when the server started), not to the BepInEx log. `vcp_gc stats off`
-switches it back off.
+The dedicated-server garbage collector settings and the `vcp_gc` console command that shipped in
+0.31.0 are now a separate plugin,
+[Valheim Community Patch GC](https://thunderstore.io/c/valheim/p/MidnightMods/ValheimCommunityPatchGC/).
+They read and write the Mono runtime's own memory, which malware scanners flag. Install it on a
+dedicated server alongside this mod; it pre-grows the collector's mark stack against
+`Unexpected mark stack overflow` crashes on large worlds. The old `Server - Garbage Collector`
+section in this mod's config is no longer read and can be deleted.
 
 ## Credit and sources
 
@@ -314,8 +298,6 @@ The mods involved:
 - **Zen.ModLib** — ZenDragon. Used as a reference; no code was used.
 - **Iron Gate Studio** — Valheim itself. The decompiled game source is the reference used to locate
   defects; no game code is redistributed.
-- **[bdwgc](https://github.com/ivmai/bdwgc)** and Unity's fork of it and of Mono — the collector's
-  source is the reference for the garbage collector settings; no code was used.
 
 ### Performance
 
@@ -402,6 +384,7 @@ The mods involved:
 | Fix Biome Sector Lookup | MidnightsFX | — |
 | Fix Loading Screen Hang | MidnightsFX | — |
 | Fix Equipment Texture Errors | nezuma — ShadowPersonMaterialFix | The defect; that mod swaps the Shadow's shader, this one guards the reads |
+| Fix Unkillable Creatures | MidnightsFX | The `NaN` health handling follows StarLevelSystem's |
 
 ### Server memory
 
@@ -410,12 +393,6 @@ The mods involved:
 | Evict Dead ZDO Records | MidnightsFX | — |
 | Trim ZDO Data Pool | MidnightsFX | — |
 | Fix ZDO Serialize Allocation | MidnightsFX | — |
-
-### Server garbage collector
-
-| Setting | Sourced from | What came from there |
-| --- | --- | --- |
-| Server GC Tuning | MidnightsFX | — |
 
 ## Installation
 

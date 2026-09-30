@@ -71,7 +71,7 @@ namespace ValheimCommunityPatch {
         }
 
         /// <summary>
-        /// True when <paramref name="target"/> carries a prefix or postfix declared by
+        /// True when <paramref name="target"/> carries a prefix, postfix or finalizer declared by
         /// <paramref name="hookClass"/> and owned by this mod.
         /// </summary>
         internal static bool HasHook(MethodBase target, Type hookClass) {
@@ -79,7 +79,8 @@ namespace ValheimCommunityPatch {
             HarmonyLib.Patches info = target == null ? null : Harmony.GetPatchInfo(target);
             if (info == null) { return false; }
 
-            return DeclaredBy(info.Prefixes, hookClass) || DeclaredBy(info.Postfixes, hookClass);
+            return DeclaredBy(info.Prefixes, hookClass) || DeclaredBy(info.Postfixes, hookClass)
+                || DeclaredBy(info.Finalizers, hookClass);
         }
 
         private static bool DeclaredBy(IReadOnlyList<Patch> patches, Type hookClass) {
