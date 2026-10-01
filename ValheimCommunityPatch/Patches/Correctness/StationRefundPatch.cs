@@ -1,4 +1,7 @@
+using System.Collections.Generic;
 using System.Reflection;
+using BepInEx;
+using BepInEx.Bootstrap;
 using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
@@ -22,7 +25,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // and one refund per peer would duplicate the item, so a hook on ZNetView.HandleRoutedRPC records
     // the target of the message being dispatched and a broadcast is left to vanilla. Fix Fuel And Ore
     // Loss keeps the sender's own smelter and fireplace messages local; this covers the sender running
-    // without it, the fermenter and cooking station, and the full-on-arrival race.
+    // without it, the fermenter and cooking station, and the full-on-arrival race. Stands down when
+    // Eternal Fire or AutomaticFuel is loaded: both send these messages without taking an item, or
+    // send more than the station has room for, so each refund would be an item made from nothing.
     //
     // Both: the handler runs on whichever peer the message names, and a listen host or a dedicated
     // server can own a station.
@@ -32,6 +37,14 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         internal static ConfigEntry<bool> Enabled;
 
         private const string FixName = "Refund Rejected Station Items";
+
+        // Also named by the plugin's soft dependencies, which load these first so Prepare can see them.
+        internal const string EternalFireGuid = "digitalroot.mods.eternalfire";
+        internal const string AutomaticFuelGuid = "TastyChickenLegs.AutomaticFuel";
+
+        private static readonly string[] UnpaidFeederGuids = { EternalFireGuid, AutomaticFuelGuid };
+
+        private static bool _loggedStandDown;
 
         private const string NotOwner = "this peer no longer owns it";
         private const string Full = "it is full";
@@ -58,7 +71,32 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "Drops an item back at the player when a smelter, kiln, fireplace, cooking station or " +
                 "fermenter rejects it on arrival. Vanilla removes the item from your inventory and then " +
                 "sends a network message that is silently discarded if the station changed owner, or " +
-                "filled up, in the meantime, destroying the item.");
+                "filled up, in the meantime, destroying the item. Inactive when Eternal Fire or " +
+                "AutomaticFuel is installed, which add fuel without taking an item.");
+        }
+
+        [HarmonyPrepare]
+        private static bool Prepare() {
+            List<string> found = new List<string>();
+            foreach (string guid in UnpaidFeederGuids) {
+                if (Chainloader.PluginInfos.TryGetValue(guid, out PluginInfo info)) {
+                    found.Add(info?.Metadata?.Name ?? guid);
+                }
+            }
+
+            if (found.Count == 0) { return true; }
+
+            if (!_loggedStandDown) {
+                _loggedStandDown = true;
+                bool one = found.Count == 1;
+                Logger.LogWarning(
+                    $"'{FixName}' is disabled because {string.Join(" and ", found)} {(one ? "is" : "are")} " +
+                    $"loaded. {(one ? "It adds" : "They add")} fuel to stations without taking an item, so " +
+                    "refunding would create items from nothing. Item loss when using fermenters, ovens and " +
+                    "cooking stations is likely in multiplayer.");
+            }
+
+            return false;
         }
 
         [HarmonyPrefix]

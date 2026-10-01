@@ -185,6 +185,7 @@ what is recorded, so they run on every side.
 - **Refund Rejected Station Items** *(both)* — drops an item back at the player when a smelter, kiln,
   fireplace, cooking station or fermenter discards it on arrival because the station changed owner or
   filled up after the item left their inventory; covers a vanilla sender and the "last slot" race.
+  Inactive when Eternal Fire or AutomaticFuel is installed.
 - **Share Boss Defeat Keys** *(client)* — gives every nearby player the per-player boss defeat key,
   not only the one whose client owned the boss; works against a vanilla server.
 - **Fix Recipe Amount Crash** *(client)* — guards the null dereference that broke the crafting panel
@@ -462,6 +463,12 @@ shard never link, each rune links one pair, and wood and stone portals can be ke
 Connection Scan replaces the game's pairing pass, which would skip those rules, so it stands down
 whenever another mod patches that pass and says so once in the log with *"Portal pairing is changed
 by ..."*. The game's own pairing then runs with the other mod's rules applied.
+
+Known overlap: **Eternal Fire** and **AutomaticFuel** add fuel to fires, ovens and smelters without
+taking an item, or send more than the station has room for. Refund Rejected Station Items would turn
+each of those into a free item, so it stands down when either is installed and says so once in the
+log with *"'Refund Rejected Station Items' is disabled because ..."*. Without it, items put into
+fermenters, ovens and cooking stations can be lost in multiplayer, as in vanilla.
 
 ## Reporting a bug
 

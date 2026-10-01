@@ -1,5 +1,12 @@
 # Changelog
 
+**0.32.1**
+```
+- Fixes endless free wood appearing in a player's inventory when Eternal Fire or AutomaticFuel is installed
+    - "Refund Rejected Station Items" is disabled to support these mods. A warning will be logged if these mods are detected.
+    - You will need to either remove these mods or deal with item loss when cooking, smelting, or fermenting
+```
+
 **0.32.0**
 ```
 - Fix Unkillable Creatures (both): a creature could be left alive at zero health, ignoring every

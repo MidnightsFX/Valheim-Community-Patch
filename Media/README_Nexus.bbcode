@@ -104,7 +104,7 @@ Where a fix was sourced from, or corroborated against, another modder's work, th
 [*][b]Tolerate Duplicate ZDOs On Load[/b] [i](server)[/i] — loads a save containing duplicate ZDO ids, keeping the later one and logging a warning, instead of refusing to load.
 [*][b]Fix Effect Areas[/b] [i](both)[/i] — grows the fixed 128-collider buffer behind fire warmth and wetness checks when it fills, and removes destroyed characters from effect areas instead of throwing every physics step.
 [*][b]Fix Fuel And Ore Loss[/b] [i](client)[/i] — takes ownership of a smelter, kiln or fireplace before adding fuel or ore, so the item cannot be lost to a dropped network message.
-[*][b]Refund Rejected Station Items[/b] [i](both)[/i] — drops an item back at the player when a smelter, kiln, fireplace, cooking station or fermenter discards it on arrival because the station changed owner or filled up after the item left their inventory; covers a vanilla sender and the "last slot" race.
+[*][b]Refund Rejected Station Items[/b] [i](both)[/i] — drops an item back at the player when a smelter, kiln, fireplace, cooking station or fermenter discards it on arrival because the station changed owner or filled up after the item left their inventory; covers a vanilla sender and the "last slot" race. Inactive when Eternal Fire or AutomaticFuel is installed.
 [*][b]Share Boss Defeat Keys[/b] [i](client)[/i] — gives every nearby player the per-player boss defeat key, not only the one whose client owned the boss; works against a vanilla server.
 [*][b]Fix Recipe Amount Crash[/b] [i](client)[/i] — guards the null dereference that broke the crafting panel for a "requires any one of these" recipe with none of the ingredients carried.
 [*][b]Fix Spawner Null Prefabs[/b] [i](both)[/i] — drops null entries from a spawner's creature table on load instead of letting one kill the spawner.
@@ -239,6 +239,8 @@ When that happens you will see a line like [i]"found no ZLog.Log calls to redire
 Object unloading follows the same principle. Fix Unload Discovery Scan and Fix Object Unload Crash decide what to unload only after every other mod has had its say, so a mod that keeps an object loaded (SeidrChest's remote chest, for example) still keeps it loaded, and a mod that replaces the unload pass itself takes over from both. When another mod does change what stays loaded, the log says so once with [i]"Unload discovery: another mod changed which objects stay loaded"[/i]; that is also the mechanism working.
 
 Known overlap: [b]ComfyMods BetterZeeLog[/b] fixes three of the same defects (container request logging, "Failed to send data", and the projectile zero-velocity rotation warning). The two are safe to run together, and BetterZeeLog's versions of those three take effect.
+
+Known overlap: [b]Eternal Fire[/b] and [b]AutomaticFuel[/b] add fuel to fires, ovens and smelters without taking an item, or send more than the station has room for. Refund Rejected Station Items would turn each of those into a free item, so it stands down when either is installed and says so once in the log with [i]"'Refund Rejected Station Items' is disabled because ..."[/i]. Without it, items put into fermenters, ovens and cooking stations can be lost in multiplayer, as in vanilla.
 
 [line]
 
