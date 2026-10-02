@@ -24,14 +24,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //    relaxation wave travels exactly as far as vanilla's and a settled structure goes quiet.
     //  - A new piece arrived: Awake wakes the envelope-overlapping sleepers around it, as
     //    vanilla's fast path would re-detect returning support within a sweep.
-    //  - UpdateWear's out-of-area path stamped a new support value behind UpdateSupport's back.
+    //  - A wear visit changed the support value without going through UpdateSupport.
     // Pieces that never computed under this tracking, and pieces below their material minimum,
     // run vanilla, and every piece revalidates after MaxSkipStreak consecutive skips as a net for
-    // anything unforeseen. Two repairs stop arrivals looking like changes: Awake restores the
-    // persisted support in place of vanilla's max-support placeholder, and the placeholder the
-    // out-of-area path persists is put back to the last real value. The one heuristic: a piece
-    // that has produced the same value several times running (Settled Piece Patience) may defer
-    // a wake that came only from a neighbour's value drifting; structural wakes never wait.
+    // anything unforeseen. Awake restores the persisted support in place of vanilla's max-support
+    // placeholder, so an arrival does not look like a change. For the same reason a piece with a
+    // real value skips the wear visit outside the active area, whose only work is persisting
+    // that placeholder; a placeholder already stored (by a client without this fix) is put back
+    // once. The one heuristic: a piece that has produced the same value several times running
+    // (Settled Piece Patience) may defer a wake that came only from a neighbour's value drifting;
+    // structural wakes never wait.
     //
     // The wear-visit sleep skips the whole UpdateWear visit for pieces where every remaining
     // input is quiet too: owned locally, dry or roofed while wet, above the waterline, outside
@@ -135,7 +137,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             public int m_skips;
 
             // The last value a real recompute produced, and whether there has been one. This is
-            // the truth the stored support should hold; see the stamp repair in UpdateWearPostfix.
+            // the truth the stored support should hold; see SkipOutOfAreaStamp.
             public bool m_hasRealSupport;
             public float m_realSupport;
 
@@ -253,9 +255,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static long _statRelTenth, _statRelOne, _statRelTen, _statRelHuge;
         private static long _statWaves, _wakeCandidates, _wakeWoken, _wakeCellsSkipped;
 
-        // The out-of-area max-support stamp (see UpdateWearPostfix): stamps written, recomputes
-        // leaving max, recomputes arriving at max.
-        private static long _statOutOfAreaStamp, _statLeftMax, _statReachedMax;
+        // The out-of-area max-support stamp (see SkipOutOfAreaStamp): stamps skipped, stored
+        // placeholders put back, wear visits that changed support outside UpdateSupport,
+        // recomputes leaving max, recomputes arriving at max.
+        private static long _statStampSkipped, _statStampRepaired, _statUnhandledChange;
+        private static long _statLeftMax, _statReachedMax;
         private static long _statWeakDeferred;
 
         // Re-runs one recompute in ProbeInterval's bound boxes into a larger buffer to report how
@@ -288,8 +292,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 $"{_wakeCandidates} candidate(s), waking {_wakeWoken}; " +
                 $"{_wakeCellsSkipped} fully-awake cell(s) skipped. " +
                 $"Weak wakes deferred by settled pieces: {_statWeakDeferred}. " +
-                $"Out-of-area max-support stamps {_statOutOfAreaStamp}; changes leaving max " +
-                $"{_statLeftMax}, reaching max {_statReachedMax}. " +
+                $"Out-of-area max-support stamps skipped {_statStampSkipped}, stored " +
+                $"placeholders put back {_statStampRepaired}, changes outside a recompute " +
+                $"{_statUnhandledChange}; changes leaving max {_statLeftMax}, reaching max " +
+                $"{_statReachedMax}. " +
                 $"Overlap probe (1 in {ProbeInterval}): {_probeBoxes} box(es), {_probeSaturated} " +
                 $"at or over the {WearNTear.s_tempColliders.Length} limit, worst {_probeWorst}.");
 
@@ -329,7 +335,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _wakeCandidates = 0;
             _wakeWoken = 0;
             _wakeCellsSkipped = 0;
-            _statOutOfAreaStamp = 0;
+            _statStampSkipped = 0;
+            _statStampRepaired = 0;
+            _statUnhandledChange = 0;
             _statWeakDeferred = 0;
             _statLeftMax = 0;
             _statReachedMax = 0;
@@ -417,6 +425,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("UpdateSupport")]
         private static bool UpdateSupportPrefix(WearNTear __instance, out Snapshot __state) {
             __state = default;
+            _supportVisitedFor = __instance;
             FlushDestroyWakes();
             if (!Hooks.Healthy) { return true; }
 
@@ -554,9 +563,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Set by UpdateSupportPostfix within an UpdateWear call; a support value that changed
-        // across UpdateWear WITHOUT this marker was written behind UpdateSupport's back - the
-        // outside-active-area path is the one vanilla site that does that (see header).
+        // across UpdateWear WITHOUT this marker was written behind UpdateSupport's back.
         private static WearNTear _supportHandledFor;
+
+        // Set on entry to UpdateSupport, whether it then runs or sleeps. A piece that wears
+        // support reaches UpdateSupport only on vanilla's in-area path, so this marks a visit on
+        // which vanilla's out-of-area stamp did not run.
+        private static WearNTear _supportVisitedFor;
 
         // ---- the wear-visit sleep ------------------------------------------------------------
         //
@@ -573,8 +586,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         //  - the piece sits above y=35 (nothing in the world is underwater above sea level plus
         //    waves, closing the IsUnderWater half of IsWet without a physics query);
         //  - its biome is resolved and not Ashlands (ash/lava timers run vanilla);
-        //  - its cached zone is inside the activated area (outside it, vanilla stamps max
-        //    support - the piece runs vanilla there, and the write-guard below handles it);
+        //  - its cached position is inside the active area (outside it the visit is vanilla's
+        //    max-support stamp, which SkipOutOfAreaStamp handles);
         //  - no damage or repair happened since its last ran visit (those wake it for visuals).
         // A wear-skip counts toward the same hygiene streak as a support-skip, so the periodic
         // full revalidation still happens. Pieces on moving structures are effectively excluded
@@ -708,26 +721,32 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (piece.m_biome == Heightmap.Biome.None || piece.m_biome == Heightmap.Biome.AshLands
                 || piece.m_inAshlands) { return 5; }
 
-            // ZNetScene.PointInsideActiveArea on the cached position. Outside the active area
-            // vanilla's UpdateWear takes its set-support-to-max branch, which is a real write.
-            float dx = state.m_x - _centerZonePos.x;
-            float dz = state.m_z - _centerZonePos.z;
-            if (dx < 0f) { dx = -dx; }
-            if (dz < 0f) { dz = -dz; }
-            if ((dx > dz ? dx : dz) > _activeAreaChebyshev) { return 6; }
-            if (_activeAreaRadiusSq >= 0f && dx * dx + dz * dz >= _activeAreaRadiusSq) { return 6; }
+            if (OutsideCachedRing(state)) { return 6; }
 
             if (!piece.m_nview.IsValid() || !piece.m_nview.IsOwner()) { return 7; }
 
             return 0;
         }
 
+        // ZNetScene.PointInsideActiveArea, negated, on the cached position against this frame's
+        // ring: the same Chebyshev bound and radial cut, without the float[] that
+        // Utils.ChebyshevDistance allocates on every call.
+        private static bool OutsideCachedRing(PieceState state) {
+            float dx = state.m_x - _centerZonePos.x;
+            float dz = state.m_z - _centerZonePos.z;
+            if (dx < 0f) { dx = -dx; }
+            if (dz < 0f) { dz = -dz; }
+            if ((dx > dz ? dx : dz) > _activeAreaChebyshev) { return true; }
+            return _activeAreaRadiusSq >= 0f && dx * dx + dz * dz >= _activeAreaRadiusSq;
+        }
+
         [HarmonyPrefix]
         [HarmonyPatch("UpdateWear")]
-        private static bool UpdateWearPrefix(WearNTear __instance, out WearSnapshot __state) {
+        private static bool UpdateWearPrefix(WearNTear __instance, float time, out WearSnapshot __state) {
             __state = default;
             __state.m_prevSupport = __instance.m_support;
             _supportHandledFor = null;
+            _supportVisitedFor = null;
             FlushDestroyWakes();
 
             if (!Hooks.Healthy) { return true; }
@@ -752,7 +771,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     LogWearVerifySummary("periodic");
                 }
 
-                return true;
+                // Not a prediction, so it stays on while verifying: vanilla's out-of-area branch
+                // touches nothing the verify compares, only the stored value.
+                return !SkipOutOfAreaStamp(__instance, state, time, ref __state);
             }
 
             if (_wearVerifyActive) {
@@ -772,6 +793,27 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return false;
             }
 
+            return !SkipOutOfAreaStamp(__instance, state, time, ref __state);
+        }
+
+        /// Vanilla's UpdateWear, for an owned piece outside the active area, persists
+        /// GetMaxSupport() whenever the in-memory value differs and returns; that is the whole
+        /// branch. It never assigns the in-memory value, so the test holds on every visit, and
+        /// any restore of the real value turns its one write into two a second, each re-sending
+        /// the piece to every peer. A piece with a real value skips the visit instead and keeps
+        /// it. The cached ring picks the candidates and vanilla's own test confirms them, so an
+        /// in-area visit is never skipped; a moving piece the cached ring misses gets vanilla's
+        /// single write. Not counted toward the skip streak: vanilla rechecks nothing out there.
+        private static bool SkipOutOfAreaStamp(WearNTear piece, PieceState state, float time, ref WearSnapshot snapshot) {
+            if (!state.m_hasRealSupport || !state.m_geoCached || !OutsideCachedRing(state)) { return false; }
+
+            ZNetView nview = piece.m_nview;
+            if (nview == null || !nview.IsValid() || !nview.IsOwner() || !piece.ShouldUpdate(time)) { return false; }
+            if (!ZNetScene.instance.OutsideActiveArea(piece.transform.position)) { return false; }
+
+            snapshot.m_skipped = true;
+            if (_statsOn && !piece.m_support.Equals(piece.GetMaxSupport())) { _statStampSkipped++; }
+            RepairStampedSupport(piece, state);
             return true;
         }
 
@@ -816,35 +858,36 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 }
             }
 
+            // Only a visit that reached UpdateSupport is known not to have run vanilla's stamp;
+            // after any other, putting the real value back is the write loop again. The state is
+            // null when the prefix stood down, which is also when m_realSupport stops tracking.
+            if (ReferenceEquals(_supportVisitedFor, __instance)) { RepairStampedSupport(__instance, state); }
+
             if (ReferenceEquals(_supportHandledFor, __instance)) {
                 return;
             }
 
-            // Deliberately not __state.m_state: that is only populated when the wear prefix
-            // engaged, and this repair belongs to the support fix.
-            States.TryGetValue(__instance.GetInstanceID(), out PieceState tracked);
-            RepairStampedSupport(__instance, tracked);
-
             if (__instance.m_support.Equals(__state.m_prevSupport)) { return; }
 
-            // The piece left the active area and had max support stamped on it; it must not
-            // sleep on that value when it comes back, and neighbours read it like any change.
-            if (_statsOn) { _statOutOfAreaStamp++; }
+            // Support moved during the visit without UpdateSupport seeing it (destruction zeroes
+            // it; an older or modded out-of-area path stamps it). The piece must not sleep on
+            // that value, and neighbours read it like any change.
+            if (_statsOn) { _statUnhandledChange++; }
 
             PieceState changedState = GetState(__instance);
             SetDirty(changedState, true, true);
             DirtyNeighbours(__instance, changedState, true);
         }
 
-        /// UpdateWear stamps m_support = GetMaxSupport() for pieces outside the active area and
-        /// persists it, so the stored support (what a non-owner reads, and what a returning piece
-        /// restores from at Awake) is overwritten with a placeholder every time the ring edge
-        /// sweeps past. The in-memory stamp is left alone, since it keeps an unwatched structure
-        /// from failing its support check; only the stored copy is put back to the last real
-        /// value, and only when it actually holds the placeholder.
+        /// Puts a max-support placeholder already in the stored support (what a non-owner reads,
+        /// and what a returning piece restores from at Awake) back to the last real value: one
+        /// written by a client without this fix, or by vanilla's stamp before this piece had a
+        /// real value here. Owner only, and only on visits where vanilla's stamp cannot have run,
+        /// so each placeholder is put back at most once. Never call it after a visit that may
+        /// have stamped: that is the endless two-write loop SkipOutOfAreaStamp ends.
         private static void RepairStampedSupport(WearNTear piece, PieceState state) {
             if (state == null || !state.m_hasRealSupport) { return; }
-            if (piece.m_nview == null || !piece.m_nview.IsValid()) { return; }
+            if (piece.m_nview == null || !piece.m_nview.IsValid() || !piece.m_nview.IsOwner()) { return; }
 
             float maxSupport = piece.GetMaxSupport();
             if (state.m_realSupport.Equals(maxSupport)) { return; }
@@ -853,6 +896,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (!zdo.GetFloat(ZDOVars.s_support, out float stored) || !stored.Equals(maxSupport)) { return; }
 
             zdo.Set(ZDOVars.s_support, state.m_realSupport);
+            if (_statsOn) { _statStampRepaired++; }
         }
 
         // A roof appearing or disappearing changes whether a wet-sleeping piece is actually

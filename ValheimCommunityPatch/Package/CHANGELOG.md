@@ -1,5 +1,10 @@
 # Changelog
 
+**0.32.2**
+```
+- Fixes building pieces at the edge of a player's loaded area being re-sent to everyone every second.
+```
+
 **0.32.1**
 ```
 - Fixes endless free wood appearing in a player's inventory when Eternal Fire or AutomaticFuel is installed
