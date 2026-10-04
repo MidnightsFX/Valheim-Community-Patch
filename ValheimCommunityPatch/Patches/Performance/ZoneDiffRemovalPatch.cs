@@ -16,7 +16,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // A prefix asks the question directly. SectorInstanceIndexPatch keeps every live instance
     // grouped by its ZDO's zone, so for each zone holding instances (a few hundred keys) the pass
     // keeps everything within the near ring, removes non-distant instances from the distant band
-    // and removes everything outside both, which is exactly vanilla's keep-set. The removal
+    // and removes everything outside both. Sector zero is an alias for every out-of-grid
+    // sector, so its instances use membership in the filled lists instead of distance. The removal
     // sequence per instance is vanilla's, inside the same orphan-recovery contract as
     // RemoveObjectsNrePatch. An Object Unload Frame Budget caps how many departures are handed to
     // the engine per pass, because Unity's end-of-frame destruction flush is what makes a
@@ -69,6 +70,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly List<ZNetView> Removed = new List<ZNetView>();
         private static readonly HashSet<ZNetView> VerifyIndexSet = new HashSet<ZNetView>();
+        private static readonly HashSet<ZDO> SectorZeroKeepSet = new HashSet<ZDO>();
+        private static readonly Vector2s SectorZeroZone = ZoneSystem.IndexToSector(ZoneSystem.SectorZero.Sector);
 
         private const int VerifyReportInterval = 900;
         private static bool _verifyActive;
@@ -204,7 +207,29 @@ namespace ValheimCommunityPatch.Patches.Performance {
             float fullRadiusSq = fullRadius * fullRadius;
 
             Removed.Clear();
+            SectorZeroKeepSet.Clear();
+            if (SectorInstanceIndexPatch.ByZone.ContainsKey(SectorZeroZone)) {
+                // A dedicated server's reference position can be outside the grid. The game's
+                // selection then includes bucket zero, while IndexToSector(0) says (-256,-256).
+                // That key cannot tell us which records were selected, even with OutsideZones
+                // false. Use the actual keep lists for this bucket, including its valid corner.
+                SectorZeroKeepSet.UnionWith(currentNearObjects);
+                SectorZeroKeepSet.UnionWith(currentDistantObjects);
+            }
+
             foreach (KeyValuePair<Vector2s, List<ZNetView>> pair in SectorInstanceIndexPatch.ByZone) {
+                if (pair.Key == SectorZeroZone) {
+                    List<ZNetView> sectorZero = pair.Value;
+                    for (int i = 0; i < sectorZero.Count; i++) {
+                        ZNetView view = sectorZero[i];
+                        if (view.m_zdo == null || !SectorZeroKeepSet.Contains(view.m_zdo)) {
+                            Removed.Add(view);
+                        }
+                    }
+
+                    continue;
+                }
+
                 int dx = pair.Key.x - center.x;
                 int dy = pair.Key.y - center.y;
                 if (dx < 0) { dx = -dx; }
@@ -227,6 +252,22 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     if (view.m_zdo == null || !view.m_zdo.Distant) { Removed.Add(view); }
                 }
             }
+            // Do not retain selected ZDOs across passes or scene shutdown.
+            SectorZeroKeepSet.Clear();
+
+            // Index entries can outlive their registration in the scene. Only the scene's
+            // current view may be removed; destroying an old view must not remove its replacement.
+            // Keep null-ZDO candidates so Execute retains its guarded orphan-recovery path.
+            int liveRemovals = 0;
+            for (int i = 0; i < Removed.Count; i++) {
+                ZNetView view = Removed[i];
+                ZDO zdo = view.m_zdo;
+                if (zdo == null || (__instance.m_instances.TryGetValue(zdo, out ZNetView current)
+                    && ReferenceEquals(current, view))) {
+                    Removed[liveRemovals++] = view;
+                }
+            }
+            Removed.RemoveRange(liveRemovals, Removed.Count - liveRemovals);
 
             if (TeardownHooks.StatsOn) {
                 if (Removed.Count >= StormReportThreshold) {
@@ -427,7 +468,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                         $"Unload discovery verify: DIVERGED - index found {VerifyIndexSet.Count} " +
                         $"removal(s), vanilla found {Removed.Count} ({missing} missed by " +
                         $"the index, {extra} extra). Vanilla's set was used. Please report this - " +
-                        "leave 'Fix Unload Discovery Scan' off until it is understood.");
+                        "keep 'Verify Unload Discovery' enabled while investigating.");
                 }
 
                 Execute(scene, currentNearObjects, currentDistantObjects);
