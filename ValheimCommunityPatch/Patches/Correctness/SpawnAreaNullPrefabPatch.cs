@@ -12,7 +12,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // A postfix on SpawnArea.Awake removes the null entries once, so the spawner keeps working
     // with whatever is still valid.
     //
-    // Both: spawners near world origin sit inside a dedicated server's own active area.
+    // Both: a spawner inside a dedicated server's own active area runs there too.
     // Provenance: the same fix as ComfyMods/LetMePlay (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(SpawnArea))]

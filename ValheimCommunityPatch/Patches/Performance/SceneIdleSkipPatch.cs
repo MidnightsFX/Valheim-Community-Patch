@@ -26,7 +26,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Composition: this must stay a prefix on CreateDestroyObjects that returns true or false, so
     // RemoveObjectsNrePatch and the sweep prefixes below it see a full pass exactly as vanilla
-    // would. Both: a dedicated server runs the same pass over its origin-area set.
+    // would. Both: a dedicated server runs the same pass over the set around its pinned reference
+    // position, far outside the zone grid.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SceneIdleSkipPatch {
@@ -57,6 +58,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _ringMaxX;
         private static int _ringMinY;
         private static int _ringMaxY;
+        private static bool _ringAliased;
 
         private static ZNetScene _snapshotScene;
         private static Vector2s _snapshotZone;
@@ -92,14 +94,20 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // ---- change hooks (maintenance runs unconditionally) ---------------------------------
 
         // AddToSector receives the new sector and RemoveFromSector the old one, so each firing is
-        // filtered by the sector it actually touched. Both hand over a packed sector index; the
-        // ring test is in zone coordinates, and out-of-grid sectors unpack to a corner zone that
-        // no streamed ring contains, which is the answer we want for them anyway.
+        // filtered by the sector it actually touched. Both hand over a packed sector index and the
+        // ring test is in zone coordinates. Index 0 is not one zone but every zone outside the
+        // +/-256 grid, so it counts exactly when the ring reaches past the grid, which a dedicated
+        // server's always does.
         private static void OnSectorTouched(ZDO zdo, ZoneSystem.SectorIndex sectorIndex) {
-            Vector2s sector = ZoneSystem.IndexToSector(sectorIndex.Sector);
-            if (_ringValid
-                && (sector.x < _ringMinX || sector.x > _ringMaxX || sector.y < _ringMinY || sector.y > _ringMaxY)) {
-                return;
+            if (_ringValid) {
+                if (sectorIndex == ZoneSystem.SectorZero) {
+                    if (!_ringAliased) { return; }
+                } else {
+                    Vector2s sector = ZoneSystem.IndexToSector(sectorIndex.Sector);
+                    if (sector.x < _ringMinX || sector.x > _ringMaxX || sector.y < _ringMinY || sector.y > _ringMaxY) {
+                        return;
+                    }
+                }
             }
 
             _ringHash ^= (uint)zdo.m_uid.GetHashCode();
@@ -175,6 +183,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _ringMaxX = zone.x + span;
             _ringMinY = zone.y - span;
             _ringMaxY = zone.y + span;
+
+            // A square that reaches past the grid, or onto the grid corner index 0 unpacks to,
+            // has a corner the game files under index 0.
+            _ringAliased = ZoneSystem.SectorToIndex(_ringMinX, _ringMinY) == ZoneSystem.SectorZero
+                || ZoneSystem.SectorToIndex(_ringMinX, _ringMaxY) == ZoneSystem.SectorZero
+                || ZoneSystem.SectorToIndex(_ringMaxX, _ringMinY) == ZoneSystem.SectorZero
+                || ZoneSystem.SectorToIndex(_ringMaxX, _ringMaxY) == ZoneSystem.SectorZero;
             _ringValid = true;
 
             _ringHashAtPrefix = _ringHash;

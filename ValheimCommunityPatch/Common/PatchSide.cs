@@ -12,8 +12,9 @@ namespace ValheimCommunityPatch {
     /// </summary>
     /// <remarks>
     /// A dedicated server is not a simulation host. It only instantiates objects inside its own
-    /// active area, which never leaves world origin because nothing there moves the reference
-    /// position. So component and behaviour fixes are client value, and the data and network
+    /// active area, which the dedicated server build parks far outside the world by pinning the
+    /// reference position at (1000000,0,1000000); the client build this mod compiles against has
+    /// no such line. So component and behaviour fixes are client value, and the data and network
     /// layer (ZDOMan, ZNetScene bookkeeping, ZPackage, sockets) is where a server gains. Where a
     /// fix is borderline, prefer Both: an unused patch costs one trampoline, a wrongly skipped
     /// one costs a bug on somebody else's machine.

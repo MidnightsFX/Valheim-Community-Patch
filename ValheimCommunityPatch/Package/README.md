@@ -23,9 +23,10 @@ safe; it just gets you a subset. See [Installation](#installation).
 ### Why so many fixes are client-side
 
 A Valheim dedicated server is not a simulation host. It only creates game objects inside its *own*
-active area, and a headless server never has a player to anchor that area to, so that area stays at
-world origin for the whole run. Creatures, fires, chests, tar pits and everything else near a player
-are created, owned and simulated on that player's client; the server holds the data and relays it.
+active area, and a dedicated server never has a player to anchor that area to, so the game parks it
+far outside the world for the whole run. Creatures, fires, chests, tar pits and everything else near
+a player are created, owned and simulated on that player's client; the server holds the data and
+relays it.
 
 So the fixes a server gains from are the data-and-network ones — ZDO handling, world load, packet
 allocation, socket logging — and almost everything else is worth having on the client.
