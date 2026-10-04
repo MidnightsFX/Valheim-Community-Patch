@@ -18,10 +18,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // (via TeardownHooks) is the removal signal for every removal path, and ZDOMan.AddToSector is
     // where every sector change lands. The index keys on the ZDO's sector where vanilla reads the
     // live transform; for movers they differ by at most position-sync latency, in the direction
-    // that keeps a zone loaded marginally longer. Maintenance is unconditional; the read stands
-    // down to vanilla's walk if any hook failed to attach.
+    // that keeps a zone loaded marginally longer. One key is not a zone at all: the game files
+    // every ZDO outside its +/-256 zone grid under sector index 0, so that bucket (AliasedZone)
+    // mixes zones and its consumers decide it by vanilla's own test instead. Maintenance is
+    // unconditional; the read stands down to vanilla's walk if any hook failed to attach.
     //
-    // Both: a dedicated server runs UpdateTTL over its own loaded zones.
+    // Both: a dedicated server runs UpdateTTL over its own loaded zones, every one of which lies
+    // outside the grid because its reference position does.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SectorInstanceIndexPatch {
@@ -78,6 +81,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static Vector2s ZoneOf(ZoneSystem.SectorIndex sectorIndex) {
             return ZoneSystem.IndexToSector(sectorIndex.Sector);
         }
+
+        /// <summary>
+        /// The one index key that is lossy: every ZDO the game files under sector index 0 (outside
+        /// the +/-256 zone grid, or with its sector invalidated by the server) lands here, whatever
+        /// its real zone. Consumers must not reason about this bucket's zone; see
+        /// ZoneDiffRemovalPatch and HaveInstanceInSectorPrefix.
+        /// </summary>
+        internal static Vector2s AliasedZone => ZoneOf(ZoneSystem.SectorZero);
 
         private static void Bump(Vector2s sector, int delta) {
             NonDistantCount.TryGetValue(sector, out int count);
@@ -176,7 +187,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool HaveInstanceInSectorPrefix(ZNetScene __instance, Vector2s sector, ref bool __result) {
             if (!Hooks.Healthy) { return true; }
 
-            bool indexed = NonDistantCount.ContainsKey(sector);
+            // A zone the game files under sector index 0 shares its key with every other such
+            // zone, so the tally cannot answer for it.
+            bool indexed = ZoneSystem.SectorToIndex(sector) == ZoneSystem.SectorZero
+                ? AliasedBucketHas(sector)
+                : NonDistantCount.ContainsKey(sector);
 
             if (Verify != null && Verify.Value) {
                 _verifyActive = true;
@@ -210,6 +225,25 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             __result = indexed;
+            return false;
+        }
+
+        // Vanilla's test over the aliased bucket alone, which holds every instance that could
+        // stand in a zone filed under sector index 0.
+        private static bool AliasedBucketHas(Vector2s sector) {
+            Vector2s aliased = AliasedZone;
+            if (!NonDistantCount.ContainsKey(aliased) || !ByZone.TryGetValue(aliased, out List<ZNetView> bucket)) {
+                return false;
+            }
+
+            for (int i = 0; i < bucket.Count; i++) {
+                ZNetView view = bucket[i];
+                if ((bool)(Object)view && !view.m_distant
+                    && ZoneSystem.GetZone(view.transform.position) == sector) {
+                    return true;
+                }
+            }
+
             return false;
         }
 

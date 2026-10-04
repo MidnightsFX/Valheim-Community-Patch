@@ -26,8 +26,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // the target of the message being dispatched and a broadcast is left to vanilla. Fix Fuel And Ore
     // Loss keeps the sender's own smelter and fireplace messages local; this covers the sender running
     // without it, the fermenter and cooking station, and the full-on-arrival race. Stands down when
-    // Eternal Fire or AutomaticFuel is loaded: both send these messages without taking an item, or
-    // send more than the station has room for, so each refund would be an item made from nothing.
+    // Eternal Fire before 1.1.6 or AutomaticFuel is loaded: both send these messages without taking
+    // an item, or send more than the station has room for, so each refund would be an item made from
+    // nothing. Eternal Fire 1.1.6 sends none: an eternal station reports full fuel instead of being
+    // topped up.
     //
     // Both: the handler runs on whichever peer the message names, and a listen host or a dedicated
     // server can own a station.
@@ -43,6 +45,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         internal const string AutomaticFuelGuid = "TastyChickenLegs.AutomaticFuel";
 
         private static readonly string[] UnpaidFeederGuids = { EternalFireGuid, AutomaticFuelGuid };
+
+        // The first Eternal Fire release that no longer sends a feed message of its own.
+        // System.Version: the game declares a global Version class of its own.
+        private static readonly System.Version EternalFirePaidVersion = new System.Version(1, 1, 6);
 
         private static bool _loggedStandDown;
 
@@ -71,17 +77,28 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "Drops an item back at the player when a smelter, kiln, fireplace, cooking station or " +
                 "fermenter rejects it on arrival. Vanilla removes the item from your inventory and then " +
                 "sends a network message that is silently discarded if the station changed owner, or " +
-                "filled up, in the meantime, destroying the item. Inactive when Eternal Fire or " +
-                "AutomaticFuel is installed, which add fuel without taking an item.");
+                "filled up, in the meantime, destroying the item. Inactive when AutomaticFuel, or " +
+                "Eternal Fire older than 1.1.6, is installed, which add fuel without taking an item.");
         }
 
         [HarmonyPrepare]
         private static bool Prepare() {
             List<string> found = new List<string>();
+            bool oldEternalFire = false;
             foreach (string guid in UnpaidFeederGuids) {
-                if (Chainloader.PluginInfos.TryGetValue(guid, out PluginInfo info)) {
-                    found.Add(info?.Metadata?.Name ?? guid);
+                if (!Chainloader.PluginInfos.TryGetValue(guid, out PluginInfo info)) { continue; }
+
+                string name = info?.Metadata?.Name ?? guid;
+                if (guid == EternalFireGuid) {
+                    // An unreadable version is treated as an old one, which is the safe failure.
+                    System.Version version = info?.Metadata?.Version;
+                    if (version != null && version >= EternalFirePaidVersion) { continue; }
+
+                    oldEternalFire = true;
+                    if (version != null) { name += $" {version}"; }
                 }
+
+                found.Add(name);
             }
 
             if (found.Count == 0) { return true; }
@@ -93,7 +110,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                     $"'{FixName}' is disabled because {string.Join(" and ", found)} {(one ? "is" : "are")} " +
                     $"loaded. {(one ? "It adds" : "They add")} fuel to stations without taking an item, so " +
                     "refunding would create items from nothing. Item loss when using fermenters, ovens and " +
-                    "cooking stations is likely in multiplayer.");
+                    "cooking stations is likely in multiplayer." +
+                    (oldEternalFire ? $" Eternal Fire {EternalFirePaidVersion} and later no longer does this." : ""));
             }
 
             return false;

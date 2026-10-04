@@ -1,5 +1,13 @@
 # Changelog
 
+**0.32.3**
+```
+- Fixes wrong biomes, weather and terrain colours on worlds resized or stretched by Expand World Size.
+- Fixes a dedicated server endlessly destroying and recreating its own loaded objects, which crashed it after long uptime.
+- Fixes the same loop, and terrain unloading under loaded objects, beyond the game's zone grid on worlds enlarged by Expand World Size.
+- Items rejected by a station are refunded again when an up-to-date Eternal Fire is installed.
+```
+
 **0.32.2**
 ```
 - Fixes building pieces at the edge of a player's loaded area being re-sent to everyone every second.

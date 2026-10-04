@@ -14,8 +14,8 @@ namespace ValheimCommunityPatch
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [BepInDependency(Jotunn.Main.ModGuid)]
     // Load order only: Fix Idle Creature Sync stands down for NPS 1.9.1+, and Refund Rejected
-    // Station Items for Eternal Fire and AutomaticFuel, and each can only see the other mod if it
-    // loaded first.
+    // Station Items for Eternal Fire before 1.1.6 and AutomaticFuel, and each can only see the
+    // other mod if it loaded first.
     [BepInDependency(Patches.Performance.CreatureSyncDeadbandPatch.NpsGuid, BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency(Patches.Correctness.StationRefundPatch.EternalFireGuid, BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency(Patches.Correctness.StationRefundPatch.AutomaticFuelGuid, BepInDependency.DependencyFlags.SoftDependency)]
@@ -24,7 +24,7 @@ namespace ValheimCommunityPatch
     {
         public const string PluginGUID = "MidnightsFX.ValheimCommunityPatch";
         public const string PluginName = "ValheimCommunityPatch";
-        public const string PluginVersion = "0.32.2";
+        public const string PluginVersion = "0.32.3";
 
         internal static ManualLogSource Log;
 

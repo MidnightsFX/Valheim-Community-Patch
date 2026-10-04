@@ -31,6 +31,11 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // lookup if a future build reads the result, since heights must match vanilla clients.
     // Another points UpdateBiome's warning at the debug sink.
     //
+    // The grid's size and spacing are not fixed: Expand World Size scales them with the world
+    // radius and stretch by transpiling AltBiomeWorldData's conversions. Every lookup here reads
+    // the grid's placement back through MapSpaceToWorldSpace and its bounds from the array, so it
+    // follows whatever grid the game built rather than vanilla's 2048 samples at 12 m.
+    //
     // Both: servers place vegetation and roll spawn levels through the same lookup.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(WorldGenerator))]
@@ -52,11 +57,6 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "placement keeps vanilla's lookup so seeds generate the same locations. The warning is " +
                 "still visible with EnableDebugMode on. Changing this requires a game restart.");
         }
-
-        // Sample j sits at (j - c_halfWidth) * c_pixelSize + c_pixelSize / 2; this offset puts
-        // every sample on an integer grid coordinate.
-        private const float CellSize = AltBiomeWorldData.c_pixelSize;
-        private const float GridOffset = AltBiomeWorldData.c_halfWidth - 0.5f;
 
         // Set while location placement runs, which keeps vanilla's lookup. Thread-static because
         // HeightmapBuilder looks sectors up on its own thread at the same time.
@@ -111,13 +111,15 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         private static BiomeSector Lookup(WorldGenerator gen, AltBiomeWorldData data, float wx, float wz) {
+            // The array's own bounds, not data.Size: Expand World Size grows the arrays in place
+            // and sets Size after them, which the terrain builder thread can catch half done.
             BiomeSector[,] sectors = data.PointSectors;
-            int last = data.Size - 1;
+            int lastX = sectors.GetLength(0) - 1;
+            int lastZ = sectors.GetLength(1) - 1;
+            if (lastX < 1 || lastZ < 1 || !ToGrid(wx, wz, out float fx, out float fz)) { return null; }
 
-            float fx = wx / CellSize + GridOffset;
-            float fz = wz / CellSize + GridOffset;
-            int x0 = Mathf.Clamp(Mathf.FloorToInt(fx), 0, last - 1);
-            int z0 = Mathf.Clamp(Mathf.FloorToInt(fz), 0, last - 1);
+            int x0 = Mathf.Clamp(Mathf.FloorToInt(fx), 0, lastX - 1);
+            int z0 = Mathf.Clamp(Mathf.FloorToInt(fz), 0, lastZ - 1);
 
             // Four samples of one sector around the point: a 2x2 block of one biome is always a
             // single sector, since the flood fill joins 4-connected samples.
@@ -132,8 +134,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
             BiomeSector nearest = null;
             float nearestDistance = float.MaxValue;
-            for (int z = Math.Max(z0 - 1, 0); z <= Math.Min(z0 + 2, last); z++) {
-                for (int x = Math.Max(x0 - 1, 0); x <= Math.Min(x0 + 2, last); x++) {
+            for (int z = Math.Max(z0 - 1, 0); z <= Math.Min(z0 + 2, lastZ); z++) {
+                for (int x = Math.Max(x0 - 1, 0); x <= Math.Min(x0 + 2, lastX); x++) {
                     BiomeSector candidate = sectors[x, z];
                     if (candidate == null || candidate.Biome != biome) { continue; }
 
@@ -150,6 +152,22 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             return nearest ?? FallbackSector(biome);
         }
 
+        // Vanilla places sample j at MapSpaceToWorldSpace(j), (j - 1024) * 12 + 6. Reading the
+        // origin and spacing back through that method, which a mod that resizes the grid patches,
+        // gives coordinates in which every sample sits on an integer. The spacing is measured
+        // across the whole vanilla width so float rounding at large distances stays out of it.
+        // A spacing that is not positive can only come from a broken patch; vanilla answers then.
+        private const float SpacingSpan = AltBiomeWorldData.c_textureSize;
+
+        private static bool ToGrid(float wx, float wz, out float fx, out float fz) {
+            float origin = AltBiomeWorldData.MapSpaceToWorldSpace(0f);
+            float spacing = (AltBiomeWorldData.MapSpaceToWorldSpace(SpacingSpan) - origin) / SpacingSpan;
+
+            fx = (wx - origin) / spacing;
+            fz = (wz - origin) / spacing;
+            return spacing > 0f;
+        }
+
         private static BiomeSector FallbackSector(Heightmap.Biome biome) {
             if (Fallbacks.TryGetValue(biome, out BiomeSector sector)) { return sector; }
 
@@ -158,7 +176,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
         private static BiomeSector CreateFallback(Heightmap.Biome biome) {
             Logger.LogDebug(
-                $"{FixName}: a patch of {biome} narrower than the 12 m biome grid; it gets a {biome} " +
+                $"{FixName}: a patch of {biome} narrower than the biome grid's spacing; it gets a {biome} " +
                 "sector with no alt biomes.");
             return new BiomeSector(null, biome);
         }
@@ -185,9 +203,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
         // The nearest sample, unbiased but never exact, through the same overload (which clamps).
         private static BiomeSector NearestSector(WorldGenerator gen, float wx, float wy, bool clamp) {
-            return gen.GetBiomeSector(
-                Mathf.FloorToInt(wx / CellSize + AltBiomeWorldData.c_halfWidth),
-                Mathf.FloorToInt(wy / CellSize + AltBiomeWorldData.c_halfWidth), clamp);
+            if (!ToGrid(wx, wy, out float fx, out float fz)) { return VanillaSector(gen, wx, wy, clamp); }
+
+            return gen.GetBiomeSector(Mathf.FloorToInt(fx + 0.5f), Mathf.FloorToInt(fz + 0.5f), clamp);
         }
 
         // Load-bearing: without it every height sample near a border would pay for a GetBiome call

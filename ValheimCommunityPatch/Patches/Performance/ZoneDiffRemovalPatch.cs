@@ -16,12 +16,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // A prefix asks the question directly. SectorInstanceIndexPatch keeps every live instance
     // grouped by its ZDO's zone, so for each zone holding instances (a few hundred keys) the pass
     // keeps everything within the near ring, removes non-distant instances from the distant band
-    // and removes everything outside both, which is exactly vanilla's keep-set. The removal
-    // sequence per instance is vanilla's, inside the same orphan-recovery contract as
-    // RemoveObjectsNrePatch. An Object Unload Frame Budget caps how many departures are handed to
-    // the engine per pass, because Unity's end-of-frame destruction flush is what makes a
-    // thousands-at-once unload a visible freeze; the remainder is rediscovered from the index next
-    // pass at no cost.
+    // and removes everything outside both, which is exactly vanilla's keep-set. The one key that
+    // is not a zone is the bucket for sector index 0, where the game files everything outside its
+    // +/-256 zone grid: the dedicated server build pins its reference position at
+    // (1000000,0,1000000), which puts a server's whole loaded set there, so that bucket is decided
+    // as vanilla decides it, by membership of the near and distant lists. The removal sequence per
+    // instance is vanilla's, inside the same orphan-recovery contract as RemoveObjectsNrePatch. An
+    // Object Unload Frame Budget caps how many departures are handed to the engine per pass,
+    // because Unity's end-of-frame destruction flush is what makes a thousands-at-once unload a
+    // visible freeze; the remainder is rediscovered from the index next pass at no cost.
     //
     // That keep-set is vanilla's only while the near and distant lists are exactly what
     // ZDOMan.FindSectorObjects filled, and other mods keep an object loaded by adding its ZDO to
@@ -204,7 +207,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
             float fullRadiusSq = fullRadius * fullRadius;
 
             Removed.Clear();
+
+            // Ahead of the ring zones, so a capped pass unloads these first and the stamping
+            // stops being paid.
+            Vector2s aliasedZone = SectorInstanceIndexPatch.AliasedZone;
+            if (SectorInstanceIndexPatch.ByZone.TryGetValue(aliasedZone, out List<ZNetView> aliased)) {
+                ReconcileAliased(aliased, currentNearObjects, currentDistantObjects);
+            }
+
             foreach (KeyValuePair<Vector2s, List<ZNetView>> pair in SectorInstanceIndexPatch.ByZone) {
+                if (pair.Key == aliasedZone) { continue; }
+
                 int dx = pair.Key.x - center.x;
                 int dy = pair.Key.y - center.y;
                 if (dx < 0) { dx = -dx; }
@@ -244,6 +257,34 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             return false;
+        }
+
+        // Instances filed under the aliased key have no recoverable zone, so ring distance cannot
+        // decide them. Vanilla's rule is list membership, applied here to that bucket alone: stamp
+        // the lists, remove whatever in the bucket was not stamped. The stamping is O(near +
+        // distant) and only paid while the bucket holds instances: always for a peer whose
+        // reference position is outside the grid (every dedicated server), whose lists are that
+        // bucket anyway, and otherwise for the pass after the server invalidates a loaded
+        // object's sector.
+        private static void ReconcileAliased(List<ZNetView> bucket, List<ZDO> near, List<ZDO> distant) {
+            byte earmark = (byte)(Time.frameCount & byte.MaxValue);
+            byte cleared = (byte)(earmark + 1);
+
+            // Cleared first so a stale stamp from an earlier pass cannot read as a keep.
+            for (int i = 0; i < bucket.Count; i++) {
+                ZDO zdo = bucket[i].m_zdo;
+                if (zdo != null) { zdo.m_tempRemoveEarmark = cleared; }
+            }
+
+            for (int i = 0; i < near.Count; i++) { near[i].m_tempRemoveEarmark = earmark; }
+            for (int i = 0; i < distant.Count; i++) { distant[i].m_tempRemoveEarmark = earmark; }
+
+            // A view without a ZDO was unloaded earlier this frame and is only waiting for the
+            // engine; vanilla no longer sees it, and in this bucket that is routine, not an orphan.
+            for (int i = 0; i < bucket.Count; i++) {
+                ZNetView view = bucket[i];
+                if (view.m_zdo != null && view.m_zdo.m_tempRemoveEarmark != earmark) { Removed.Add(view); }
+            }
         }
 
         // Once per session, with the mods hooking the object pass, so the cost of passes that fall
@@ -427,7 +468,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                         $"Unload discovery verify: DIVERGED - index found {VerifyIndexSet.Count} " +
                         $"removal(s), vanilla found {Removed.Count} ({missing} missed by " +
                         $"the index, {extra} extra). Vanilla's set was used. Please report this - " +
-                        "leave 'Fix Unload Discovery Scan' off until it is understood.");
+                        "leave 'Verify Unload Discovery' on until it is understood, since verify " +
+                        "mode acts on vanilla's set.");
                 }
 
                 Execute(scene, currentNearObjects, currentDistantObjects);
