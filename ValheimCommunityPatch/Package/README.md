@@ -122,12 +122,12 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Collision Callback Allocation** *(both)* — turns on Unity's `reuseCollisionCallbacks` so one
   collision object serves every callback; the first suspect if a physics-touching mod that stores
   collision objects misbehaves.
-- **Fix Equipment Visual Refresh** *(client)* — re-applies a character's skin and hair colour only
+- **Fix Equipment Visual Refresh** *(client)* — re-applies a character's skin and hair color only
   when an input changed or another system overwrote it, and reads its equipment fields with one
   table lookup instead of thirty.
 - **Fix Light Settings Subscription** *(client)* — registers lights for graphics-setting changes in a
   lookup table instead of a static event whose unsubscribe scans every other lit light.
-- **Fix Portal Idle Updates** *(client)* — stops a portal re-writing its emission colour, light and
+- **Fix Portal Idle Updates** *(client)* — stops a portal re-writing its emission color, light and
   audio every frame once the connection fade has finished.
 - **Fix Material Fader Settling** *(client)* — stops a finished fade re-applying the same material
   property block to every renderer every frame; lingering corpses are the common case.
@@ -163,7 +163,7 @@ what is recorded, so they run on every side.
   piling or clearing snow from leaving a ridge or trench along the zone line.
 - **Fix Swamp Plains Shore Seams** *(client)* — stops shores where swamp blends into plains from being
   drawn with the Ashlands shoreline in hard straight lines along the zone grid. The game's terrain
-  colours cannot express that blend without also meaning Ashlands, so the two are bridged by a
+  colors cannot express that blend without also meaning Ashlands, so the two are bridged by a
   narrow strip where they meet instead: black forest ground by default, or Ashlands ground that
   follows the crossover rather than the zone grid ("Swamp Plains Bridge Ground"; "Swamp Plains
   Blend Sharpness" sets the strip's width).
@@ -208,10 +208,10 @@ what is recorded, so they run on every side.
 - **Fix Unsaved Client Changes** *(server)* — marks an object a connected player placed or changed for
   the next world save; the chunked save format only rewrites chunks the game marked as changed, and it
   never marks one for a change that arrives from another player.
-- **Fix Water Colour Seams** *(client)* — colours each water tile by the depth blended across it, as its
-  waves already are, instead of by one corner, removing the hard colour line along the 64 m grid.
-  `Water Colour Depth Scale` (default 2) sets how soon shading reaches deep water; above 1 it also makes
-  shallow-water waves look taller than the ones boats ride.
+- **Fix Water Color Seams** *(client)* — colors each water tile by the depth blended across it, as its
+  waves already are, instead of by one corner, removing the hard color line along the 64 m grid.
+  `Water Color Shore Tint` (0 to 1, default 0.75) moves the sandy shallow-water color towards the deep-sea
+  color, so one shallow corner no longer tints a whole tile of open sea; it changes color only, never waves.
 - **Fix Non-Item ObjectDB Entries** *(both)* — drops prefabs that are not items from the game's item
   list on load; the 2026-09-09 update listed three (`PropFeastDeepNorth`, `SnowRoller`,
   `FrozenKing_Summon`) that break mods treating every entry as an item. They can still be spawned.
@@ -225,7 +225,7 @@ what is recorded, so they run on every side.
   range).
 - **Fix Biome Sector Lookup** *(both)* — makes the biome sector lookup agree with the actual biome near
   borders. Vanilla reads its 12 m biome grid rounded down, so within about 12 m of a border the player's
-  biome, weather, spawn levels, the map's biome name and terrain colouring follow the neighbouring biome,
+  biome, weather, spawn levels, the map's biome name and terrain coloring follow the neighbouring biome,
   and a `GetBiome error` warning is logged every second. Location placement keeps vanilla's lookup, so
   seeds still place locations where unmodded Valheim does.
 - **Fix Loading Screen Hang** *(both)* — unregisters a networked object that was destroyed without the
@@ -379,7 +379,7 @@ The mods involved:
 | Fix Negative Stamina | MidnightsFX | — |
 | Fix Teleport Ghost Players | MidnightsFX | — |
 | Fix Unsaved Client Changes | MidnightsFX | — |
-| Fix Water Colour Seams | MidnightsFX | — |
+| Fix Water Color Seams | MidnightsFX | — |
 | Fix Non-Item ObjectDB Entries | MidnightsFX | — |
 | Clear Patrol Point On Taming | MidnightsFX | — |
 | Fix Map Auto-Close | MidnightsFX | — |
@@ -475,7 +475,7 @@ Eternal Fire 1.1.6 and later no longer does this, and the fix stays on beside it
 Known overlap: **Expand World Size** resizes and stretches the game's biome grid along with the world.
 Fix Biome Sector Lookup reads the grid's size and spacing from the game on every lookup, so it follows
 the resized grid. Before 0.32.3 it assumed the vanilla grid and gave wrong biomes, weather and terrain
-colours on resized worlds.
+colors on resized worlds.
 
 ## Reporting a bug
 

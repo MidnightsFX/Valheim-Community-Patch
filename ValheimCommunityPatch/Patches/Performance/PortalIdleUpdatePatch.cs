@@ -2,7 +2,7 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Portal Idle Updates: a portal stops re-writing its emission colour, light and audio
+    // Fix Portal Idle Updates: a portal stops re-writing its emission color, light and audio
     // every frame once the connection fade has reached its endpoint.
     //
     // TeleportWorld.Update runs every frame for every loaded portal and is two lines: a
@@ -29,7 +29,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // exact for the component's life. The teleport postfix mirrors vanilla's own null-ZDO gate,
     // which disables the component so Update never runs.
     //
-    // Client: emission colour, light intensity and audio volume are rendering state.
+    // Client: emission color, light intensity and audio volume are rendering state.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(TeleportWorld))]
     internal static class PortalIdleUpdatePatch {

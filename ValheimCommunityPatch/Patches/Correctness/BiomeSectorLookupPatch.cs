@@ -26,7 +26,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // within two cells, or a shared sector of that biome with no alt biomes when the biome is a
     // sliver the grid never sampled. A sliver passing between four agreeing samples is still
     // missed. Location placement keeps vanilla's lookup, so a seed places locations exactly where
-    // unmodded Valheim does, and distant terrain colours read the nearest sample without the
+    // unmodded Valheim does, and distant terrain colors read the nearest sample without the
     // border check. A transpiler removes GetBiomeHeight's unused lookup, or points it at vanilla's
     // lookup if a future build reads the result, since heights must match vanilla clients.
     // Another points UpdateBiome's warning at the debug sink.
@@ -52,7 +52,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 true,
                 "Makes the biome sector lookup agree with the actual biome near biome borders. Vanilla " +
                 "reads a 12 m grid rounded down, so within about 12 m of a border the player's biome, " +
-                "weather, spawn levels, the map's biome name and terrain colouring follow the " +
+                "weather, spawn levels, the map's biome name and terrain coloring follow the " +
                 "neighbouring biome, and a 'GetBiome error' warning is logged every second. Location " +
                 "placement keeps vanilla's lookup so seeds generate the same locations. The warning is " +
                 "still visible with EnableDebugMode on. Changing this requires a game restart.");
@@ -274,10 +274,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
         }
 
-        // Distant terrain colours one vertex every 10 m across a 2.4 km ring on the main thread,
-        // where a GetBiome call per border vertex would cost more than the exact colour is worth.
+        // Distant terrain colors one vertex every 10 m across a 2.4 km ring on the main thread,
+        // where a GetBiome call per border vertex would cost more than the exact color is worth.
         [HarmonyPatch(typeof(Heightmap), "RebuildRenderMesh")]
-        internal static class DistantLodColourHook {
+        internal static class DistantLodColorHook {
             private static readonly MethodInfo NearestSectorMethod =
                 AccessTools.Method(typeof(BiomeSectorLookupPatch), nameof(NearestSector));
 

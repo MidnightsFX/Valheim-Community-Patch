@@ -6,14 +6,14 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // Fix Swamp Plains Shore Seams: shores where swamp blends into plains no longer show the Ashlands
     // shoreline texture ending in hard straight lines along the 64 m zone grid.
     //
-    // A terrain tile's vertex colours carry its biome as a colour code per corner
+    // A terrain tile's vertex colors carry its biome as a color code per corner
     // (Heightmap.GetBiomeColor), lerped across the tile. The 1.0 terrain shader decodes each biome's
     // weight as one minus the largest per-channel distance to its code, and Ashlands' code (1,0,0,1)
     // is Swamp's (1,0,0,0) plus Plains' (0,0,0,1), so any swamp-to-plains blend also decodes as part
     // Ashlands. The shader's Ashlands branch runs whenever that weight is above zero rather than in
     // proportion to it, and paints flat ground within 2 m of the water with the Ashlands shoreline at
     // full strength. A tile that is all swamp or all plains has exactly zero Ashlands weight, so the
-    // effect starts dead on the zone border. No colour can mean "part swamp, part plains" without it.
+    // effect starts dead on the zone border. No color can mean "part swamp, part plains" without it.
     //
     // A postfix on GetBiomeColor(ix, iy), the per-vertex corner lerp of near terrain, splits each vertex
     // between swamp, plains and a bridge strip where the two meet, keeping the vertex's total biome
@@ -32,10 +32,10 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // alike and meet without a seam. Distant terrain is left alone: the branch only runs within about
     // 400 m of the camera.
     //
-    // Client: vertex colours are rendering state.
+    // Client: vertex colors are rendering state.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Heightmap))]
-    internal static class BiomeColourAliasPatch {
+    internal static class BiomeColorAliasPatch {
         internal enum BridgeGround { BlackForest, Ashlands }
 
         internal static ConfigEntry<bool> Enabled;
@@ -51,12 +51,12 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
-                typeof(BiomeColourAliasPatch),
+                typeof(BiomeColorAliasPatch),
                 ValConfig.SectionTerrain,
                 "Fix Swamp Plains Shore Seams",
                 true,
                 "Stops shores where swamp blends into plains from being drawn with the Ashlands shoreline, " +
-                "which ends in hard straight lines along the 64m zone grid. The game's terrain colours " +
+                "which ends in hard straight lines along the 64m zone grid. The game's terrain colors " +
                 "cannot express a swamp and plains blend without also meaning Ashlands, so this bridges " +
                 "the two with a strip of ground where they meet instead (see Swamp Plains Bridge Ground).");
 
@@ -150,7 +150,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             for (int i = 0; i < corners.Length && i < 4; i++) {
                 if (corners[i] == null) { continue; }
 
-                // The same code the vertex colour is lerped from, terrain texture overrides included.
+                // The same code the vertex color is lerped from, terrain texture overrides included.
                 Color32 code = Heightmap.GetBiomeColor(corners[i]);
                 int bit = 1 << i;
 
@@ -163,7 +163,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             }
         }
 
-        // Vertex colours are baked when a tile rebuilds, so a toggle only shows once the loaded tiles
+        // Vertex colors are baked when a tile rebuilds, so a toggle only shows once the loaded tiles
         // are rebuilt; a delayed poke queues each for a full rebuild next LateUpdate.
         private static void RebuildLoadedTerrain() {
             if (RunMode.IsDedicated) { return; }

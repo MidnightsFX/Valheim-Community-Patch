@@ -110,7 +110,20 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 }
             }
 
-            _ringHash ^= (uint)zdo.m_uid.GetHashCode();
+            _ringHash ^= Scatter(zdo.m_uid);
+        }
+
+        // The XOR of raw consecutive ids cancels (4 ^ 5 ^ 6 ^ 7 == 0), and the objects of one
+        // generated zone are numbered consecutively, so a batch of them arriving between two
+        // passes could leave the hash unchanged. Each id is spread over 64 bits first, with the
+        // SplitMix64 finalizer.
+        private static long Scatter(ZDOID id) {
+            unchecked {
+                ulong x = (ulong)id.UserID * 0x9E3779B97F4A7C15UL + id.ID;
+                x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9UL;
+                x = (x ^ (x >> 27)) * 0x94D049BB133111EBUL;
+                return (long)(x ^ (x >> 31));
+            }
         }
 
         [HarmonyPatch(typeof(ZDOMan), "AddToSector")]
@@ -222,13 +235,19 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             // Counting pending candidates over tens of thousands of entries per pass while the
-            // world streams in was measured at whole seconds of login time, so only count when
-            // the answer can matter.
+            // world streams in was measured at whole seconds of login time, so only look when
+            // the answer can matter, and only as far as the first one unless verify reports it.
             if (!versionQuiet && !predictedSkip) { return; }
 
-            int pendingNear = CountPending(__instance, __instance.m_tempCurrentObjects2);
-            int pendingDistant = CountPending(__instance, __instance.m_tempCurrentDistantObjects);
             bool areaLoaded = ZoneSystem.instance != null && ZoneSystem.instance.IsActiveAreaLoaded();
+            if (!areaLoaded && !predictedSkip) { return; }
+
+            // The lists as FindSectorObjects filled them for this pass, never the spawn queue
+            // in m_tempCurrentObjects2: SpawnQueueCachePatch keeps that across passes, so between
+            // its rebuilds it does not hold a ZDO that has arrived since.
+            int limit = predictedSkip ? int.MaxValue : 1;
+            int pendingNear = CountPending(__instance, __instance.m_tempCurrentObjects, limit);
+            int pendingDistant = CountPending(__instance, __instance.m_tempCurrentDistantObjects, limit);
 
             if (predictedSkip) {
                 if (!versionQuiet || pendingNear > 0 || pendingDistant > 0 || __instance.m_tempRemoved.Count > 0) {
@@ -261,11 +280,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 "with zero divergences means the fix will engage in this area once Verify is off.");
         }
 
-        // Uncreated candidates whose prefab resolves. A permanently unresolvable ZDO (a removed
-        // mod's object, which vanilla re-enumerates forever) must not hold the scene out of idle.
-        private static int CountPending(ZNetScene scene, List<ZDO> zdos) {
+        // Uncreated candidates whose prefab resolves, counted up to limit. A permanently
+        // unresolvable ZDO (a removed mod's object, which vanilla re-enumerates forever) must not
+        // hold the scene out of idle.
+        private static int CountPending(ZNetScene scene, List<ZDO> zdos, int limit) {
             int pending = 0;
-            for (int i = 0; i < zdos.Count; i++) {
+            for (int i = 0; i < zdos.Count && pending < limit; i++) {
                 ZDO zdo = zdos[i];
                 if (zdo.Created) { continue; }
                 if (scene.GetPrefab(zdo.GetPrefab()) == null) { continue; }

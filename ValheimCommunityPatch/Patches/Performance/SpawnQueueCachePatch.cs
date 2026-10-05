@@ -19,6 +19,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // consume time against having been created meanwhile and against its pooled ZDO having been
     // recycled into a different object (the captured id no longer matches). Other mods' prefixes
     // on this method are bypassed; re-check the copied filter against the game source on updates.
+    // Between rebuilds the list is not the current pass's candidates, so nothing may read it as
+    // that: SceneIdleSkipPatch decides from the near list instead.
     //
     // Both: a dedicated server streams objects for connected players through this path.
     [PatchSide(Side.Both)]

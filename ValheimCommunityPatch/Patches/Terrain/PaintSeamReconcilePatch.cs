@@ -15,7 +15,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // back down again.
     //
     // A postfix on Heightmap.ApplyModifiers reconciles the shared texels in the render texture,
-    // per colour channel, from the two boundary texels a and b and the texels sa and sb one step
+    // per color channel, from the two boundary texels a and b and the texels sa and sb one step
     // inward on each side:
     //
     //     result = Clamp(Max(sa, sb), Min(a, b), Max(a, b))

@@ -1,8 +1,14 @@
 # Changelog
 
+**0.32.4**
+```
+- Fixes objects created by other players sometimes appearing late in an otherwise quiet area.
+- Improves water color tint transition towards shore (configurable), 1.0 changed the shading to be much darker in shallow water.
+```
+
 **0.32.3**
 ```
-- Fixes wrong biomes, weather and terrain colours on worlds resized or stretched by Expand World Size.
+- Fixes wrong biomes, weather and terrain colors on worlds resized or stretched by Expand World Size.
 - Fixes a dedicated server endlessly destroying and recreating its own loaded objects, which crashed it after long uptime.
 - Fixes the same loop, and terrain unloading under loaded objects, beyond the game's zone grid on worlds enlarged by Expand World Size.
 - Items rejected by a station are refunded again when an up-to-date Eternal Fire is installed.
@@ -74,7 +80,7 @@
 - Removes unpatchall on destroy
 - Fix Biome Sector Lookup (both): the biome grid added in the Deep North update reads the sample at
   or below a point, so within about 12 m of a biome border the player's biome, weather, spawn
-  levels, the map's biome name and terrain colouring followed the neighbouring biome, and a
+  levels, the map's biome name and terrain coloring followed the neighbouring biome, and a
   `GetBiome error` warning was logged every second. Lookups now match the actual biome. Location
   placement keeps vanilla's lookup, so seeds place locations as before. The warning is still
   visible with EnableDebugMode on.
@@ -166,8 +172,8 @@
   component (PropFeastDeepNorth, SnowRoller and FrozenKing_Summon) among the items, so mods that treat
   every entry as an item threw or logged errors on them. They can still be spawned.
 - Fixes shading on shallow water (client): the water shader now shades shallow water correctly, so the
-  waves in shallow water are no longer tinted by the deep-water colour. The 2026-09-09 Valheim update
-  changed the water shader to shade shallow water by the deep-water colour, so a shallow corner of a
+  waves in shallow water are no longer tinted by the deep-water color. The 2026-09-09 Valheim update
+  changed the water shader to shade shallow water by the deep-water color, so a shallow corner of a
   tile could tint the whole tile's waves.
 - Removed two performance patches, both had extremely minimal gains and ended up showing side effects on some systems
 	- Reflection Probe Spikes (client)
@@ -176,11 +182,11 @@
 
 **0.25.0**
 ```
-- Fix Water Colour Seams (client): shallow and deep water colour now blends smoothly across zone
-  borders. The water shader coloured each 64 m water tile by the depth at its south-west corner only,
-  so near shores the sea changed colour in a hard straight line along the zone grid while the waves
+- Fix Water Color Seams (client): shallow and deep water color now blends smoothly across zone
+  borders. The water shader colored each 64 m water tile by the depth at its south-west corner only,
+  so near shores the sea changed color in a hard straight line along the zone grid while the waves
   across the same line stayed smooth. Shading now reaches its deep-water look at 5 m rather than 10 m
-  ("Water Colour Depth Scale", default 2), so one shallow corner no longer tints a whole tile of deep
+  ("Water Color Depth Scale", default 2), so one shallow corner no longer tints a whole tile of deep
   water; the visible waves in shallow water run up to that factor taller than the waves boats ride.
 ```
 

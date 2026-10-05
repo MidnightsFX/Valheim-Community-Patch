@@ -4,16 +4,16 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Equipment Visual Refresh: characters stop re-applying unchanged skin and hair colours
+    // Fix Equipment Visual Refresh: characters stop re-applying unchanged skin and hair colors
     // every frame, and read their equipment fields with one table lookup instead of thirty.
     //
     // VisEquipment.UpdateVisuals runs every frame for every character, dropped armour piece and
     // armour stand. Two separable costs:
     //
-    // 1. UpdateColors re-applies skin and hair colour every frame. Renderer.materials allocates a
+    // 1. UpdateColors re-applies skin and hair color every frame. Renderer.materials allocates a
     //    Material[] on each of its two reads, and the beard and hair GetComponentsInChildren calls
-    //    allocate and walk a hierarchy, all to write a colour that has not changed since the
-    //    character was created. A prefix computes what vanilla would compute (the two colours,
+    //    allocate and walk a hierarchy, all to write a color that has not changed since the
+    //    character was created. A prefix computes what vanilla would compute (the two colors,
     //    the beard, hair and body renderers, the model index), compares it with what was last
     //    applied, and only lets vanilla run on a difference. The snapshot is recorded in a
     //    postfix so a vanilla method that threw is retried rather than marked applied.
@@ -35,7 +35,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(VisEquipment))]
     internal static class VisEquipmentRefreshPatch {
-        // ---- 1. Skin and hair colour ------------------------------------------------------------
+        // ---- 1. Skin and hair color ------------------------------------------------------------
 
         /// <summary>Everything UpdateColors reads; a match means it would write what it wrote last time.</summary>
         internal struct ColorState {
