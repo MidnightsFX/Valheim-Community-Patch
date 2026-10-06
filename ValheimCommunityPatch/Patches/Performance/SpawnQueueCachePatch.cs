@@ -17,10 +17,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // vanilla's exact filter and sort only every third pass or when the player's zone changes.
     // Creation itself is unchanged: same per-pass budget, same order. A cached entry is guarded at
     // consume time against having been created meanwhile and against its pooled ZDO having been
-    // recycled into a different object (the captured id no longer matches). Other mods' prefixes
-    // on this method are bypassed; re-check the copied filter against the game source on updates.
-    // Between rebuilds the list is not the current pass's candidates, so nothing may read it as
-    // that: SceneIdleSkipPatch decides from the near list instead.
+    // recycled into a different object (the captured id no longer matches). Re-check the copied
+    // filter against the game source on updates. Between rebuilds the list is not the current
+    // pass's candidates, so nothing may read it as that: SceneIdleSkipPatch decides from the near
+    // list instead.
+    //
+    // The prefix runs after every other mod's. When one of them has already replaced the pass
+    // (ValheimOptimized does outside loading screens, Fast Loading behind them), this one creates
+    // nothing, since a second batch would double the pass, and drops its cached list, which that
+    // pass has made stale, so it is rebuilt the next time this one runs.
     //
     // Both: a dedicated server streams objects for connected players through this path.
     [PatchSide(Side.Both)]
@@ -56,10 +61,18 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // apart from a live one.
         private static readonly List<ZDOID> CachedIds = new List<ZDOID>();
 
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("CreateObjectsSorted")]
         private static bool CreateObjectsSortedPrefix(
-            ZNetScene __instance, List<ZDO> currentNearObjects, int maxCreatedPerFrame, ref int created) {
+            ZNetScene __instance, List<ZDO> currentNearObjects, int maxCreatedPerFrame, ref int created,
+            bool __runOriginal) {
+            if (!__runOriginal) {
+                Invalidate();
+                return false;
+            }
+
             if (!ZoneSystem.instance.IsActiveAreaLoaded()) { return false; }
 
             List<ZDO> pending = __instance.m_tempCurrentObjects2;
@@ -119,15 +132,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
+        private static void Invalidate() {
+            CachedIds.Clear();
+            _cursor = 0;
+            _passesSinceRebuild = int.MaxValue;
+            _rebuildZone = NoZone;
+        }
+
         [HarmonyPatch(typeof(ZNetScene), "Shutdown")]
         internal static class ShutdownHook {
             [HarmonyPostfix]
-            private static void Postfix() {
-                CachedIds.Clear();
-                _cursor = 0;
-                _passesSinceRebuild = int.MaxValue;
-                _rebuildZone = NoZone;
-            }
+            private static void Postfix() => Invalidate();
         }
     }
 }

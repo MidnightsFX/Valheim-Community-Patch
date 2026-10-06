@@ -23,11 +23,19 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // layout, so the tangent is +X projected against the normal, w = -1), and a transpiler skips
     // vanilla's RecalculateTangents whenever this pass will supply them later in the frame.
     //
+    // Stands down when another mod can skip RebuildRenderMesh with a prefix, because that mod builds
+    // the mesh later, where this pass cannot see it, and writes its own normals over these.
+    // ValheimOptimized builds all but a zone's first mesh near the player or behind a loading screen
+    // on its own threads, so this pass shaded the outdated mesh and the seam came and went as zones
+    // and their neighbours rebuilt.
+    //
     // Client: normals are shading only. The target method runs on a dedicated server too, for the
     // collider, so a runtime IsDedicated guard backs the patch-time gate.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class SeamlessNormalsPatch {
+        private const string FixName = "Fix Terrain Seams";
+
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> VerifyTangents;
 
@@ -35,7 +43,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             Enabled = ValConfig.BindFixToggle(
                 typeof(SeamlessNormalsPatch),
                 ValConfig.SectionTerrain,
-                "Fix Terrain Seams",
+                FixName,
                 true,
                 "Computes terrain lighting normals across zone boundaries instead of per zone. Vanilla " +
                 "shades the same ground differently on each side of a 64m zone border, which shows up as " +
@@ -66,6 +74,13 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             AccessTools.Method(typeof(Mesh), nameof(Mesh.RecalculateTangents), new System.Type[0]);
         private static readonly MethodInfo TangentsOrDeferMethod =
             AccessTools.Method(typeof(SeamlessNormalsPatch), nameof(TangentsOrDefer));
+
+        // Transpilers do not count: the mesh is still built inside the method, and this pass runs after it.
+        private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildRenderMesh"),
+            transpilers: false,
+            owners => $"Terrain mesh building is changed by {owners}, so '{FixName}' stands down and that " +
+                      "mod's terrain shading applies.");
 
         // Replaces `this.m_renderMesh.RecalculateTangents()` with `TangentsOrDefer(this.m_renderMesh, this)`
         // so the decision to skip Unity's tangent pass is made at runtime and the toggle stays live.
@@ -107,12 +122,14 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             mesh.RecalculateTangents();
         }
 
-        // MonoUpdaters hosts the pass and does not exist in the menu scene.
+        // MonoUpdaters hosts the pass and does not exist in the menu scene. The takeover check comes
+        // last so it is first asked in a world, after every mod has patched.
         private static bool WillProcess(Heightmap hmap) {
             return Enabled != null && Enabled.Value
                 && !RunMode.IsDedicated
                 && !hmap.IsDistantLod
-                && MonoUpdaters.s_instance != null;
+                && MonoUpdaters.s_instance != null
+                && !Takeover.TakenOver;
         }
 
         [HarmonyPostfix]

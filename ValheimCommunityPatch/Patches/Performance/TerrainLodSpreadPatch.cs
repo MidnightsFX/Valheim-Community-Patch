@@ -16,11 +16,24 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // briefly torn between the old and new centre, which under distance fog is far less visible
     // than the hitch. A budget of 9 is exactly vanilla.
     //
+    // Both prefixes stand down together when another mod can skip or rewrites
+    // RebuildAllHeightmaps (ValheimOptimized spreads the ring itself); two spreads of one ring would
+    // each rebuild tiles the other just did. IsTerrainReady runs before RebuildAllHeightmaps in
+    // UpdateHeightmaps, so the check is settled before this fix has marked any tile.
+    //
     // Client: the system needs a camera.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(TerrainLod))]
     internal static class TerrainLodSpreadPatch {
+        private const string FixName = "Fix Distant Terrain Hitch";
+
         internal static ConfigEntry<int> Budget;
+
+        private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            AccessTools.DeclaredMethod(typeof(TerrainLod), "RebuildAllHeightmaps"),
+            transpilers: true,
+            owners => $"Distant terrain rebuilding is changed by {owners}, so '{FixName}' stands down and " +
+                      "that mod's pace applies.");
 
         internal static void BindConfig() {
             Budget = ValConfig.BindServerConfig(
@@ -34,9 +47,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 valMax: 9);
         }
 
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("RebuildAllHeightmaps")]
-        private static bool RebuildAllHeightmapsPrefix(TerrainLod __instance) {
+        private static bool RebuildAllHeightmapsPrefix(TerrainLod __instance, bool __runOriginal) {
+            if (Takeover.TakenOver) { return true; }
+            if (!__runOriginal) { return false; }
+
             int budget = Budget != null ? Budget.Value : 3;
             if (budget >= __instance.m_heightmaps.Count) { return true; }
 
@@ -61,8 +79,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("IsTerrainReady", typeof(TerrainLod.HeightmapWithOffset))]
-        private static bool IsTerrainReadyPrefix(TerrainLod.HeightmapWithOffset heightmapWithOffset, ref bool __result) {
+        private static bool IsTerrainReadyPrefix(
+            TerrainLod.HeightmapWithOffset heightmapWithOffset, ref bool __result, bool __runOriginal) {
+            if (Takeover.TakenOver) { return true; }
+            if (!__runOriginal) { return false; }
+
             if (heightmapWithOffset.m_state == TerrainLod.HeightmapState.Done) {
                 __result = true;
                 return false;

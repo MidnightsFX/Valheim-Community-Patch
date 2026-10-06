@@ -1,5 +1,21 @@
 # Changelog
 
+**0.33.0**
+```
+- Exploring new ground no longer causes a small stutter each time the map reveals it.
+- Dungeons and camps loading in near you no longer freeze the game for a moment.
+- Several locations coming into range at once no longer stack into one long hitch.
+- Cuts several small sources of throwaway memory created every frame.
+- Portals, respawns and joining no longer drop you in before the buildings at your destination have arrived from the server, and no longer wait a fixed time when they already have.
+- Loading screens finish building the land around you faster.
+- The server finds out where you are as soon as you go through a portal, respawn or join, so nearby objects start arriving sooner.
+- Fixes respawning at the world start instead of your bed when the server is slow to send the area around the bed.
+- ValheimOptimized Compatibility fixes:
+  - Fixes a game crash when ValheimOptimized is installed.
+    - The terrain seam fixes from VCP are now disabled when ValheimOptimized is installed
+    - Objects no longer spawn in double batches, distant terrain is no longer rebuilt twice, and building pieces notice its late terrain rebuilds.
+```
+
 **0.32.4**
 ```
 - Fixes objects created by other players sometimes appearing late in an otherwise quiet area.

@@ -25,10 +25,18 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // ships, carts and SnapToGround call to make terrain collision current, finishes every bake in
     // flight before it runs and cooks its own rebuilds synchronously.
     //
+    // Stands down when another mod can skip the rebuild with a prefix or rewrites it, because that
+    // mod cooks the collider its own way. ValheimOptimized skips it, rewrites the mesh and bakes it on
+    // a Unity job, and Harmony still runs this prefix and postfix around that, so both mods baked the
+    // same mesh at once and this one assigned it mid-bake: a native "pure virtual function call"
+    // crash inside Physics.BakeMesh.
+    //
     // Client: a dedicated server never takes either deferred path.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class AsyncColliderBakePatch {
+        private const string FixName = "Fix Zone Collider Stall";
+
         private sealed class PendingBake {
             public Heightmap m_hmap;
             public MeshCollider m_collider;
@@ -45,6 +53,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool _deferContext;
         private static bool _lateUpdateContext;
         private static bool _forceContext;
+
+        // Asked at the first rebuild this fix would defer, before anything is queued.
+        private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildCollisionMesh"),
+            transpilers: true,
+            owners => $"Terrain collider building is changed by {owners}, so '{FixName}' stands down and " +
+                      "that mod's version applies.");
 
         private static PendingBake FindPending(Heightmap hmap) {
             for (int i = 0; i < Pending.Count; i++) {
@@ -115,7 +130,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if ((!_deferContext && !_lateUpdateContext) || _forceContext) { return; }
-            if (__instance.m_collider == null) { return; }
+            if (__instance.m_collider == null || Takeover.TakenOver) { return; }
 
             // A location arriving in the player's zone pokes it too; the player needs that collider now.
             if (_lateUpdateContext && InReferenceZone(__instance)) { return; }

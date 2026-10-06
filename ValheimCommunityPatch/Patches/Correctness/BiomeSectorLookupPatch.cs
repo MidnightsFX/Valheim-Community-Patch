@@ -276,6 +276,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
         // Distant terrain colors one vertex every 10 m across a 2.4 km ring on the main thread,
         // where a GetBiome call per border vertex would cost more than the exact color is worth.
+        // A mod that builds the mesh on its own threads instead, as ValheimOptimized does, gets the
+        // exact lookup through the prefixes above, where that cost stays out of the frame.
         [HarmonyPatch(typeof(Heightmap), "RebuildRenderMesh")]
         internal static class DistantLodColorHook {
             private static readonly MethodInfo NearestSectorMethod =

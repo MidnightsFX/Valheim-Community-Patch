@@ -139,6 +139,30 @@ fix under [Credit and sources](#credit-and-sources).
   revision, so an hour of missed production is not re-read once per simulated second.
 - **Fix Idle Sound Updates** *(client)* — drops a finished one-shot sound out of the per-frame audio
   updater list until something plays it again.
+- **Fix Loading Zone Cadence** *(client)* — behind a portal, respawn or login loading screen,
+  installs the zones around you nearest first, as many per tick as `Loading Zone Budget` allows
+  (default 30 ms, 0 is vanilla), instead of one zone every 0.1 s, which at the highest simulation
+  distance alone kept the loading screen up for 13.7 s.
+- **Fix Reference Position Send Delay** *(client)* — tells the server where you are as soon as a
+  portal, respawn or login moves you two or more zones, instead of at the next 2 s report, so the
+  server starts sending the new area at once.
+- **Fix Minimap Fog Upload** *(client)* — uploads only the patch of map fog you just revealed
+  instead of the whole 8 MiB fog texture every time exploring reveals new ground.
+- **Fix Dungeon Spawn Hitch** *(client)* — places the rooms of a dungeon or camp loading in near you
+  over a few frames within `Dungeon Room Budget` (default 4 ms, 0 is vanilla) instead of all in one
+  frame; the zone's contents wait for the last room as they do while the rooms load, and nothing
+  is spread behind a loading screen.
+- **Fix Location Spawn Hitch** *(client)* — spawns one location per frame plus as many more as
+  `Location Spawn Budget` allows (default 4 ms, 0 is vanilla), through the game's own wait-and-retry,
+  instead of every ready location in the same frame; nothing waits behind a loading screen.
+- **Fix Hotbar Key Allocation** *(client)* — checks the hotbar keys with cached key names instead of
+  formatting up to sixteen new strings every frame.
+- **Fix Equipment Modifier Allocation** *(client)* — totals your equipment's movement, stamina and
+  heat modifiers through typed field reads instead of boxing every value fifty times a second, with
+  identical results.
+- **Fix Active Area Check Allocation** *(both)* — tests whether a point is inside the loaded area
+  without allocating an array per test, which wear updates, physics settling and the server's
+  ownership release do thousands of times a second.
 - **Fix Idle Creature Sync** *(both)* — stops a standing creature's owner re-sending it to every
   player each frame over physics jitter: its position, velocity and ground tilt are sent once they
   move more than 2 cm, 0.05 m/s or 1 degree from what was last sent, instead of on any change at
@@ -245,6 +269,18 @@ what is recorded, so they run on every side.
   Root Crown logs, stack trace included, each time one is created: dropped, put on a stand, or worn by
   a player coming into range. Its hat model carries the Deep North cloth wind shelter without the cloth
   it controls; the shelter now switches itself off quietly, and the crown looks the same.
+- **Fix Loading Screen Wait** *(both)* — ends a portal, respawn or login loading screen once the server
+  confirms it has sent every building piece and terrain edit around the destination and the area is
+  built, instead of after a fixed 8 seconds. The fixed wait is too short for a big base on a busy
+  server, which drops you in under floors that have not arrived yet, and longer than needed everywhere
+  else. A client of a dedicated server needs the mod on the server too; against a server without it
+  the game's own timings apply. A host or single-player game waits only for the area to be built. If
+  the server has not confirmed within `Loading Confirmation Timeout` (default 20 s), the game's own
+  checks decide.
+- **Fix Lost Bed Spawn Point** *(client)* — keeps your bed as the respawn point while the server has
+  not yet sent the area around it, for up to 30 s, instead of sending you to the world start. Vanilla
+  decides the bed is gone as soon as the ground there has loaded, which can be before the buildings
+  have; mods that shorten the respawn wait make it common.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -345,6 +381,14 @@ The mods involved:
 | Fix Station Range Scans | MidnightsFX | — |
 | Fix Smelter Catch-up Reads | MidnightsFX | — |
 | Fix Idle Sound Updates | MidnightsFX | — |
+| Fix Loading Zone Cadence | MidnightsFX | — |
+| Fix Reference Position Send Delay | MidnightsFX | — |
+| Fix Minimap Fog Upload | MidnightsFX | — |
+| Fix Dungeon Spawn Hitch | MidnightsFX | — |
+| Fix Location Spawn Hitch | MidnightsFX | — |
+| Fix Hotbar Key Allocation | MidnightsFX | — |
+| Fix Equipment Modifier Allocation | MidnightsFX | — |
+| Fix Active Area Check Allocation | MidnightsFX | — |
 | Fix Idle Creature Sync | MidnightsFX | — |
 
 ### Terrain
@@ -387,6 +431,8 @@ The mods involved:
 | Fix Loading Screen Hang | MidnightsFX | — |
 | Fix Equipment Texture Errors | nezuma — ShadowPersonMaterialFix | The defect; that mod swaps the Shadow's shader, this one guards the reads |
 | Fix Unkillable Creatures | MidnightsFX | The `NaN` health handling follows StarLevelSystem's |
+| Fix Loading Screen Wait | MidnightsFX | — |
+| Fix Lost Bed Spawn Point | MidnightsFX | — |
 
 ### Server memory
 
@@ -406,7 +452,7 @@ Requires [BepInEx](https://valheim.thunderstore.io/package/denikson/BepInExPack_
 **Install it on the server and on every client to get all of it.** It is not required on both:
 a modded client can join a vanilla server, and a modded server accepts vanilla clients. The mod adds
 no items, prefabs, recipes or save data, so a world it has touched still loads in vanilla, and the
-one network message it sends is ignored by anyone who does not have it.
+network messages it sends are ignored by anyone who does not have it.
 
 What a one-sided install gets you:
 
@@ -476,6 +522,31 @@ Known overlap: **Expand World Size** resizes and stretches the game's biome grid
 Fix Biome Sector Lookup reads the grid's size and spacing from the game on every lookup, so it follows
 the resized grid. Before 0.32.3 it assumed the vanilla grid and gave wrong biomes, weather and terrain
 colors on resized worlds.
+
+Known overlap: **Fast Loading (Portals-Respawn-Login-Dungeons)** installs the zones around you itself
+during loading screens, so Fix Loading Zone Cadence stands down when it is installed and says so once
+in the log with *"Zone loading is changed by ..."*. Fix Loading Screen Wait and Fix Lost Bed Spawn
+Point stay on beside it, and on a dedicated server they keep its shortened waits from dropping you in
+before your buildings arrive or from losing your bed spawn point.
+
+Known overlap: **ValheimOptimized** builds terrain colliders on a background thread itself, as Fix
+Zone Collider Stall does. Before 0.32.5 the two worked on the same terrain at once and crashed the
+game. Fix Zone Collider Stall now stands down whenever another mod takes over building terrain
+colliders, and says so once in the log with *"Terrain collider building is changed by ..."*.
+ValheimOptimized also builds most terrain meshes on its own threads, out of reach of Fix Terrain Seams
+and Fix Swamp Plains Shore Seams, so before 0.32.5 those reached only some of the ground and a fixed
+spot lost the fix when it was rebuilt. Both now stand down whenever another mod takes over building
+terrain meshes, and say so once in the log with *"Terrain mesh building is changed by ..."*. Zone
+borders and swamp shores then look as they do with ValheimOptimized alone. ValheimOptimized also
+replaces the game's object spawning and its distant-terrain rebuild. Fix Spawn Queue Churn now spawns
+nothing on a pass another mod has already handled, where before 0.32.5 it spawned a second batch, and
+Fix Distant Terrain Hitch stands down and says so once with *"Distant terrain rebuilding is changed by
+..."*. Fix Piece Event Stall now also reaches building pieces when ValheimOptimized finishes a terrain
+rebuild late, so their support no longer stays out of date. ValheimOptimized has its own versions of
+the 0.33.0 fixes too. Fix Dungeon Spawn Hitch and Fix Location Spawn Hitch stand down and say so once
+with *"Dungeon room placement is changed by ..."* and *"Location spawn timing is changed by ..."*,
+Fix Hotbar Key Allocation says at startup that the method was already rewritten, and the other three
+are simply not reached; in each case ValheimOptimized's version applies.
 
 ## Reporting a bug
 

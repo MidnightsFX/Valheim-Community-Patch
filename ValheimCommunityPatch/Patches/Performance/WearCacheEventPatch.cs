@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using HarmonyLib;
 
@@ -13,26 +14,42 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // crossing a zone boundary loads and unloads pieces in batches, with an allocation each.
     //
     // Start is replaced with a copy that registers the piece in a dictionary (heightmap id ->
-    // piece id -> piece) instead of subscribing; the shared OnDestroy postfix unregisters it; and a
-    // Heightmap.Regenerate postfix calls ClearCachedSupport on the registered pieces, which is all
-    // the event ever did. The event stays functional for any other subscriber. A piece whose Start
-    // ran while the hooks were unhealthy is event-subscribed and served by vanilla, so the postfix
-    // and the removal are unconditional.
+    // piece id -> piece) instead of subscribing, and the shared OnDestroy postfix unregisters it.
+    // Each heightmap's event gets one subscriber of this fix's own, added with its first piece,
+    // which calls ClearCachedSupport on the registered pieces, which is all the event ever did per
+    // piece. So whoever raises the event reaches them: vanilla's Regenerate after a full rebuild,
+    // and a mod that raises it again once a deferred rebuild has landed (ValheimOptimized does).
+    // The event stays functional for any other subscriber. A piece whose Start ran while the hooks
+    // were unhealthy is event-subscribed and served by vanilla, so the removal is unconditional.
     //
     // Both: a dedicated server runs WearNTear and Regenerate for its active area.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(WearNTear))]
     internal static class WearCacheEventPatch {
-        // Both levels keyed on GetInstanceID(); see TeardownHooks for the rationale and invariant.
-        private static readonly Dictionary<int, Dictionary<int, WearNTear>> Registered =
-            new Dictionary<int, Dictionary<int, WearNTear>>();
+        // The registered pieces of one heightmap, and the one subscriber that serves them.
+        private sealed class PieceSet {
+            public readonly Dictionary<int, WearNTear> Pieces = new Dictionary<int, WearNTear>();
+            public readonly Action Forward;
+
+            public PieceSet() {
+                Forward = ClearAll;
+            }
+
+            private void ClearAll() {
+                foreach (WearNTear piece in Pieces.Values) { piece.ClearCachedSupport(); }
+            }
+        }
+
+        // Keyed on GetInstanceID() at both levels; see TeardownHooks for the rationale and
+        // invariant. A set stays until its heightmap is destroyed, even when it empties: a new set
+        // for the same heightmap would subscribe a second time.
+        private static readonly Dictionary<int, PieceSet> Registered = new Dictionary<int, PieceSet>();
 
         // A registered piece is served only by these hooks, so Start must not route pieces into
-        // the registry unless all three attached.
+        // the registry unless both attached.
         private static readonly HookHealth Hooks = new HookHealth(
             "Piece event fix",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook))
-               && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "Regenerate"), typeof(HeightmapHooks))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "OnDestroy"), typeof(HeightmapHooks)));
 
         // Vanilla's Start with the event subscribe replaced by a registry add, including its
@@ -47,12 +64,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (hmap == null) { return false; }
 
             int hmapId = hmap.GetInstanceID();
-            if (!Registered.TryGetValue(hmapId, out Dictionary<int, WearNTear> pieces)) {
-                pieces = new Dictionary<int, WearNTear>();
-                Registered.Add(hmapId, pieces);
+            if (!Registered.TryGetValue(hmapId, out PieceSet set)) {
+                set = new PieceSet();
+                Registered.Add(hmapId, set);
+                hmap.m_clearConnectedWearNTearCache += set.Forward;
             }
 
-            pieces[__instance.GetInstanceID()] = __instance;
+            set.Pieces[__instance.GetInstanceID()] = __instance;
             return false;
         }
 
@@ -61,24 +79,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
             Heightmap hmap = piece.m_connectedHeightMap;
             if (ReferenceEquals(hmap, null)) { return; }
 
-            int hmapId = hmap.GetInstanceID();
-            if (Registered.TryGetValue(hmapId, out Dictionary<int, WearNTear> pieces)) {
-                pieces.Remove(pieceId);
-                if (pieces.Count == 0) { Registered.Remove(hmapId); }
-            }
+            if (Registered.TryGetValue(hmap.GetInstanceID(), out PieceSet set)) { set.Pieces.Remove(pieceId); }
         }
 
         [HarmonyPatch(typeof(Heightmap))]
         internal static class HeightmapHooks {
-            // The same point in Regenerate where vanilla raises the event.
-            [HarmonyPostfix]
-            [HarmonyPatch("Regenerate")]
-            private static void RegeneratePostfix(Heightmap __instance) {
-                if (!Registered.TryGetValue(__instance.GetInstanceID(), out Dictionary<int, WearNTear> pieces)) { return; }
-
-                foreach (WearNTear piece in pieces.Values) { piece.ClearCachedSupport(); }
-            }
-
             // A heightmap unloading takes its whole subscriber set with it, like the event field.
             [HarmonyPostfix]
             [HarmonyPatch("OnDestroy")]

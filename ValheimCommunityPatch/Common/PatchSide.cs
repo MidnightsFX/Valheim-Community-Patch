@@ -96,6 +96,13 @@ namespace ValheimCommunityPatch {
         /// <summary>True only on a headless server. False on a listen host, which draws its own game.</summary>
         internal static bool IsDedicated { get { Resolve(); return _isDedicated; } }
 
+        /// <summary>
+        /// ZNetScene.InLoadingScreen, which is a private instance method: no local player yet, or one
+        /// that is teleporting. Work the player is waiting behind a loading screen for is never paced.
+        /// </summary>
+        internal static bool InLoadingScreen() =>
+            Player.m_localPlayer == null || Player.m_localPlayer.IsTeleporting();
+
         private static void Resolve() {
             ZNet znet = ZNet.instance;
 

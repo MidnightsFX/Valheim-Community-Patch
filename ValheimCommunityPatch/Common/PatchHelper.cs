@@ -130,4 +130,87 @@ namespace ValheimCommunityPatch {
             }
         }
     }
+
+    /// <summary>Which of other mods' hooks on a method a <see cref="TakeoverCheck"/> counts.</summary>
+    [Flags]
+    internal enum HookKinds {
+        /// <summary>Prefixes that return bool, so can skip the method.</summary>
+        BoolPrefixes = 1,
+        /// <summary>Every prefix, void ones included.</summary>
+        Prefixes = 2,
+        Postfixes = 4,
+        Transpilers = 8,
+        Finalizers = 16,
+        Any = Prefixes | Postfixes | Transpilers | Finalizers,
+    }
+
+    /// <summary>
+    /// A once-only check that stands a fix down when another mod can take over a method the fix
+    /// builds on: by default a prefix that returns bool, which can skip the method, and optionally
+    /// a transpiler, which can rewrite it.
+    /// </summary>
+    /// <remarks>
+    /// A bool prefix counts whether or not it skips any particular call, since one that ever does
+    /// does that work somewhere the fix's hooks cannot follow. A fix that moves a method's work
+    /// somewhere else, where even other mods' postfixes would no longer see it happen, counts every
+    /// kind of hook. Evaluated lazily, at the fix's first use in a world, when every mod has
+    /// patched; the answer cannot change within a session.
+    /// </remarks>
+    internal sealed class TakeoverCheck {
+        private readonly MethodBase _target;
+        private readonly HookKinds _kinds;
+        private readonly Func<string, string> _message;
+        private bool _checked;
+        private bool _takenOver;
+
+        /// <param name="message">The log line, given the other mods' GUIDs.</param>
+        internal TakeoverCheck(MethodBase target, bool transpilers, Func<string, string> message)
+            : this(target, HookKinds.BoolPrefixes | (transpilers ? HookKinds.Transpilers : 0), message) { }
+
+        /// <param name="message">The log line, given the other mods' GUIDs.</param>
+        internal TakeoverCheck(MethodBase target, HookKinds kinds, Func<string, string> message) {
+            _target = target;
+            _kinds = kinds;
+            _message = message;
+        }
+
+        internal bool TakenOver {
+            get {
+                if (_checked) { return _takenOver; }
+
+                _checked = true;
+
+                SortedSet<string> owners = new SortedSet<string>(StringComparer.Ordinal);
+
+                // Fully qualified: HarmonyLib.Patches collides with this mod's Patches namespace.
+                HarmonyLib.Patches info = _target == null ? null : Harmony.GetPatchInfo(_target);
+                if (info != null) {
+                    bool anyPrefix = (_kinds & HookKinds.Prefixes) != 0;
+                    bool boolPrefix = (_kinds & HookKinds.BoolPrefixes) != 0;
+                    foreach (Patch patch in info.Prefixes) {
+                        if (anyPrefix || (boolPrefix && patch.PatchMethod?.ReturnType == typeof(bool))) {
+                            AddForeign(owners, patch);
+                        }
+                    }
+
+                    if ((_kinds & HookKinds.Postfixes) != 0) { AddForeign(owners, info.Postfixes); }
+                    if ((_kinds & HookKinds.Transpilers) != 0) { AddForeign(owners, info.Transpilers); }
+                    if ((_kinds & HookKinds.Finalizers) != 0) { AddForeign(owners, info.Finalizers); }
+                }
+
+                _takenOver = owners.Count > 0;
+                if (_takenOver) { Logger.LogInfo(_message(string.Join(", ", owners))); }
+
+                return _takenOver;
+            }
+        }
+
+        private static void AddForeign(SortedSet<string> owners, IReadOnlyList<Patch> patches) {
+            foreach (Patch patch in patches) { AddForeign(owners, patch); }
+        }
+
+        private static void AddForeign(SortedSet<string> owners, Patch patch) {
+            if (patch.owner != ValheimCommunityPatch.PluginGUID) { owners.Add(patch.owner); }
+        }
+    }
 }

@@ -70,6 +70,10 @@ namespace ValheimCommunityPatch {
             Patches.Performance.ClutterRebuildCapPatch.BindConfig();
             Patches.Performance.HeightmapBuilderThroughputPatch.BindConfig();
             Patches.Performance.ZoneGenPacingPatch.BindConfig();
+            Patches.Performance.LoadingZoneCadencePatch.BindConfig();
+            Patches.Performance.LocationSpawnPacingPatch.BindConfig();
+            Patches.Performance.DungeonRoomSpreadPatch.BindConfig();
+            Patches.Performance.MinimapFogUploadPatch.BindConfig();
             Patches.Performance.TerrainLodSpreadPatch.BindConfig();
             Patches.Performance.WearSupportLookupPatch.BindConfig();
             Patches.Performance.SceneIdleSkipPatch.BindConfig();
@@ -108,6 +112,8 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.EquipmentTextureErrorPatch.BindConfig();
             Patches.Correctness.UnkillableCreaturePatch.BindConfig();
             Patches.Correctness.ClothWindShelterPatch.BindConfig();
+            Patches.Correctness.LoadingWaitPatch.BindConfig();
+            Patches.Correctness.LostBedSpawnPointPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();

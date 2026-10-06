@@ -8,7 +8,7 @@ using Jotunn.Utils;
 namespace ValheimCommunityPatch
 {
     // Not EveryoneMustHaveMod: every fix is safe one-sided. The mod adds no prefabs, recipes or
-    // save data, and its one custom RPC is ignored by peers without it. VersionCheckOnly still
+    // save data, and peers without it ignore its custom RPCs. VersionCheckOnly still
     // refuses a client and server on different versions of this mod, which is the one case where
     // the two sides could disagree about behaviour.
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
@@ -24,7 +24,7 @@ namespace ValheimCommunityPatch
     {
         public const string PluginGUID = "MidnightsFX.ValheimCommunityPatch";
         public const string PluginName = "ValheimCommunityPatch";
-        public const string PluginVersion = "0.32.4";
+        public const string PluginVersion = "0.33.0";
 
         internal static ManualLogSource Log;
 

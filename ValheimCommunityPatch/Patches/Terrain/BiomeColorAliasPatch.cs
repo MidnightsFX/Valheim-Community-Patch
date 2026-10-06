@@ -32,10 +32,16 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // alike and meet without a seam. Distant terrain is left alone: the branch only runs within about
     // 400 m of the camera.
     //
+    // Stands down when another mod can skip RebuildRenderMesh with a prefix, because that mod can
+    // color the mesh without this lerp. ValheimOptimized does for all but a zone's first mesh near the
+    // player or behind a loading screen, so a fixed shore lost the fix at its next rebuild.
+    //
     // Client: vertex colors are rendering state.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class BiomeColorAliasPatch {
+        private const string FixName = "Fix Swamp Plains Shore Seams";
+
         internal enum BridgeGround { BlackForest, Ashlands }
 
         internal static ConfigEntry<bool> Enabled;
@@ -53,7 +59,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             Enabled = ValConfig.BindFixToggle(
                 typeof(BiomeColorAliasPatch),
                 ValConfig.SectionTerrain,
-                "Fix Swamp Plains Shore Seams",
+                FixName,
                 true,
                 "Stops shores where swamp blends into plains from being drawn with the Ashlands shoreline, " +
                 "which ends in hard straight lines along the 64m zone grid. The game's terrain colors " +
@@ -87,6 +93,12 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             Bridge.SettingChanged += (sender, args) => RebuildLoadedTerrain();
         }
 
+        private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildRenderMesh"),
+            transpilers: false,
+            owners => $"Terrain mesh building is changed by {owners}, so '{FixName}' stands down and that " +
+                      "mod's terrain colors apply.");
+
         // RebuildRenderMesh asks for every vertex of one tile in a row, so each tile is read once.
         private static Heightmap _cachedMap;
         private static BiomeSector[] _cachedCorners;
@@ -101,7 +113,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
             // Neither channel set: the remap would return it unchanged.
             if (__result.r <= 0f && __result.a <= 0f) { return; }
-            if (__instance.IsDistantLod) { return; }
+            if (__instance.IsDistantLod || Takeover.TakenOver) { return; }
 
             ReadCorners(__instance);
 
