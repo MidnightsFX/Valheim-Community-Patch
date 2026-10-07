@@ -186,9 +186,10 @@ fix under [Credit and sources](#credit-and-sources).
   dead in the model while it is loaded; in the Deep North they are most of it, 33,390 of The Hole's
   33,587 objects, 99% of a north village house and two thirds of a hall. A template is made, between
   frames, once a prefab has been used twice and has enough of them; a networked object the model
-  refers to stays in it as an empty, switched-off placeholder, so every reference survives. It is used
-  only while its prefab is loaded and dropped after five minutes unused; until then, and when another
-  mod hooks location spawning or room placement, the game's own clone is used. `Verify Location Model Templates` in the `Debug` section builds both and logs any
+  refers to stays in it as an empty, switched-off placeholder, so every reference survives. It keeps
+  its prefab loaded, so a dungeon's rooms keep their templates between visits, and is dropped after
+  five minutes unused; until then, and when another mod hooks location spawning or room placement,
+  the game's own clone is used. `Verify Location Model Templates` in the `Debug` section builds both and logs any
   difference.
 - **Fix Arriving Location Hitch** *(client)* — when the host reaches a zone holding a location
   before the game has generated it, generates the zone in the background first and loads it on the

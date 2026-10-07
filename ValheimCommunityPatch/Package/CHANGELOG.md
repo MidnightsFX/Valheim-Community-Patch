@@ -2,16 +2,16 @@
 
 **0.34.0**
 ```
-- Dungeons and camps generated in land ahead of you no longer build room models that are thrown away straight after, cutting a large hitch when exploring.
-- Fixes a newly generated dungeon location sometimes loading all its rooms at once, freezing the game for a second or more.
+- Reduces Dungeon generation hitches
+    - Fixes a newly generated dungeon location sometimes loading all its rooms at once, freezing the game for a second or more.
+    - Locations and dungeon rooms no longer copy the hidden chests, trees and creatures they never use, making them much quicker to appear and unload.
+    - Adds an optional diagnostic that logs where the time goes when new land, locations and dungeons are generated.
 - Locations you reach before the game has generated them now build in gradually instead of all in one frame, cutting the longest hitches when travelling through new land.
 - Fixes holes in the ground where a location is about to appear while it is still loading.
-- Locations and dungeon rooms no longer copy the hidden chests, trees and creatures they never use, making them much quicker to appear and unload.
-- Adds an optional diagnostic that logs where the time goes when new land, locations and dungeons are generated.
+- Rocks and copper deposits loading in or out no longer rebuild the whole patch of ground they sit on.
 - The ground at a portal's destination, or at your bed after you die, now starts building before you arrive, so loading screens can end sooner.
-- Portals still wait for the server to send your destination when SteadyFrame is installed.
 - While you stand at a portal, the server starts sending the buildings on the other side, so the loading screen after it is shorter.
-- Rocks and copper deposits loading in or out no longer rebuild the whole patch of ground they sit on, trimming stutter when moving through forests, coasts and heaths.
+- Improve steadyframes compatability
 ```
 
 **0.33.0**

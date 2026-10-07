@@ -32,12 +32,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // the game changes just before cloning: what the random-spawn and random-object components
     // switched on or off, a custom interior's position, and the location's cached biome.
     //
-    // A template holds no reference to its prefab, so it never keeps assets loaded or starts an
-    // unload when it goes: it is used only while the prefab it was made from is still loaded, and
-    // dropped once that unloads, after five minutes unused, and on logout. Releasing references at
-    // shutdown started asynchronous asset bundle unloads during the game's own quit, which crashed
-    // it. Until a template is ready, and when another mod hooks either method, the game's own
-    // clone is used. 'Verify Location Model Templates' builds both, uses the game's, and logs any
+    // A template holds a reference to its prefab, so a dungeon's room templates survive between
+    // visits instead of being rebuilt each time its rooms unload, and is dropped after five
+    // minutes unused and on logout. A reference is released only during play, or, for one still
+    // held at logout, once the next world starts loading; never while the game shuts down, where
+    // releasing starts an asynchronous asset bundle unload during the game's own quit, which
+    // crashed it. Until a template is ready, and when another mod hooks either method, the game's
+    // own clone is used. 'Verify Location Model Templates' builds both, uses the game's, and logs any
     // difference, plus, once a template is ready, any reference left pointing at a destroyed object.
     //
     // Client: models are built where a player sees them.
@@ -134,7 +135,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             internal int TotalObjects, DeadObjects;
 
             internal GameObject Root;
-            internal bool Ready;
+            internal bool Held, Ready;
             internal List<GameObject> ToStrip;
             internal int StripNext;
 
@@ -277,6 +278,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 _holder.SetActive(false);
                 Object.DontDestroyOnLoad(_holder);
             }
+
+            template.Prefab.HoldReference();
+            template.Held = true;
 
             long start = Stopwatch.GetTimestamp();
             template.Root = Object.Instantiate(template.Asset, _holder.transform);
@@ -450,11 +454,24 @@ namespace ValheimCommunityPatch.Patches.Performance {
             Expired.Clear();
         }
 
-        private static void Drop(Template template) {
+        // References held at logout, released once the next world starts loading. Never released
+        // on the way out of the game.
+        private static readonly List<SoftReference<GameObject>> ReleaseLater = new List<SoftReference<GameObject>>();
+
+        private static void Drop(Template template, bool release = true) {
             if (_building == template) { _building = null; }
             if (template.Root != null) { Object.DestroyImmediate(template.Root); }
 
+            if (template.Held) {
+                if (release) {
+                    template.Prefab.Release();
+                } else {
+                    ReleaseLater.Add(template.Prefab);
+                }
+            }
+
             template.Root = null;
+            template.Held = false;
             template.Ready = false;
 
             foreach (KeyValuePair<int, Template> pair in Templates) {
@@ -465,13 +482,24 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
+        // Runs as the game shuts down, and so as it quits: the templates go, their references stay.
         [HarmonyPatch(typeof(ZNetScene), "Shutdown")]
         internal static class ShutdownHook {
             [HarmonyPostfix]
             private static void Postfix() {
-                foreach (Template template in new List<Template>(Templates.Values)) { Drop(template); }
+                foreach (Template template in new List<Template>(Templates.Values)) { Drop(template, release: false); }
                 Templates.Clear();
                 _building = null;
+            }
+        }
+
+        // The next world is loading, behind its loading screen.
+        [HarmonyPatch(typeof(ZNetScene), "Awake")]
+        internal static class NextWorldHook {
+            [HarmonyPostfix]
+            private static void Postfix() {
+                foreach (SoftReference<GameObject> prefab in ReleaseLater) { prefab.Release(); }
+                ReleaseLater.Clear();
             }
         }
 
