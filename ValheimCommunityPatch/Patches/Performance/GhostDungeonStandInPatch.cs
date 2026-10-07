@@ -42,8 +42,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 "Verify Background Dungeon Stand-ins",
                 false,
                 "Diagnostic. For every room of a dungeon generated ahead of the players, builds both the " +
-                "stand-in and the full room model, uses the model, and logs any difference in the room " +
-                "connections the layout reads. Costs the model this fix exists to avoid, so leave it off " +
+                "stand-in and the full room model, uses the model, and logs a line per dungeon plus any " +
+                "difference in the room connections the layout reads. Costs the model this fix exists to avoid, so leave it off " +
                 "unless you are validating the stand-ins.",
                 advanced: true);
         }
@@ -83,12 +83,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 $"{FixName} (DungeonGenerator.PlaceRoom)", expected: 1);
 
         private static GameObject RoomModel(SoftReference<GameObject> prefab, Vector3 position, Quaternion rotation, Transform parent) {
-            if (_ghostDepth <= 0) { return SoftReferenceableAssets.Utils.Instantiate(prefab, position, rotation, parent); }
+            // A model that stays (or one the layout needs in full) is built by Fix Location Model
+            // Placeholders, which falls back to the game's own clone.
+            if (_ghostDepth <= 0) { return ModelTemplatePatch.RoomModel(prefab, position, rotation, parent); }
 
             // PlaceRoom loaded the prefab before calling here.
             GameObject asset = prefab.Asset;
             if (asset == null || !CanStandIn(asset) || Takeover.TakenOver) {
-                return SoftReferenceableAssets.Utils.Instantiate(prefab, position, rotation, parent);
+                return ModelTemplatePatch.RoomModel(prefab, position, rotation, parent);
             }
 
             if (Verify == null || !Verify.Value) { return BuildStandIn(asset, position, rotation, parent); }
@@ -206,8 +208,33 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- verification ----------------------------------------------------------------------
 
-        private static int _verified;
-        private static int _differed;
+        // Rooms compared in the generation running now, and in all generations so far.
+        private static int _verified, _differed;
+        private static int _totalVerified, _totalDiffered;
+
+        // One line per verified dungeon, at the end of its generation.
+        [HarmonyPatch(typeof(DungeonGenerator), nameof(DungeonGenerator.Generate), typeof(int), typeof(ZoneSystem.SpawnMode))]
+        internal static class GenerateHook {
+            [HarmonyPrefix]
+            private static void Prefix() {
+                _verified = 0;
+                _differed = 0;
+            }
+
+            [HarmonyFinalizer]
+            private static void Finalizer(DungeonGenerator __instance) {
+                if (_verified == 0) { return; }
+
+                _totalVerified += _verified;
+                _totalDiffered += _differed;
+                Logger.LogInfo(
+                    $"{FixName}: {__instance.name}: {_verified} room stand-in(s) verified against their models, " +
+                    $"{_differed} differed ({_totalVerified} verified, {_totalDiffered} differed this session).");
+
+                _verified = 0;
+                _differed = 0;
+            }
+        }
 
         private static void Compare(string name, GameObject model, GameObject standIn) {
             _verified++;
@@ -241,10 +268,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (difference != null) {
                 _differed++;
                 Logger.LogWarning($"{FixName}: the stand-in for room {name} differs from its model: {difference}.");
-            }
-
-            if (_verified % 100 == 0) {
-                Logger.LogInfo($"{FixName}: {_verified} room stand-in(s) verified against their models, {_differed} differed.");
             }
         }
     }

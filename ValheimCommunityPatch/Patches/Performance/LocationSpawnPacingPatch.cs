@@ -84,6 +84,20 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _delayed++;
         }
 
+        /// <summary>
+        /// Counts other world-building work done this frame against the location budget, so a
+        /// location coming into range waits for the next frame instead of piling on.
+        /// </summary>
+        internal static void ChargeFrame(long ticks) {
+            int frame = Time.frameCount;
+            if (frame != _frame) {
+                _frame = frame;
+                _spent = 0;
+            }
+
+            _spent += ticks;
+        }
+
         [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.SpawnProxyLocation))]
         internal static class SpawnTimingHook {
             [HarmonyPrefix]

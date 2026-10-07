@@ -171,6 +171,22 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return null;
         }
 
+        /// <summary>
+        /// Counts other world-building work done this frame against the room budget, and takes the
+        /// frame's always-allowed first room, so rooms wait for the next frame instead of piling on.
+        /// </summary>
+        internal static void ChargeFrame(long ticks) {
+            int frame = Time.frameCount;
+            if (frame != _frame) {
+                _frame = frame;
+                _spent = 0;
+                _placed = 0;
+            }
+
+            _spent += ticks;
+            if (_placed == 0) { _placed = 1; }
+        }
+
         // Places rooms until the job is done (true) or the frame's budget is spent (false). The first
         // room of a frame always goes.
         private static bool Place(Job job, bool budgeted) {

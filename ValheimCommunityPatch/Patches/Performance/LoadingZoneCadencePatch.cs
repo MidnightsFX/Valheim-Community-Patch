@@ -134,20 +134,29 @@ namespace ValheimCommunityPatch.Patches.Performance {
             bool classic = distance.IsClassic;
             if (Ring.Count > 0 && near == _ringNear && classic == _ringClassic && center == _ringCenter) { return; }
 
-            Ring.Clear();
-            for (int y = center.y - near; y <= center.y + near; y++) {
-                for (int x = center.x - near; x <= center.x + near; x++) {
-                    Vector2s zone = new Vector2s(x, y);
-                    if (classic || zoneSystem.ZonesWithinRadius(center, zone, near)) { Ring.Add(zone); }
-                }
-            }
-
-            _sortCenter = center;
-            Ring.Sort(NearestFirst);
+            FillNearRing(zoneSystem, center, distance, Ring);
 
             _ringCenter = center;
             _ringNear = near;
             _ringClassic = classic;
+        }
+
+        // The zones CreateLocalZones walks around center, by vanilla's own membership test, nearest
+        // first. Fix Destination Terrain Delay prewarms the same set.
+        internal static void FillNearRing(ZoneSystem zoneSystem, Vector2s center, SimulationDistance distance, List<Vector2s> ring) {
+            int near = distance.NearSimulationDistance;
+            bool classic = distance.IsClassic;
+
+            ring.Clear();
+            for (int y = center.y - near; y <= center.y + near; y++) {
+                for (int x = center.x - near; x <= center.x + near; x++) {
+                    Vector2s zone = new Vector2s(x, y);
+                    if (classic || zoneSystem.ZonesWithinRadius(center, zone, near)) { ring.Add(zone); }
+                }
+            }
+
+            _sortCenter = center;
+            ring.Sort(NearestFirst);
         }
 
         // Nearest first; ties keep vanilla's row-major order.

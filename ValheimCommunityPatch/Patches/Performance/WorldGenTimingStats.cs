@@ -192,6 +192,82 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
+        // ---- waiting to be installed ----------------------------------------------------------
+        //
+        // A nearby zone is installed (its ground appears) only when PokeLocalZone succeeds. Until
+        // then each tick it is asked again and fails for one of three reasons: its terrain is not
+        // built yet, its location is still loading, or it was just generated in the background and
+        // loads next tick. A zone that took a quarter second or more gets a line once installed.
+
+        private sealed class InstallWait {
+            internal float Since, LastAsked;
+            internal int TerrainTicks, LocationTicks, BackgroundTicks;
+        }
+
+        private static readonly Dictionary<Vector2s, InstallWait> InstallWaits = new Dictionary<Vector2s, InstallWait>();
+        private static bool _locationBlocked;
+
+        [HarmonyPatch(typeof(ZoneSystem), "PokeLocalZone")]
+        internal static class InstallWaitHook {
+            [HarmonyPrefix]
+            private static void Prefix(ZoneSystem __instance, Vector2s zoneID, out bool __state) {
+                __state = Recording && !__instance.m_zones.ContainsKey(zoneID);
+                _locationBlocked = false;
+            }
+
+            [HarmonyFinalizer]
+            private static void Finalizer(ZoneSystem __instance, Vector2s zoneID, bool __result, bool __state) {
+                if (!__state) { return; }
+
+                float now = Time.realtimeSinceStartup;
+                InstallWaits.TryGetValue(zoneID, out InstallWait wait);
+
+                if (__instance.m_zones.ContainsKey(zoneID)) {
+                    if (wait == null) { return; }
+
+                    InstallWaits.Remove(zoneID);
+                    float waited = now - wait.Since;
+                    if (waited < 0.25f) { return; }
+
+                    string location = __instance.m_locationInstances.TryGetValue(zoneID, out ZoneSystem.LocationInstance instance)
+                        ? $" ({instance.m_location?.m_prefabName})" : "";
+                    Logger.LogInfo(
+                        $"World gen timing: zone {zoneID.x},{zoneID.y}{location} installed {waited:0.0} s after it was " +
+                        $"first needed | ticks waiting for terrain {wait.TerrainTicks}, for its location to load " +
+                        $"{wait.LocationTicks}, generated in the background {wait.BackgroundTicks}");
+                    return;
+                }
+
+                // A zone the player walked away from starts over.
+                if (wait == null || now - wait.LastAsked > 2f) {
+                    wait = new InstallWait { Since = now };
+                    InstallWaits[zoneID] = wait;
+                }
+
+                wait.LastAsked = now;
+                if (__result) {
+                    wait.BackgroundTicks++;
+                } else if (_locationBlocked) {
+                    wait.LocationTicks++;
+                } else {
+                    wait.TerrainTicks++;
+                }
+
+                if (InstallWaits.Count > 256) { InstallWaits.Clear(); }
+            }
+        }
+
+        // SpawnZone asks only once the zone's terrain is ready, so a "no" here is the location.
+        // Priority.Last: after Fix Location Room Preload has given its answer.
+        [HarmonyPatch(typeof(ZoneSystem), "PokeCanSpawnLocation")]
+        internal static class LocationGateHook {
+            [HarmonyPostfix]
+            [HarmonyPriority(Priority.Last)]
+            private static void Postfix(bool isFirstSpawn, bool __result) {
+                if (isFirstSpawn && !__result) { _locationBlocked = true; }
+            }
+        }
+
         // ---- location --------------------------------------------------------------------------
 
         private static readonly MethodInfo InstantiateAt = FindInstantiateAt();
@@ -388,6 +464,21 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(typeof(SoftReferenceableAssets.Utils), nameof(SoftReferenceableAssets.Utils.Instantiate),
             typeof(SoftReference<GameObject>), typeof(Vector3), typeof(Quaternion), typeof(Transform))]
         internal static class RoomModelHook {
+            [HarmonyPrefix]
+            private static void Prefix(out long __state) => __state = Placing != null && !_inRoomObject ? Now : 0;
+
+            [HarmonyFinalizer]
+            private static void Finalizer(long __state) {
+                if (__state == 0 || _dungeon == null) { return; }
+
+                _dungeon.RoomModels += Now - __state;
+                _dungeon.RoomModelCount++;
+            }
+        }
+
+        // A room model built from Fix Location Model Placeholders' template counts as a room model.
+        [HarmonyPatch(typeof(ModelTemplatePatch), nameof(ModelTemplatePatch.CloneTemplate))]
+        internal static class TemplateModelHook {
             [HarmonyPrefix]
             private static void Prefix(out long __state) => __state = Placing != null && !_inRoomObject ? Now : 0;
 

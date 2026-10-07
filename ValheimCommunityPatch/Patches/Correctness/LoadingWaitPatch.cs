@@ -24,9 +24,11 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // arrives behind those objects. Transpilers swap the 8 s constant in Player.UpdateTeleport and
     // both reads of m_respawnLoadDuration in Game.FindSpawnPoint for a helper, and every
     // IsAreaReady call in the two for one that also waits for the answer, up to a timeout after
-    // which vanilla's checks decide alone. A host holds every object itself, so it drops the fixed
-    // wait and lets IsAreaReady decide. A client of a server without this fix, or of one that has
-    // it switched off, never gets a hello back and keeps vanilla's timings exactly.
+    // which vanilla's checks decide alone. Where another mod has already replaced the portal's 8 s,
+    // its timing stays and only the IsAreaReady call is swapped. A host holds every object itself,
+    // so it drops the fixed wait and lets IsAreaReady decide. A client of a server without this
+    // fix, or of one that has it switched off, never gets a hello back and keeps vanilla's timings
+    // exactly.
     //
     // Both: the server half answers on a dedicated server; the client half needs a local player.
     [PatchSide(Side.Both)]
@@ -450,6 +452,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 if (Client.Confirms(pos)) { Client.EnsureQuery(pos); }
             }
 
+            // Harmony re-runs every transpiler whenever any mod patches the method.
+            private static bool _waitOwnerLogged;
+
             // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
             [HarmonyTranspiler]
             [HarmonyPriority(Priority.Last)]
@@ -459,30 +464,51 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                     instructions, IsAreaReadyMethod, ConfirmedAreaReadyMethod, "Player.UpdateTeleport", expected: 1);
                 if (ReferenceEquals(swapped, instructions)) { return instructions; }
 
-                // The arrival wait is the only 8 in the method. The constant becomes
-                // "ldarg.0; call ArrivalMinimum", keeping any label on the first instruction.
+                // The arrival wait is the only 8 in the method.
                 List<CodeInstruction> codes = PatchHelper.Copy(swapped);
                 int found = 0;
                 for (int i = 0; i < codes.Count; i++) {
-                    if (codes[i].opcode != OpCodes.Ldc_R4 || !(codes[i].operand is float value) || value != VanillaArrivalWait) {
-                        continue;
+                    if (IsArrivalWait(codes[i])) { found++; }
+                }
+
+                // A mod that replaced the 8 owns the wait (SteadyFrame does). The swap stands on its
+                // own, so that mod's timing still waits for the server's confirmation.
+                if (found == 0) {
+                    if (!_waitOwnerLogged) {
+                        _waitOwnerLogged = true;
+                        Logger.LogInfo(
+                            "Player.UpdateTeleport: another mod has replaced the fixed portal arrival wait, so " +
+                            "its timing applies; 'Fix Loading Screen Wait' still holds the arrival until the " +
+                            "server has sent the destination.");
                     }
+
+                    return codes;
+                }
+
+                if (found > 1) {
+                    Logger.LogWarning(
+                        $"Player.UpdateTeleport: expected 1 arrival wait constant, found {found}, so 'Fix Loading " +
+                        "Screen Wait' leaves portals alone. Another mod has most likely already rewritten the " +
+                        "method - if so, nothing is wrong.");
+                    return instructions;
+                }
+
+                // The constant becomes "ldarg.0; call ArrivalMinimum", keeping any label on the first
+                // instruction.
+                for (int i = 0; i < codes.Count; i++) {
+                    if (!IsArrivalWait(codes[i])) { continue; }
 
                     codes[i].opcode = OpCodes.Ldarg_0;
                     codes[i].operand = null;
                     codes.Insert(i + 1, new CodeInstruction(OpCodes.Call, ArrivalMinimumMethod));
-                    found++;
-                    i++;
+                    break;
                 }
 
-                if (found == 1) { return codes; }
-
-                Logger.LogWarning(
-                    $"Player.UpdateTeleport: expected 1 arrival wait constant, found {found}, so 'Fix Loading " +
-                    "Screen Wait' leaves portals alone. Another mod has most likely already rewritten the " +
-                    "method - if so, nothing is wrong.");
-                return instructions;
+                return codes;
             }
+
+            private static bool IsArrivalWait(CodeInstruction code) =>
+                code.opcode == OpCodes.Ldc_R4 && code.operand is float value && value == VanillaArrivalWait;
         }
 
         [PatchSide(Side.Client)]

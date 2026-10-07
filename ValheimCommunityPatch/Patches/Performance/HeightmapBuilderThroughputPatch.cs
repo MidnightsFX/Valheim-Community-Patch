@@ -36,6 +36,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 valMax: 128);
         }
 
+        private const int VanillaReadyCap = 16;
+
+        // Set by the build thread once this loop is the one it runs.
+        private static volatile bool _loopRunning;
+
+        // The ready cap the build thread enforces right now: this fix's when its loop is running,
+        // else vanilla's. Read by Fix Destination Terrain Delay, which must not overfill it.
+        internal static int ReadyCapInForce => _loopRunning && ReadyCap != null ? ReadyCap.Value : VanillaReadyCap;
+
         [HarmonyPrepare]
         private static bool Prepare() {
             if (HeightmapBuilder.m_instance != null) {
@@ -51,6 +60,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("BuildThread")]
         private static bool BuildThreadPrefix(HeightmapBuilder __instance) {
             ZLog.Log((object)"Builder started");
+            _loopRunning = true;
             bool stop = false;
             while (!stop) {
                 bool haveWork;
@@ -65,7 +75,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     lock (__instance.m_lock) {
                         __instance.m_toBuild.Remove(data);
                         __instance.m_ready.Add(data);
-                        int cap = ReadyCap != null ? ReadyCap.Value : 16;
+                        int cap = ReadyCap != null ? ReadyCap.Value : VanillaReadyCap;
                         while (__instance.m_ready.Count > cap) { __instance.m_ready.RemoveAt(0); }
                     }
                 }

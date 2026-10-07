@@ -146,6 +146,17 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Reference Position Send Delay** *(client)* — tells the server where you are as soon as a
   portal, respawn or login moves you two or more zones, instead of at the next 2 s report, so the
   server starts sending the new area at once.
+- **Fix Destination Terrain Delay** *(client)* — starts building the ground at a teleport's destination
+  as the fade begins, and at your bed while you are dead, instead of only once you arrive, so the
+  loading screen no longer waits for it. It never asks for more than the terrain builder can hold, so
+  nothing finished is thrown away before it is used.
+- **Fix Portal Destination Send Delay** *(both)* — while you stand within `Portal Prefetch Range`
+  (default 10 m) of a connected portal, the server starts sending the building pieces and terrain
+  edits around the other end, instead of only once you have gone through, so the loading screen behind
+  the portal has less to wait for. The server checks that you really are at that portal and works out
+  its destination itself, and it uses only what your connection has spare after the area around you,
+  nearest pieces first. Needs the mod on the server and the client; players without it are unaffected.
+  Can be turned off, for servers that would rather not send players areas they may not visit.
 - **Fix Minimap Fog Upload** *(client)* — uploads only the patch of map fog you just revealed
   instead of the whole 8 MiB fog texture every time exploring reveals new ground.
 - **Fix Dungeon Spawn Hitch** *(client)* — places the rooms of a dungeon or camp loading in near you
@@ -155,10 +166,13 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Location Spawn Hitch** *(client)* — spawns one location per frame plus as many more as
   `Location Spawn Budget` allows (default 4 ms, 0 is vanilla), through the game's own wait-and-retry,
   instead of every ready location in the same frame; nothing waits behind a loading screen.
-- **Fix Location Room Preload** *(server)* — makes a location with a dungeon, generated for the
-  first time, wait for its room prefabs to load in the background as the game intends. When a copy
-  of the same location was already standing nearby, the game reused that copy's load, which never
-  covered the rooms, and then loaded every room in one frame: over a second for the Deep North halls.
+- **Fix Location Room Preload** *(server)* — loads each location and its dungeon's rooms in the
+  background as soon as its zone enters the ring generated ahead of the players, instead of when
+  generation reaches it; the whole zone, ground included, waits for that load, so while travelling
+  the ground went missing until it finished. A zone you are about to enter waits at most `Location
+  Load Wait` (default 1 s) before loading what is left at once. Also makes a first-time location
+  wait for its room prefabs as the game intends when a copy already standing nearby loaded only the
+  location: the game then loaded every room in one frame, over a second for the Deep North halls.
 - **Fix Background Dungeon Generation** *(server)* — lays out dungeons and camps generated in the
   ring ahead of the players with lightweight stand-ins instead of full room models. The game built
   every room model there only to read its layout and destroy it again within the frame; the dungeon,
@@ -166,6 +180,23 @@ fix under [Credit and sources](#credit-and-sources).
   arrive, as before. Rooms with terrain-layer colliders are still built in full, and the fix stands
   down when another mod hooks room placement. `Verify Background Dungeon Stand-ins` in the `Debug`
   section builds both and logs any difference.
+- **Fix Location Model Placeholders** *(client)* — builds location and dungeon room models from a
+  copy of the prefab without the networked objects (chests, trees, creatures, ore) the model never
+  uses. Those come from the world's saved data, so the game clones them switched off and leaves them
+  dead in the model while it is loaded; in the Deep North they are most of it, 33,390 of The Hole's
+  33,587 objects, 99% of a north village house and two thirds of a hall. A template is made, between
+  frames, once a prefab has been used twice and has enough of them; a networked object the model
+  refers to stays in it as an empty, switched-off placeholder, so every reference survives. It is used
+  only while its prefab is loaded and dropped after five minutes unused; until then, and when another
+  mod hooks location spawning or room placement, the game's own clone is used. `Verify Location Model Templates` in the `Debug` section builds both and logs any
+  difference.
+- **Fix Arriving Location Hitch** *(client)* — when the host reaches a zone holding a location
+  before the game has generated it, generates the zone in the background first and loads it on the
+  next tick the way already-generated land loads: objects a few per frame, the location model within
+  Fix Location Spawn Hitch's budget and dungeon rooms within Fix Dungeon Spawn Hitch's. The game
+  otherwise builds every object, the whole location model and every room model of such a zone in
+  one frame. The world and its dungeons come out the same; only when the visible parts are built
+  changes. The player's own zone, loading screens and zones without a location are left to the game.
 - **Fix Hotbar Key Allocation** *(client)* — checks the hotbar keys with cached key names instead of
   formatting up to sixteen new strings every frame.
 - **Fix Equipment Modifier Allocation** *(client)* — totals your equipment's movement, stamina and
@@ -179,6 +210,10 @@ fix under [Credit and sources](#credit-and-sources).
   move more than 2 cm, 0.05 m/s or 1 degree from what was last sent, instead of on any change at
   all. Players, ships, carts and items are untouched. The one performance fix with a toggle, since
   it changes what other players see, by at most those amounts.
+- **Fix Paint-Only Terrain Rebuilds** *(both)* — when something that only paints the ground loads
+  or unloads, like the big rocks and copper deposits of the Black Forest, coast and heath, refreshes
+  just the terrain paint under it instead of also rebuilding the ground's collision and shape. Each
+  such refresh checks the ground's heights came out the same, and does the full rebuild if not.
 
 ### Terrain
 
@@ -394,15 +429,20 @@ The mods involved:
 | Fix Idle Sound Updates | MidnightsFX | — |
 | Fix Loading Zone Cadence | MidnightsFX | — |
 | Fix Reference Position Send Delay | MidnightsFX | — |
+| Fix Destination Terrain Delay | MidnightsFX | — |
+| Fix Portal Destination Send Delay | MidnightsFX | — |
 | Fix Minimap Fog Upload | MidnightsFX | — |
 | Fix Dungeon Spawn Hitch | MidnightsFX | — |
 | Fix Location Spawn Hitch | MidnightsFX | — |
 | Fix Location Room Preload | MidnightsFX | — |
 | Fix Background Dungeon Generation | MidnightsFX | — |
+| Fix Arriving Location Hitch | MidnightsFX | — |
+| Fix Location Model Placeholders | MidnightsFX | — |
 | Fix Hotbar Key Allocation | MidnightsFX | — |
 | Fix Equipment Modifier Allocation | MidnightsFX | — |
 | Fix Active Area Check Allocation | MidnightsFX | — |
 | Fix Idle Creature Sync | MidnightsFX | — |
+| Fix Paint-Only Terrain Rebuilds | MidnightsFX | — |
 
 ### Terrain
 
@@ -541,6 +581,14 @@ during loading screens, so Fix Loading Zone Cadence stands down when it is insta
 in the log with *"Zone loading is changed by ..."*. Fix Loading Screen Wait and Fix Lost Bed Spawn
 Point stay on beside it, and on a dedicated server they keep its shortened waits from dropping you in
 before your buildings arrive or from losing your bed spawn point.
+
+Known overlap: **SteadyFrame** replaces the game's fixed portal arrival wait with its own timing.
+Before 0.34.0 that switched Fix Loading Screen Wait off for portals; now SteadyFrame's timing applies
+and the arrival still waits for the server to send the destination, and the log says so once with
+*"another mod has replaced the fixed portal arrival wait ..."*. Its building support lookup is the
+same as Fix Support Lookup Cost's, so that fix stands down with a warning in the log and SteadyFrame's
+version applies. SteadyFrame turns its own object streaming, terrain and housekeeping changes off when this
+mod is installed.
 
 Known overlap: **ValheimOptimized** builds terrain colliders on a background thread itself, as Fix
 Zone Collider Stall does. Before 0.32.5 the two worked on the same terrain at once and crashed the

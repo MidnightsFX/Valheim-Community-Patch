@@ -13,9 +13,9 @@ namespace ValheimCommunityPatch {
         public static ConfigEntry<bool> PatchEverySide;
 
         // Correctness and terrain fixes each have an on/off toggle. Performance fixes are always
-        // on; the Performance section holds only their tuning values. The exception is Fix Idle
-        // Creature Sync, which changes what other players see, by a bounded amount, so it can be
-        // turned off.
+        // on; the Performance section holds only their tuning values. The exceptions can be turned
+        // off: Fix Idle Creature Sync, which changes what other players see, by a bounded amount,
+        // and Fix Portal Destination Send Delay, which sends players areas they may not visit.
         public const string SectionPerformance = "Fixes - Performance";
         public const string SectionCorrectness = "Fixes - Correctness";
         public const string SectionTerrain = "Fixes - Terrain";
@@ -74,6 +74,8 @@ namespace ValheimCommunityPatch {
             Patches.Performance.LocationSpawnPacingPatch.BindConfig();
             Patches.Performance.DungeonRoomSpreadPatch.BindConfig();
             Patches.Performance.GhostDungeonStandInPatch.BindConfig();
+            Patches.Performance.LocationRoomPreloadPatch.BindConfig();
+            Patches.Performance.ModelTemplatePatch.BindConfig();
             Patches.Performance.MinimapFogUploadPatch.BindConfig();
             Patches.Performance.TerrainLodSpreadPatch.BindConfig();
             Patches.Performance.WearSupportLookupPatch.BindConfig();
@@ -90,6 +92,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.ZdoMemoryStats.BindConfig();
             Patches.Performance.WorldGenTimingStats.BindConfig();
             Patches.Performance.CreatureSyncDeadbandPatch.BindConfig();
+            Patches.Performance.PortalPrefetchPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();
