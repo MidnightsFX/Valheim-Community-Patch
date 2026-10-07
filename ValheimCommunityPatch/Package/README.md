@@ -7,7 +7,8 @@ exceptions that silently kill a system, item loss, quadratic hot paths, per-fram
 spam. It deliberately ships no quality-of-life features, no balance changes, and no content, so you
 can install it on a server without anyone having to agree about how the game should play.
 
-Performance fixes are always on; the config holds only their tuning values and the admin-only Verify
+Performance fixes are always on, apart from the two whose entries below say they have a toggle; the
+config holds only their tuning values and the admin-only Verify
 diagnostics. Correctness and terrain fixes each have their own toggle. Server memory fixes are the
 exception: they are off by default and opt-in, see [Server memory](#server-memory-opt-in). The
 dedicated-server garbage collector settings moved to a separate plugin, see
@@ -80,7 +81,9 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Prefab Query Scan** *(both)* — answers "every object of this prefab" from an index instead of
   scanning every ZDO in the world.
 - **Fix Grass Ground Raycasts** *(client)* — reads the ground height, slope and biome for grass
-  placement from terrain data instead of casting a physics ray per blade.
+  placement from terrain data instead of casting a physics ray per blade. Has a toggle, since grass
+  placed from data that disagrees with the ground you see sits at the wrong height; off uses the
+  game's own raycast.
 - **Fix Background Zone Pacing** *(server)* — defers background zone pre-generation by a tick when the
   previous frame ran long or the last generation was expensive (both configurable).
 - **Fix Water Material Lookup** *(client)* — caches each water tile's surface material instead of
@@ -209,7 +212,7 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Idle Creature Sync** *(both)* — stops a standing creature's owner re-sending it to every
   player each frame over physics jitter: its position, velocity and ground tilt are sent once they
   move more than 2 cm, 0.05 m/s or 1 degree from what was last sent, instead of on any change at
-  all. Players, ships, carts and items are untouched. The one performance fix with a toggle, since
+  all. Players, ships, carts and items are untouched. One of the two performance fixes with a toggle, since
   it changes what other players see, by at most those amounts.
 - **Fix Paint-Only Terrain Rebuilds** *(both)* — when something that only paints the ground loads
   or unloads, like the big rocks and copper deposits of the Black Forest, coast and heath, refreshes

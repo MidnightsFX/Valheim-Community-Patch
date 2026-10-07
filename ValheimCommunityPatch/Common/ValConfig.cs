@@ -68,6 +68,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.HeightmapLookupPatch.BindConfig();
             Patches.Performance.StaticPhysicsCachePatch.BindConfig();
             Patches.Performance.ClutterRebuildCapPatch.BindConfig();
+            Patches.Performance.ClutterGroundDataPatch.BindConfig();
             Patches.Performance.HeightmapBuilderThroughputPatch.BindConfig();
             Patches.Performance.ZoneGenPacingPatch.BindConfig();
             Patches.Performance.LoadingZoneCadencePatch.BindConfig();
