@@ -610,6 +610,15 @@ with *"Dungeon room placement is changed by ..."* and *"Location spawn timing is
 Fix Hotbar Key Allocation says at startup that the method was already rewritten, and the other three
 are simply not reached; in each case ValheimOptimized's version applies.
 
+Known overlap: **HearthBelow** lets players dig into the ground. The dug-out ground exists only in
+HearthBelow's own collision meshes, and the game's terrain data still describes the surface from
+before digging. Fix Grass Ground Raycasts reads that data instead of casting a ray at the ground, so
+before 0.34.1 grass regrew floating over dug-out ground after a hoe or cultivator edit there. Fix
+Static Object Ground Checks replaces the ground check that HearthBelow hooks to stop objects in dug-out
+ground being pushed up out of it. While HearthBelow is installed, both fixes stand down and say so
+once in the log with *"HearthBelow is loaded, so '...' stands down"*. Grass placement and the ground
+check then run as they do in the game, with HearthBelow's changes applied.
+
 ## Reporting a bug
 
 Issues go to [GitHub](https://github.com/MidnightsFX/Valheim-Community-Patch). Please include your

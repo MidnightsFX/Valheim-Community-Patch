@@ -14,12 +14,33 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // A prefix answers from that data: the heightmap from HeightmapLookupPatch, the height and
     // triangle normal from HeightmapSampling (the same triangulation the collider bakes), and the
     // biome from the same GetBiome call. The ray's +/-500 m vertical window is kept as an explicit
-    // check. Clutter is cosmetic, never saved, and regenerated constantly.
+    // check. Clutter is cosmetic, never saved, and regenerated constantly. Stands down while
+    // HearthBelow is loaded, because ground dug out with it exists only in colliders and the
+    // heightmap data still describes the surface before digging.
     //
     // Client: ClutterSystem needs a camera.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(ClutterSystem))]
     internal static class ClutterGroundDataPatch {
+        private const string FixName = "Fix Grass Ground Raycasts";
+
+        private static bool _loggedStandDown;
+
+        [HarmonyPrepare]
+        private static bool Prepare() {
+            if (!HearthBelowCompat.Loaded) { return true; }
+
+            if (!_loggedStandDown) {
+                _loggedStandDown = true;
+                Logger.LogInfo(
+                    $"HearthBelow is loaded, so '{FixName}' stands down: ground dug out with HearthBelow " +
+                    "is not in the terrain data this fix reads, and grass would grow at the surface from " +
+                    "before digging. Grass placement uses the game's ground raycast.");
+            }
+
+            return false;
+        }
+
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ClutterSystem.GetGroundInfo))]
         private static bool GetGroundInfoPrefix(

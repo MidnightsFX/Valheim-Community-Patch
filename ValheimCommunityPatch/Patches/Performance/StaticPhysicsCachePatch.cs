@@ -15,13 +15,19 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // position fetched once. An advanced, default-off toggle further answers the terrain height
     // for objects that do not check solids from heightmap data (HeightmapSampling evaluates the
     // same surface the ray would hit). Objects with m_checkSolids keep the raycast, because
-    // GetSolidHeight has to see rocks and buildings. The falling path is untouched.
+    // GetSolidHeight has to see rocks and buildings. The falling path is untouched. Stands down
+    // while HearthBelow is loaded: its StaticPhysics.PushUp prefix keeps objects in dug-out ground
+    // in place, and replacing SUpdate would skip it.
     //
     // Both: a dedicated server runs StaticPhysics for its own active area.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(StaticPhysics))]
     internal static class StaticPhysicsCachePatch {
+        private const string FixName = "Fix Static Object Ground Checks";
+
         internal static ConfigEntry<bool> UseHeightmapData;
+
+        private static bool _loggedStandDown;
 
         internal static void BindConfig() {
             UseHeightmapData = ValConfig.BindServerConfig(
@@ -32,6 +38,21 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 "physics raycast. Evaluates the same surface the ray would hit, without the physics " +
                 "engine. Off by default for one release while it soaks.",
                 advanced: true);
+        }
+
+        [HarmonyPrepare]
+        private static bool Prepare() {
+            if (!HearthBelowCompat.Loaded) { return true; }
+
+            if (!_loggedStandDown) {
+                _loggedStandDown = true;
+                Logger.LogInfo(
+                    $"HearthBelow is loaded, so '{FixName}' stands down: HearthBelow keeps objects in " +
+                    "dug-out ground from being pushed up through the game's ground check, which this fix " +
+                    "replaces. The game's ground check runs.");
+            }
+
+            return false;
         }
 
         [HarmonyPrefix]

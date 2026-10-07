@@ -1,5 +1,12 @@
 # Changelog
 
+**0.34.1**
+```
+- HearthBelow Compatibility fixes
+    - Fixes grass floating over ground dug out with HearthBelow, and objects in that ground being pushed up out of it.
+    - The grass and ground-check optimizations involved turn off while HearthBelow is installed, and the log says so.
+```
+
 **0.34.0**
 ```
 - Reduces Dungeon generation hitches
