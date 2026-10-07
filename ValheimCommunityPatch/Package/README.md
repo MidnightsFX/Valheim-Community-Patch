@@ -155,6 +155,17 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Location Spawn Hitch** *(client)* — spawns one location per frame plus as many more as
   `Location Spawn Budget` allows (default 4 ms, 0 is vanilla), through the game's own wait-and-retry,
   instead of every ready location in the same frame; nothing waits behind a loading screen.
+- **Fix Location Room Preload** *(server)* — makes a location with a dungeon, generated for the
+  first time, wait for its room prefabs to load in the background as the game intends. When a copy
+  of the same location was already standing nearby, the game reused that copy's load, which never
+  covered the rooms, and then loaded every room in one frame: over a second for the Deep North halls.
+- **Fix Background Dungeon Generation** *(server)* — lays out dungeons and camps generated in the
+  ring ahead of the players with lightweight stand-ins instead of full room models. The game built
+  every room model there only to read its layout and destroy it again within the frame; the dungeon,
+  its contents and its saved room list come out the same, and the rooms are built when players
+  arrive, as before. Rooms with terrain-layer colliders are still built in full, and the fix stands
+  down when another mod hooks room placement. `Verify Background Dungeon Stand-ins` in the `Debug`
+  section builds both and logs any difference.
 - **Fix Hotbar Key Allocation** *(client)* — checks the hotbar keys with cached key names instead of
   formatting up to sixteen new strings every frame.
 - **Fix Equipment Modifier Allocation** *(client)* — totals your equipment's movement, stamina and
@@ -386,6 +397,8 @@ The mods involved:
 | Fix Minimap Fog Upload | MidnightsFX | — |
 | Fix Dungeon Spawn Hitch | MidnightsFX | — |
 | Fix Location Spawn Hitch | MidnightsFX | — |
+| Fix Location Room Preload | MidnightsFX | — |
+| Fix Background Dungeon Generation | MidnightsFX | — |
 | Fix Hotbar Key Allocation | MidnightsFX | — |
 | Fix Equipment Modifier Allocation | MidnightsFX | — |
 | Fix Active Area Check Allocation | MidnightsFX | — |

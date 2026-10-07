@@ -1,5 +1,12 @@
 # Changelog
 
+**0.34.0**
+```
+- Dungeons and camps generated in land ahead of you no longer build room models that are thrown away straight after, cutting a large hitch when exploring.
+- Fixes a newly generated dungeon location sometimes loading all its rooms at once, freezing the game for a second or more.
+- Adds an optional diagnostic that logs where the time goes when new land, locations and dungeons are generated.
+```
+
 **0.33.0**
 ```
 - Exploring new ground no longer causes a small stutter each time the map reveals it.

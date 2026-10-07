@@ -73,6 +73,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.LoadingZoneCadencePatch.BindConfig();
             Patches.Performance.LocationSpawnPacingPatch.BindConfig();
             Patches.Performance.DungeonRoomSpreadPatch.BindConfig();
+            Patches.Performance.GhostDungeonStandInPatch.BindConfig();
             Patches.Performance.MinimapFogUploadPatch.BindConfig();
             Patches.Performance.TerrainLodSpreadPatch.BindConfig();
             Patches.Performance.WearSupportLookupPatch.BindConfig();
@@ -87,6 +88,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.ZdoDataPoolTrimPatch.BindConfig();
             Patches.Performance.ZdoSerializeAllocPatch.BindConfig();
             Patches.Performance.ZdoMemoryStats.BindConfig();
+            Patches.Performance.WorldGenTimingStats.BindConfig();
             Patches.Performance.CreatureSyncDeadbandPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
