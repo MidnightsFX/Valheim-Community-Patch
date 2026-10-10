@@ -619,6 +619,13 @@ ground being pushed up out of it. While HearthBelow is installed, both fixes sta
 once in the log with *"HearthBelow is loaded, so '...' stands down"*. Grass placement and the ground
 check then run as they do in the game, with HearthBelow's changes applied.
 
+Known overlap: **Valheim Performance Overhaul** replaces each smoke puff's update with its own, as Fix
+Smoke Overhead does. Before 0.34.2 both ran on every puff, so smoke aged twice as fast and rose in
+shorter columns. Fix Smoke Overhead now leaves a puff's update to a mod that has already replaced it,
+and says so once in the log with *"Smoke puff updates are replaced by ..."*. Its smoke rendering
+change stays on. With Valheim Performance Overhaul's smoke option off, this mod's version applies as
+before.
+
 ## Reporting a bug
 
 Issues go to [GitHub](https://github.com/MidnightsFX/Valheim-Community-Patch). Please include your

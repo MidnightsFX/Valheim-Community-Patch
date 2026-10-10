@@ -1,5 +1,10 @@
 # Changelog
 
+**0.34.2**
+```
+- Fixes smoke fading out too soon when Valheim Performance Overhaul is installed.
+```
+
 **0.34.1**
 ```
 - HearthBelow Compatibility fixes

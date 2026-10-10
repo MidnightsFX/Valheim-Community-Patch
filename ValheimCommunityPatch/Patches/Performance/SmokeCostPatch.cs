@@ -18,14 +18,36 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // render loop also clamps to the 100-entry chunk arrays that vanilla indexed unchecked.
     // Re-check both copies against the game source on updates.
     //
+    // The CustomUpdate prefix runs after every other mod's. When one of them has already replaced
+    // the update (ValheimPerformanceOverhaul does while its smoke option is on), this one leaves
+    // the puff alone, since a second update would age it twice and push it twice, and says so
+    // once in the log. The render prefix stays on: no other mod is known to replace it.
+    //
     // Client: smoke is rendering.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Smoke))]
     internal static class SmokeCostPatch {
-        // Vanilla's CustomUpdate with the mass write bucketed.
+        private const string FixName = "Fix Smoke Overhead";
+
+        // Every prefix counts: whichever skipped the update is among them.
+        private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            AccessTools.DeclaredMethod(typeof(Smoke), "CustomUpdate"),
+            HookKinds.Prefixes,
+            owners => $"Smoke puff updates are replaced by {owners}, so '{FixName}' leaves them to that " +
+                      "mod. Its smoke rendering change stays on.");
+
+        // Vanilla's CustomUpdate with the mass write bucketed. Priority.Last: see
+        // ValheimCommunityPatch.ApplyPatches.
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("CustomUpdate")]
-        private static bool CustomUpdatePrefix(Smoke __instance, float deltaTime, float time) {
+        private static bool CustomUpdatePrefix(Smoke __instance, float deltaTime, float time, bool __runOriginal) {
+            if (!__runOriginal) {
+                // Read only for its one-time log line naming the other mod.
+                _ = Takeover.TakenOver;
+                return false;
+            }
+
             __instance.m_time += deltaTime;
             if (__instance.m_time > __instance.m_ttl && __instance.m_fadeTimer < 0.0) {
                 __instance.StartFadeOut();
