@@ -17,10 +17,10 @@ member does nothing and returns a default.
 Either:
 
 - **Copy** [`CommunityPatchAPI.cs`](CommunityPatchAPI.cs) into your project as it is. It compiles
-  with C# 7.3 and references only `assembly_valheim` and `assembly_utils`, which every Valheim mod
-  already does.
-- **Or reference** `ValheimCommunityPatch.API.dll`, built from the same file by this project, and
-  merge it into your plugin (ILRepack or similar). Do not ship it as a separate file in `plugins`:
+  with C# 7.3 and references only `assembly_valheim` and `assembly_utils`
+- **Or reference** `ValheimCommunityPatch.API.dll`, built from the same file and attached to each
+  [API release](https://github.com/MidnightsFX/Valheim-Community-Patch/releases?q=ValheimCommunityPatch.API),
+  and merge it into your plugin (ILRepack or similar). Do not ship it as a separate file in `plugins`:
   when two mods do that with different versions, whichever loads first wins for both.
 
 Then add a soft dependency to your plugin class, so VCP loads before you do:
@@ -222,7 +222,9 @@ each call to the fix that owns the behaviour. To add a member:
 1. Add the behaviour to the fix as `internal static` members.
 2. Add a public static method to `APIReceiver` that calls it, and raise `APIReceiver.ApiVersion`.
 3. Add the delegate field, `Bind` call and public member to `CommunityPatchAPI.cs`, raise
-   `FileApiVersion` and the project's `<Version>`, and add a row to the table above.
+   `FileApiVersion` and the project's `<Version>`, add a row to the table above, and add an entry to
+   [`CHANGELOG.md`](CHANGELOG.md). The API is released on its own, under `ValheimCommunityPatch.API-v`
+   tags, whenever its version is raised.
 
 Never change an existing receiver method's name or signature. An older copy of the file would stop
 binding it and lose that member without any error.

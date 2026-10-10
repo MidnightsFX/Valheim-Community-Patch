@@ -15,6 +15,9 @@
     <AssemblyName>ValheimCommunityPatch.API</AssemblyName>
     <!-- Kept equal to FileApiVersion in CommunityPatchAPI.cs. -->
     <Version>1.0.0</Version>
+    <!-- Without this the SDK appends the commit to the informational version (1.0.0+<sha>),
+         and mod-tools refuses to package a binary whose version is not exactly <Version>. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Deterministic>true</Deterministic>
     <!-- 7.3 so the file also compiles unchanged in older mod projects that copy it. -->
     <LangVersion>7.3</LangVersion>
@@ -41,4 +44,45 @@
     <Error Condition="!Exists('$(VALHEIM_MANAGED)/assembly_valheim.dll')"
            Text="Valheim's Managed folder was not found (VALHEIM_MANAGED='$(VALHEIM_MANAGED)'). Set VALHEIM_INSTALL in Environment.props - see Environment.props.example." />
   </Target>
+  <!-- BEGIN mod-tools (managed block; replaced by `mod-tools setup`) -->
+  <PropertyGroup>
+    <RepoRoot Condition=" '$(RepoRoot)' == '' ">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/'))</RepoRoot>
+    <!-- Override in the gitignored Environment.props when the gem's bindir
+         is not on the PATH that MSBuild sees. -->
+    <ModTools Condition=" '$(ModTools)' == '' ">mod-tools</ModTools>
+  </PropertyGroup>
+
+  <!-- Nothing is vendored into this repo, so a machine that never installed
+       the tools has no mod-tools at all. This probes for it once and warns,
+       rather than failing: not having a release tool should not stop anyone
+       compiling. Everything below is then conditioned on the result, so a
+       machine without it skips those steps instead of failing three times
+       over with "command not found" buried in Exec output. -->
+  <Target Name="ModToolsGuard" BeforeTargets="Build">
+    <Exec Command="$(ModTools) preflight --root &quot;$(RepoRoot).&quot;" ContinueOnError="true" IgnoreExitCode="true" StandardOutputImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="ModToolsExit" />
+    </Exec>
+    <PropertyGroup>
+      <ModToolsAvailable Condition=" '$(ModToolsExit)' == '0' ">true</ModToolsAvailable>
+    </PropertyGroup>
+    <Warning Condition=" '$(ModToolsAvailable)' != 'true' " Text="mod-tools is not installed on this machine, or this repo is not set up. Skipping release checks, packaging and deploy. Install it with `rake install` from a clone of the tools repo; see its SETUP.md." />
+  </Target>
+
+  <!-- After the build, not before it. `check` packages as well as checks
+       now, and packaging reads the assembly the compile just produced, so
+       a BeforeTargets hook would stage the previous one. The cost is that
+       a bad version story is reported after the compile rather than
+       instead of it; the build still fails, one step later. -->
+  <Target Name="ReleaseChecks" AfterTargets="Build" Condition=" '$(ModToolsAvailable)' == 'true' AND '$(Configuration)' == 'Release' ">
+    <Exec Command="$(ModTools) check --root &quot;$(RepoRoot).&quot;" />
+  </Target>
+
+  <!-- No Configuration condition, unlike the one above: every build lands
+       in the test profiles, Debug and Release alike. Declared last so it
+       runs after a GenerateMdb target defined earlier in this file, whose
+       .mdb it copies. Does nothing unless release.yml enables deploy. -->
+  <Target Name="ModToolsDeploy" AfterTargets="Build" Condition=" '$(ModToolsAvailable)' == 'true' ">
+    <Exec Command="$(ModTools) deploy --root &quot;$(RepoRoot).&quot; --configuration $(Configuration)" />
+  </Target>
+  <!-- END mod-tools -->
 </Project>
