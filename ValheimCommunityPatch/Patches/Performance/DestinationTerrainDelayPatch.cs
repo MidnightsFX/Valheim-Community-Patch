@@ -24,6 +24,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Client: it acts on the local player's teleport or death, and a dedicated server installs no
     // zones around players.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch]
     internal static class DestinationTerrainDelayPatch {
         // TerrainLod's ring: queued together once the camera has moved, and held in the ready list
@@ -31,6 +32,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private const int DistantTileReserve = 9;
 
         private static readonly List<Vector2s> Ring = new List<Vector2s>();
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(DestinationTerrainDelayPatch));
 
         [HarmonyPostfix]
         [HarmonyPatch(typeof(Player), nameof(Player.TeleportTo))]
@@ -54,6 +57,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         private static void Prewarm(Vector3 point, string what) {
+            if (ApiSwitch.Off) { return; }
+
             ZoneSystem zoneSystem = ZoneSystem.instance;
             WorldGenerator worldGen = WorldGenerator.instance;
 

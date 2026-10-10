@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Bootstrap;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -34,9 +33,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Both: the handler runs on whichever peer the message names, and a listen host or a dedicated
     // server can own a station.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch]
     internal static class StationRefundPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         private const string FixName = "Refund Rejected Station Items";
 
@@ -62,6 +62,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         // Without the dispatch hook no message ever looks addressed here and nothing is refunded,
         // which is the safe failure; the check exists so that failure is logged rather than silent.
         private static readonly HookHealth Health = new HookHealth(
+            typeof(StationRefundPatch),
             FixName, () => PatchHelper.HasHook(HandleRoutedRpcMethod, typeof(StationRefundPatch)));
 
         // The peer the message being dispatched was addressed to. Zero between dispatches, which is

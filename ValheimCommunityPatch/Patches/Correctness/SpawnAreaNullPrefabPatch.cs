@@ -1,4 +1,3 @@
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
@@ -15,9 +14,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Both: a spawner inside a dedicated server's own active area runs there too.
     // Provenance: the same fix as ComfyMods/LetMePlay (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(SpawnArea))]
     internal static class SpawnAreaNullPrefabPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

@@ -33,6 +33,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: a dedicated server never takes either deferred path.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class AsyncColliderBakePatch {
         private const string FixName = "Fix Zone Collider Stall";
@@ -54,8 +55,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool _lateUpdateContext;
         private static bool _forceContext;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(AsyncColliderBakePatch));
+
         // Asked at the first rebuild this fix would defer, before anything is queued.
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(AsyncColliderBakePatch),
             AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildCollisionMesh"),
             transpilers: true,
             owners => $"Terrain collider building is changed by {owners}, so '{FixName}' stands down and " +
@@ -130,7 +134,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if ((!_deferContext && !_lateUpdateContext) || _forceContext) { return; }
-            if (__instance.m_collider == null || Takeover.TakenOver) { return; }
+            // Turned off, nothing new is deferred; bakes already in flight land as before.
+            if (__instance.m_collider == null || ApiSwitch.Off || Takeover.TakenOver) { return; }
 
             // A location arriving in the player's zone pokes it too; the player needs that collider now.
             if (_lateUpdateContext && InReferenceZone(__instance)) { return; }

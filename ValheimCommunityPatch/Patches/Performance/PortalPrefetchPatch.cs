@@ -30,9 +30,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: the server half answers on the server; the client half needs a local player.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZNet))]
     internal static class PortalPrefetchPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
         internal static ConfigEntry<float> PrefetchRange;
 
         internal static void BindConfig() {

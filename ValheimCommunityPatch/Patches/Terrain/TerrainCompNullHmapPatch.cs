@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
@@ -22,9 +21,10 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // Both: the race is more likely on a loaded server, and the RPC it re-registers is what lets
     // that zone accept edits at all.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(TerrainComp))]
     internal static class TerrainCompNullHmapPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

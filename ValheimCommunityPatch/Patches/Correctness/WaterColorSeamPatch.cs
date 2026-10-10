@@ -25,9 +25,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // Client: material state is rendering state.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(WaterVolume))]
     internal static class WaterColorSeamPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
         internal static ConfigEntry<float> ShoreTint;
 
         private static readonly int MainTex = Shader.PropertyToID("_MainTex");
@@ -38,12 +39,15 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly int AshlandsDeep = Shader.PropertyToID("_AshlandsColorBottom");
         private static readonly Vector4 IdentitySt = new Vector4(1f, 1f, 0f, 0f);
 
-        // The game's shallow colors per material instance, so a second SetupMaterial call (another mod,
-        // a diagnostic) tints from them again instead of compounding.
-        private static readonly ConditionalWeakTable<Material, VanillaShallow> Vanilla =
-            new ConditionalWeakTable<Material, VanillaShallow>();
+        // The game's values per material instance, recorded before the first change: the shallow
+        // colors, so a second SetupMaterial call (another mod, a diagnostic) tints from them again
+        // instead of compounding, and the tiling, so switching the fix off can put both back.
+        private static readonly ConditionalWeakTable<Material, VanillaValues> Vanilla =
+            new ConditionalWeakTable<Material, VanillaValues>();
 
-        private sealed class VanillaShallow {
+        private sealed class VanillaValues {
+            internal Vector4 MainTexSt;
+            internal bool Tinted;
             internal Color Shallow;
             internal Color AshlandsShallow;
         }
@@ -56,7 +60,14 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 true,
                 "Blends shallow and deep water color across zone borders. Vanilla colors each 64m water tile " +
                 "by the depth at one of its corners, so near shores the sea changes color in a hard straight " +
-                "line along the zone grid. Applies to water tiles that load after it is turned on.");
+                "line along the zone grid. Applies to water tiles that load after it is turned on; " +
+                "turning it off gives every loaded tile the game's colors back at once.");
+
+            // Switched or turned off, loaded tiles go back to the game's look, so they match the
+            // tiles that load afterwards.
+            Enabled.SettingChanged += (sender, args) => {
+                if (!Enabled.Value) { RestoreLoadedTiles(); }
+            };
 
             ShoreTint = ValConfig.BindServerConfig(
                 ValConfig.SectionCorrectness,
@@ -84,24 +95,42 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             Material material = surface.material;
             if (material.HasProperty(MainTex)) { return; }
 
+            if (!Vanilla.TryGetValue(material, out VanillaValues vanilla)) {
+                vanilla = new VanillaValues { MainTexSt = material.GetVector(MainTexSt) };
+                Vanilla.Add(material, vanilla);
+            }
+
             material.SetVector(MainTexSt, IdentitySt);
 
             // Fixed-depth water renders one flat color either way and has no heightmap corners.
             if (__instance.m_heightmap == null || __instance.m_forceDepth >= 0f) { return; }
             if (!material.HasProperty(Shallow) || !material.HasProperty(Deep)) { return; }
 
-            if (!Vanilla.TryGetValue(material, out VanillaShallow vanilla)) {
-                vanilla = new VanillaShallow {
-                    Shallow = material.GetColor(Shallow),
-                    AshlandsShallow = material.HasProperty(AshlandsShallow) ? material.GetColor(AshlandsShallow) : default
-                };
-                Vanilla.Add(material, vanilla);
+            if (!vanilla.Tinted) {
+                vanilla.Tinted = true;
+                vanilla.Shallow = material.GetColor(Shallow);
+                vanilla.AshlandsShallow = material.HasProperty(AshlandsShallow) ? material.GetColor(AshlandsShallow) : default;
             }
 
             float tint = ShoreTint != null ? Mathf.Clamp01(ShoreTint.Value) : 0f;
             material.SetColor(Shallow, Color.Lerp(vanilla.Shallow, material.GetColor(Deep), tint));
             if (material.HasProperty(AshlandsShallow) && material.HasProperty(AshlandsDeep)) {
                 material.SetColor(AshlandsShallow, Color.Lerp(vanilla.AshlandsShallow, material.GetColor(AshlandsDeep), tint));
+            }
+        }
+
+        // Inactive tiles too: WaterVolume.Instances lists only enabled ones. The renderer's own
+        // instance is what SetupMaterial changed; sharedMaterial returns it without making another.
+        private static void RestoreLoadedTiles() {
+            foreach (WaterVolume volume in Object.FindObjectsByType<WaterVolume>(FindObjectsInactive.Include, FindObjectsSortMode.None)) {
+                Material material = volume.m_waterSurface != null ? volume.m_waterSurface.sharedMaterial : null;
+                if (material == null || !Vanilla.TryGetValue(material, out VanillaValues vanilla)) { continue; }
+
+                material.SetVector(MainTexSt, vanilla.MainTexSt);
+                if (!vanilla.Tinted) { continue; }
+
+                material.SetColor(Shallow, vanilla.Shallow);
+                if (material.HasProperty(AshlandsShallow)) { material.SetColor(AshlandsShallow, vanilla.AshlandsShallow); }
             }
         }
     }

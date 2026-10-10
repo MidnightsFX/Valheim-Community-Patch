@@ -21,6 +21,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: a dedicated server polls every piece it instantiates.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(RandomMaterialValues))]
     internal static class RandomMaterialPollPatch {
         // Vanilla's schedule: first poll immediately, then every 0.2 s, giving up after 5.
@@ -35,8 +36,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly List<Entry> Queue = new List<Entry>();
         private static readonly Dictionary<string, int> PropertyIds = new Dictionary<string, int>();
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(RandomMaterialPollPatch));
+
         // A queued piece is polled only by the pump, so Start must not queue unless it attached.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(RandomMaterialPollPatch),
             "Piece material polling",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZNetScene), "Update"), typeof(PumpHook)));
 
@@ -44,7 +48,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("Start")]
         private static bool StartPrefix(RandomMaterialValues __instance) {
-            if (!Hooks.Healthy) { return true; }
+            // Turned off, the pump still finishes the pieces already queued.
+            if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             __instance.m_nview = __instance.GetComponentInParent<ZNetView>();
             __instance.m_piece = __instance.GetComponentInParent<Piece>();

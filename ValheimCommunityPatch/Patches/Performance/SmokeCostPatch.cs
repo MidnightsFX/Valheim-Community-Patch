@@ -25,12 +25,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: smoke is rendering.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Smoke))]
     internal static class SmokeCostPatch {
         private const string FixName = "Fix Smoke Overhead";
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(SmokeCostPatch));
+
         // Every prefix counts: whichever skipped the update is among them.
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(SmokeCostPatch),
             AccessTools.DeclaredMethod(typeof(Smoke), "CustomUpdate"),
             HookKinds.Prefixes,
             owners => $"Smoke puff updates are replaced by {owners}, so '{FixName}' leaves them to that " +
@@ -47,6 +51,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 _ = Takeover.TakenOver;
                 return false;
             }
+
+            if (ApiSwitch.Off) { return true; }
 
             __instance.m_time += deltaTime;
             if (__instance.m_time > __instance.m_ttl && __instance.m_fadeTimer < 0.0) {
@@ -87,6 +93,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPrefix]
             [HarmonyPatch("LateUpdate")]
             private static bool LateUpdatePrefix(SmokeRenderer __instance) {
+                if (ApiSwitch.Off) { return true; }
+
                 float now = Time.time;
                 if (now >= _nextTransfer) {
                     _nextTransfer = now + TransferInterval;

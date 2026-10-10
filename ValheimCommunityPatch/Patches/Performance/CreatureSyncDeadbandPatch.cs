@@ -4,7 +4,6 @@ using System.Reflection;
 using System.Reflection.Emit;
 using BepInEx;
 using BepInEx.Bootstrap;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -29,6 +28,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: the writes happen wherever the creature is owned, usually on a client.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch]
     internal static class CreatureSyncDeadbandPatch {
         private const string FixName = "Fix Idle Creature Sync";
@@ -38,7 +38,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // System.Version: the game declares a global Version class of its own.
         private static readonly System.Version NpsDeadbandVersion = new System.Version(1, 9, 1);
 
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

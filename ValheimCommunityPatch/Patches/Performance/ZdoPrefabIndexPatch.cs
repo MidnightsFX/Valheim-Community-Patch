@@ -22,6 +22,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: the callers that matter run on every side.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoPrefabIndexPatch {
         internal static ConfigEntry<bool> Verify;
@@ -48,9 +49,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly Predicate<ZDO> InvalidZdo = zdo => !zdo.IsValid();
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ZdoPrefabIndexPatch));
+
         // Checked against the hook class, not merely "some patch of ours": OrphanZdoIndexPatch
         // also patches HandleDestroyedZDO and Load, and its presence proves nothing about this index.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(ZdoPrefabIndexPatch),
             "Prefab index",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.SetPrefab)), typeof(SetPrefabHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.Deserialize)), typeof(DeserializeHook))
@@ -177,7 +181,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(nameof(ZDOMan.GetAllZDOsWithPrefabIterative))]
         private static bool GetAllZDOsWithPrefabIterativePrefix(
             ZDOMan __instance, string prefab, List<ZDO> zdos, ref int index, ref bool __result) {
-            if (!Hooks.Healthy) { return true; }
+            if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             // An iteration already in flight finishes under vanilla.
             if (index != 0) { return true; }

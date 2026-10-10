@@ -36,6 +36,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: every peer runs this pass.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class ZoneDiffRemovalPatch {
         internal static ConfigEntry<bool> Verify;
@@ -90,7 +91,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _filledDistantVersion;
         private static bool _loggedEditedLists;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ZoneDiffRemovalPatch));
+
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(ZoneDiffRemovalPatch),
             "Unload discovery",
             () => ListVersion != null
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "FindSectorObjects"), typeof(ListFillHook)));
@@ -98,9 +102,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         /// <summary>
         /// Whether this prefix handles every unload pass this session. RemoveSweepPacingPatch and
         /// RemoveObjectsNrePatch stand down on it, so exactly one of the three acts on each pass
-        /// whatever order Harmony runs them in.
+        /// whatever order Harmony runs them in; turned off, those two take the passes back.
         /// </summary>
-        internal static bool Engaged => SectorInstanceIndexPatch.MaintenanceHealthy && Hooks.Healthy;
+        internal static bool Engaged => !ApiSwitch.Off && SectorInstanceIndexPatch.MaintenanceHealthy && Hooks.Healthy;
 
         // Probed on a real list rather than trusted: a counter that never moves would pass every
         // edited list off as vanilla's.

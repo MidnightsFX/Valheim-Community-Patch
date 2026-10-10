@@ -29,6 +29,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: a dedicated server streams objects for connected players through this path.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SpawnQueueCachePatch {
         internal static ConfigEntry<int> BurstDivisor;
@@ -57,6 +58,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _cursor;
         private static Vector2s _rebuildZone = NoZone;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(SpawnQueueCachePatch));
+
         // Ids captured at rebuild, parallel to the cached list, so a recycled ZDO can be told
         // apart from a live one.
         private static readonly List<ZDOID> CachedIds = new List<ZDOID>();
@@ -71,6 +74,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (!__runOriginal) {
                 Invalidate();
                 return false;
+            }
+
+            // Vanilla rebuilds its own list from scratch every pass.
+            if (ApiSwitch.Off) {
+                Invalidate();
+                return true;
             }
 
             if (!ZoneSystem.instance.IsActiveAreaLoaded()) { return false; }

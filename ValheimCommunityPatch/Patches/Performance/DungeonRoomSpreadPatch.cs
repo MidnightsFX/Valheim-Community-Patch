@@ -40,6 +40,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: a server generates its own dungeons through Generate, which this does not touch.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(DungeonGenerator), "OnRoomLoaded")]
     internal static class DungeonRoomSpreadPatch {
         private const string FixName = "Fix Dungeon Spawn Hitch";
@@ -84,13 +85,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly MethodInfo ReleaseMethod =
             AccessTools.DeclaredMethod(typeof(DungeonGenerator), "ReleaseHeldReferences");
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(DungeonRoomSpreadPatch));
+
         private static readonly TakeoverCheck LoadedTakeover = new TakeoverCheck(
+            typeof(DungeonRoomSpreadPatch),
             AccessTools.DeclaredMethod(typeof(DungeonGenerator), "OnRoomLoaded"),
             HookKinds.Any,
             owners => $"Dungeon room placement is changed by {owners}, so '{FixName}' stands down and that " +
                       "mod's pace applies.");
 
         private static readonly TakeoverCheck SpawnTakeover = new TakeoverCheck(
+            typeof(DungeonRoomSpreadPatch),
             SpawnMethod,
             HookKinds.Any,
             owners => $"Dungeon room placement is changed by {owners}, so '{FixName}' stands down and that " +
@@ -159,6 +164,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return budget > 0
                 && ZoneSystem.instance != null
                 && !RunMode.InLoadingScreen()
+                && !ApiSwitch.Off
                 && !LoadedTakeover.TakenOver
                 && !SpawnTakeover.TakenOver;
         }
@@ -247,9 +253,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             private static void Postfix() {
                 if (Jobs.Count == 0) { return; }
 
-                // Behind a loading screen the player is waiting for exactly this, and a budget turned
-                // off mid-dungeon means vanilla's all at once; neither is paced.
-                bool budgeted = !RunMode.InLoadingScreen() && BudgetMs != null && BudgetMs.Value > 0;
+                // Behind a loading screen the player is waiting for exactly this, and a budget or the
+                // fix turned off mid-dungeon means vanilla's all at once; none of them is paced.
+                bool budgeted = !RunMode.InLoadingScreen() && BudgetMs != null && BudgetMs.Value > 0 && !ApiSwitch.Off;
 
                 int i = 0;
                 while (i < Jobs.Count) {

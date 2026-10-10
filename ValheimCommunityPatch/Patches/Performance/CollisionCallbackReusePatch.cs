@@ -18,6 +18,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: the physics engine dispatches callbacks wherever it runs.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     internal static class CollisionCallbackReusePatch {
         internal static void Apply() {
             if (Physics.reuseCollisionCallbacks) {
@@ -28,6 +29,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             Physics.reuseCollisionCallbacks = true;
+
+            // Turned off through the mod API, for a mod that keeps a Collision past its callback.
+            FixRegistry.SwitchOf(typeof(CollisionCallbackReusePatch)).TurnedOff +=
+                () => Physics.reuseCollisionCallbacks = false;
         }
     }
 }

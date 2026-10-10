@@ -27,9 +27,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Server: the tables and their pools are largest where the whole world is loaded. Off by default.
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch]
     internal static class ZdoDataPoolTrimPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
         internal static ConfigEntry<int> MaxDepth;
 
         internal static void BindConfig() {

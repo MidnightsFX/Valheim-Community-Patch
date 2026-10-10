@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
@@ -17,9 +16,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // Client: GetAmount dereferences Player.m_localPlayer. Provenance: Zen.ModLib (catalogue).
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Recipe))]
     internal static class RecipeGetAmountNrePatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -35,7 +35,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly FieldInfo QualityField = AccessTools.Field(typeof(ItemDrop.ItemData), nameof(ItemDrop.ItemData.m_quality));
         private static readonly MethodInfo SafeQualityMethod = AccessTools.Method(typeof(RecipeGetAmountNrePatch), nameof(SafeQuality));
 
-        private static int SafeQuality(ItemDrop.ItemData item) => item?.m_quality ?? 1;
+        // Turned off, a null item throws as it does in vanilla.
+        private static int SafeQuality(ItemDrop.ItemData item) => item == null && Enabled.Value ? 1 : item.m_quality;
 
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]

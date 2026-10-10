@@ -21,6 +21,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: a dedicated server runs StaticPhysics for its own active area.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(StaticPhysics))]
     internal static class StaticPhysicsCachePatch {
         private const string FixName = "Fix Static Object Ground Checks";
@@ -28,6 +29,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static ConfigEntry<bool> UseHeightmapData;
 
         private static bool _loggedStandDown;
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(StaticPhysicsCachePatch));
 
         internal static void BindConfig() {
             UseHeightmapData = ValConfig.BindServerConfig(
@@ -58,6 +61,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(StaticPhysics.SUpdate))]
         private static bool SUpdatePrefix(StaticPhysics __instance, float time, Vector2s referenceZone) {
+            if (ApiSwitch.Off) { return true; }
+
             // Vanilla's gate order: falling, ShouldUpdate, active area.
             if (__instance.m_falling || time <= __instance.m_updateTime) { return false; }
 

@@ -35,6 +35,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Both: the simulation half is behind m_nview.IsOwner(), so the returning client, a listen
     // host and a dedicated server can each be the peer that runs it, and they must not disagree.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Smelter))]
     internal static class SmelterCatchupPatch {
         private const string Site = "Smelter.UpdateSmelter";
@@ -53,10 +54,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool _haveOre;
         private static string _ore;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(SmelterCatchupPatch));
+
         [HarmonyPrefix]
         [HarmonyPatch("UpdateSmelter")]
         private static void UpdateSmelterPrefix() {
-            _armed = true;
+            // Left unarmed when turned off, so the rewritten reads go straight to vanilla's accessors.
+            _armed = !ApiSwitch.Off;
             _zdo = null;
             _haveFuel = false;
             _haveOre = false;

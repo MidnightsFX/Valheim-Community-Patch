@@ -31,9 +31,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: emission color, light intensity and audio volume are rendering state.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(TeleportWorld))]
     internal static class PortalIdleUpdatePatch {
         private static readonly int EmissionColor = Shader.PropertyToID("_EmissionColor");
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(PortalIdleUpdatePatch));
 
         [HarmonyPostfix]
         [HarmonyPatch("Awake")]
@@ -52,7 +55,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("Update")]
         private static bool UpdatePrefix(TeleportWorld __instance) {
-            return __instance.m_colorAlpha != (__instance.m_hadTarget ? 1f : 0f);
+            return ApiSwitch.Off || __instance.m_colorAlpha != (__instance.m_hadTarget ? 1f : 0f);
         }
 
         [HarmonyPatch(typeof(EffectFade))]
@@ -64,7 +67,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPrefix]
             [HarmonyPatch("Update")]
             private static bool UpdatePrefix(EffectFade __instance) {
-                return __instance.m_intensity != (__instance.m_active ? 1f : 0f);
+                return ApiSwitch.Off || __instance.m_intensity != (__instance.m_active ? 1f : 0f);
             }
 
             // Vanilla's Update body minus the MoveTowards, so the light and audio carry the values

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The small, published API binary: CommunityPatchAPI.cs compiled on its own. Mods that would
+  rather reference a binary than copy the file use this, merged into their own plugin.
+
+  It references only the vanilla game assemblies (not the publicized copies), so it can only
+  use what the game makes public, and it never references ValheimCommunityPatch itself: the
+  file finds the mod at runtime. Nothing here may ship inside the mod's own package.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <RootNamespace>ValheimCommunityPatch.API</RootNamespace>
+    <AssemblyName>ValheimCommunityPatch.API</AssemblyName>
+    <!-- Kept equal to FileApiVersion in CommunityPatchAPI.cs. -->
+    <Version>1.0.0</Version>
+    <Deterministic>true</Deterministic>
+    <!-- 7.3 so the file also compiles unchanged in older mod projects that copy it. -->
+    <LangVersion>7.3</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="assembly_valheim">
+      <HintPath>$(VALHEIM_MANAGED)/assembly_valheim.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="assembly_utils">
+      <HintPath>$(VALHEIM_MANAGED)/assembly_utils.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(VALHEIM_MANAGED)/UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CheckValheimManaged" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(VALHEIM_MANAGED)/assembly_valheim.dll')"
+           Text="Valheim's Managed folder was not found (VALHEIM_MANAGED='$(VALHEIM_MANAGED)'). Set VALHEIM_INSTALL in Environment.props - see Environment.props.example." />
+  </Target>
+</Project>

@@ -19,9 +19,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // ZRoutedRpc.HandleRoutedRPC return quietly and the message is forwarded as normal.
     // Provenance: Zen.ModLib (catalogue), reimplemented with one globally registered RPC.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch]
     internal static class BossKeySharePatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
         internal static ConfigEntry<float> MaxDistance;
 
         private const string RpcName = "VCP_ShareDefeatKey";

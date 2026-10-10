@@ -16,11 +16,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Both, hottest on the server. Provenance: ComfyMods/Compress (GPL-3.0, redseiko), taken
     // without that mod's GZip protocol change.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZPackage))]
     internal static class ZPackageWriteAllocPatch {
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ZPackageWriteAllocPatch));
+
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ZPackage.Write), new[] { typeof(ZPackage) })]
         private static bool WritePrefix(ZPackage __instance, ZPackage pkg) {
+            if (ApiSwitch.Off) { return true; }
+
             // GetArray() flushed both before copying; the length must be read after the flush.
             pkg.m_writer.Flush();
             pkg.m_stream.Flush();

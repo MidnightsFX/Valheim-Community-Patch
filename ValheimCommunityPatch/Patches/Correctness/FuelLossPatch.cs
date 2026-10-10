@@ -1,4 +1,3 @@
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
@@ -16,9 +15,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Client: these are interaction entry points reached from Player.Interact, so the fix protects
     // whoever does the feeding. Provenance: same root cause as Zen.ModLib's FixFuelLeak.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch]
     internal static class FuelLossPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

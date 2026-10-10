@@ -1,4 +1,3 @@
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
@@ -22,9 +21,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Server: only the host saves the world, gated at runtime because a client process can start
     // hosting later.
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZDO))]
     internal static class ReceivedZdoDirtyPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

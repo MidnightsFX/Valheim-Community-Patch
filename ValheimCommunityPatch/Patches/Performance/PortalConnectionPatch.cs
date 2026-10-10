@@ -25,6 +25,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Provenance: ComfyMods/BetterServerPortals (GPL-3.0, redseiko), without its random-portal
     // gameplay feature.
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Game))]
     internal static class PortalConnectionPatch {
         private static readonly Dictionary<string, List<ZDO>> UnconnectedByTag = new Dictionary<string, List<ZDO>>();
@@ -34,12 +35,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static Game _checkedFor;
         private static bool _standDown;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(PortalConnectionPatch));
+
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(Game.ConnectPortals))]
         private static bool ConnectPortalsPrefix(Game __instance, bool __runOriginal) {
             if (!__runOriginal) { return false; }
-            if (StandDown(__instance)) { return true; }
+            if (ApiSwitch.Off || StandDown(__instance)) { return true; }
 
             ZDOMan zdoMan = ZDOMan.instance;
             if (zdoMan == null) { return true; }
@@ -72,6 +75,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             _standDown = owners.Count > 0;
             if (_standDown) {
+                FixRegistry.MarkStoodDown(typeof(PortalConnectionPatch));
                 Logger.LogInfo(
                     $"Portal pairing is changed by {string.Join(", ", owners)}, so 'Fix Portal Connection " +
                     "Scan' stands down and the game's own pairing runs with that mod's rules.");

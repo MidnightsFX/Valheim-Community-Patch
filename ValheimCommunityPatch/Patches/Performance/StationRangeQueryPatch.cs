@@ -44,11 +44,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Client: every caller is Hud or Player.UpdatePlacementGhost, all of which need a local
     // player.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(CraftingStation))]
     internal static class StationRangeQueryPatch {
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(StationRangeQueryPatch));
+
         [HarmonyPrefix]
         [HarmonyPatch(nameof(CraftingStation.HaveBuildStationInRange))]
         private static bool HaveBuildStationInRangePrefix(string name, Vector3 point, ref CraftingStation __result) {
+            if (ApiSwitch.Off) { return true; }
+
             List<CraftingStation> stations = CraftingStation.m_allStations;
             for (int i = 0; i < stations.Count; i++) {
                 CraftingStation station = stations[i];
@@ -75,6 +80,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(nameof(CraftingStation.FindClosestStationInRange))]
         private static bool FindClosestStationInRangePrefix(
             string name, Vector3 point, float range, ref CraftingStation __result) {
+            if (ApiSwitch.Off) { return true; }
+
             CraftingStation closest = null;
             double rangeSquared = (double)range * range;
             double bestSquared = 99999.0 * 99999.0;
@@ -106,6 +113,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPatch(nameof(StationExtension.OtherExtensionInRange))]
             private static bool OtherExtensionInRangePrefix(
                 StationExtension __instance, float radius, ref bool __result) {
+                if (ApiSwitch.Off) { return true; }
+
                 // Vanilla re-reads this inside the loop, once per element.
                 Vector3 origin = __instance.transform.position;
                 double radiusSquared = (double)radius * radius;

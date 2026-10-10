@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Reflection;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -19,9 +18,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // ComfyMods/BetterZeeLog (GPL-3.0, redseiko); where both are installed its rewrite lands first
     // and this one finds nothing to do, which is the intended outcome.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Projectile))]
     internal static class ProjectileZeroVelocityPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -39,7 +39,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             AccessTools.Method(typeof(ProjectileZeroVelocityPatch), nameof(SafeLookRotation));
 
         private static Quaternion SafeLookRotation(Vector3 forward) =>
-            forward == Vector3.zero ? Quaternion.identity : Quaternion.LookRotation(forward);
+            forward == Vector3.zero && Enabled.Value ? Quaternion.identity : Quaternion.LookRotation(forward);
 
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]

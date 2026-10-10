@@ -41,8 +41,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // own clone is used. 'Verify Location Model Templates' builds both, uses the game's, and logs any
     // difference, plus, once a template is ready, any reference left pointing at a destroyed object.
     //
-    // Client: models are built where a player sees them.
+    // Client: models are built where a player sees them. A dedicated server, which reaches the
+    // room models through Fix Background Dungeon Generation, always uses the game's clone.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZoneSystem), "SpawnLocation")]
     internal static class ModelTemplatePatch {
         private const string FixName = "Fix Location Model Placeholders";
@@ -73,12 +75,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private const float QuietFrameSeconds = 1f / 30f;
 
         private static readonly TakeoverCheck LocationTakeover = new TakeoverCheck(
+            typeof(ModelTemplatePatch),
             AccessTools.DeclaredMethod(typeof(ZoneSystem), "SpawnLocation"),
             HookKinds.BoolPrefixes | HookKinds.Postfixes | HookKinds.Transpilers,
             owners => $"Location spawning is hooked by {owners}, which may read the model, so '{FixName}' " +
                       "stands down for locations and the game clones them whole.");
 
         private static readonly TakeoverCheck RoomTakeover = new TakeoverCheck(
+            typeof(ModelTemplatePatch),
             AccessTools.Method(typeof(DungeonGenerator), "PlaceRoom",
                 new[] { typeof(DungeonDB.RoomData), typeof(Vector3), typeof(Quaternion), typeof(RoomConnection), typeof(ZoneSystem.SpawnMode) }),
             HookKinds.Any,
@@ -111,7 +115,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static GameObject Model(SoftReference<GameObject> prefab, Vector3 position, Quaternion rotation, Transform parent, TakeoverCheck takeover) {
             // The callers loaded the prefab just before.
             GameObject asset = prefab.IsLoaded ? prefab.Asset : null;
-            if (asset == null || takeover.TakenOver) { return Vanilla(prefab, position, rotation, parent); }
+            if (asset == null || ApiSwitch.Off || !DriverAttached || takeover.TakenOver) { return Vanilla(prefab, position, rotation, parent); }
 
             // Use keeps a template only for the very prefab object it was made from, so a template
             // whose prefab unloaded and loaded again is never cloned.
@@ -157,6 +161,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static Template _building;
         private static GameObject _holder;
         private static float _nextSweep;
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ModelTemplatePatch));
+
+        // Templates are built and dropped only by DriverHook, so where it is not attached (a
+        // dedicated server skips client fixes) none is recorded, since none would ever be dropped.
+        private static bool? _driverAttached;
+
+        private static bool DriverAttached =>
+            _driverAttached ??= PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(MonoUpdaters), "LateUpdate"), typeof(DriverHook));
 
         private static Template Use(GameObject asset, SoftReference<GameObject> prefab) {
             int id = asset.GetInstanceID();
@@ -209,6 +222,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPostfix]
             private static void Postfix() {
                 if (Templates.Count == 0) { return; }
+
+                // Turned off: every template goes now, during play, as Sweep would drop it.
+                if (ApiSwitch.Off) {
+                    foreach (Template template in new List<Template>(Templates.Values)) { Drop(template); }
+                    return;
+                }
 
                 if (_building != null) {
                     Strip(_building);

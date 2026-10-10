@@ -33,6 +33,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: this is the equipment rendering pipeline.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(VisEquipment))]
     internal static class VisEquipmentRefreshPatch {
         // ---- 1. Skin and hair color ------------------------------------------------------------
@@ -68,10 +69,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // Reused for every property block read; GetPropertyBlock fills it in place.
         private static readonly MaterialPropertyBlock Scratch = new MaterialPropertyBlock();
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(VisEquipmentRefreshPatch));
+
         [HarmonyPrefix]
         [HarmonyPatch("UpdateColors")]
         private static bool UpdateColorsPrefix(VisEquipment __instance, out ColorState __state) {
             __state = default;
+            if (ApiSwitch.Off) { return true; }
 
             // Vanilla dereferences both unguarded; let it throw rather than decide on that state.
             if (__instance.m_nview == null || __instance.m_bodyModel == null) { return true; }
@@ -166,6 +170,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static void EquipmentVisualsPrefix(VisEquipment __instance) {
             _scopeZdo = null;
             _scopeTable = null;
+
+            // Unscoped, the rewritten reads go straight to the ZDO as vanilla's do.
+            if (ApiSwitch.Off) { return; }
 
             if (__instance.m_nview == null) { return; }
 

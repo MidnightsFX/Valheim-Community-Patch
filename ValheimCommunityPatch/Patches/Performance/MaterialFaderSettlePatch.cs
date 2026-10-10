@@ -31,12 +31,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: material property blocks are rendering state.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(MaterialFader))]
     internal static class MaterialFaderSettlePatch {
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(MaterialFaderSettlePatch));
+
         [HarmonyPrefix]
         [HarmonyPatch("Update")]
         private static bool UpdatePrefix(MaterialFader __instance) {
-            if (!__instance.m_started) { return true; }
+            if (ApiSwitch.Off || !__instance.m_started) { return true; }
 
             List<MaterialFader.FadeProperty> properties = __instance.m_fadeProperties;
 

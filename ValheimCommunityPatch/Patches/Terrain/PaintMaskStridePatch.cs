@@ -1,4 +1,3 @@
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -18,9 +17,10 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     //
     // Client: UpdateTerrainAlpha returns immediately without a local player.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch]
     internal static class PaintMaskStridePatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

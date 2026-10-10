@@ -30,8 +30,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Both: UpdateVisual runs wherever the station is loaded, UpdateCooking's owner branch runs
     // on whichever peer owns the ZDO, and a listen host runs both.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(CookingStation))]
     internal static class CookingSlotKeyPatch {
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(CookingSlotKeyPatch));
+
         // ("slot" + i) and ("slotstatus" + i) stable hashes. Grown by publishing a whole new
         // array, never resized in place, so a reader mid-call keeps a consistent table.
         private static int[] SlotKeys = new int[0];
@@ -52,9 +55,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Both prefixes need a table entry for this slot; a negative index has no representable
-        // key, so vanilla handles it.
+        // key, so vanilla handles it, as it does everything once the fix is turned off.
         private static bool TryPrepare(CookingStation station, int slot) {
-            if (slot < 0) { return false; }
+            if (slot < 0 || ApiSwitch.Off) { return false; }
 
             Transform[] slots = station.m_slots;
             EnsureKeys(Mathf.Max(slot + 1, slots == null ? 0 : slots.Length));

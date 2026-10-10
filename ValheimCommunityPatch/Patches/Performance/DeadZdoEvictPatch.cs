@@ -23,9 +23,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Server: vanilla records dead ids only on the host. Off by default.
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class DeadZdoEvictPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
         internal static ConfigEntry<float> RetainSeconds;
 
         internal static void BindConfig() {

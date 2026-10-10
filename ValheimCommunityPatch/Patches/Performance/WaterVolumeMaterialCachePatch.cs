@@ -16,13 +16,18 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: material state is rendering state.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(WaterVolume))]
     internal static class WaterVolumeMaterialCachePatch {
         private static readonly Dictionary<WaterVolume, Material> Cache = new Dictionary<WaterVolume, Material>();
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(WaterVolumeMaterialCachePatch));
+
         [HarmonyPrefix]
         [HarmonyPatch(nameof(WaterVolume.UpdateMaterials))]
         private static bool UpdateMaterialsPrefix(WaterVolume __instance) {
+            if (ApiSwitch.Off) { return true; }
+
             if (!Cache.TryGetValue(__instance, out Material material) || material == null) {
                 MeshRenderer renderer = __instance.m_waterSurface;
                 if (renderer == null) { return true; }

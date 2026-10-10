@@ -22,6 +22,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Server: the sweep is only reached behind vanilla's IsServer gate.
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class OrphanZdoIndexPatch {
         internal static ConfigEntry<bool> Verify;
@@ -50,9 +51,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private const long NoOwner = 0L;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(OrphanZdoIndexPatch));
+
         // A missing hook means the index stops tracking a whole class of change, and acting on
         // it would destroy live objects or leak dead ones.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(OrphanZdoIndexPatch),
             "Orphan index",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.SetOwnerInternal)), typeof(SetOwnerInternalHook))
                && PatchHelper.HasHook(AccessTools.DeclaredPropertySetter(typeof(ZDO), nameof(ZDO.Persistent)), typeof(PersistentSetterHook))
@@ -170,7 +174,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ZDOMan.RemoveOrphanNonPersistentZDOS))]
         private static bool RemoveOrphanNonPersistentZDOSPrefix(ZDOMan __instance) {
-            if (!Hooks.Healthy) { return true; }
+            if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             bool verify = Verify != null && Verify.Value;
 

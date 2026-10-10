@@ -29,6 +29,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // would. Both: a dedicated server runs the same pass over the set around its pinned reference
     // position, far outside the zone grid.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SceneIdleSkipPatch {
         internal static ConfigEntry<bool> Verify;
@@ -50,6 +51,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static long _ringHash;
         private static long _createdVersion;
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(SceneIdleSkipPatch));
 
         // The streamed ring the hash filter tests against; valid from the first pass on, and
         // aligned to the pass before it runs so a mid-pass change always registers.
@@ -77,6 +80,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // A missing hook means a whole class of scene change goes uncounted and the skip would
         // hide real work, so the answer gates the fix entirely.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(SceneIdleSkipPatch),
             "Scene idle skip",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "AddToSector"), typeof(AddToSectorHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "RemoveFromSector"), typeof(RemoveFromSectorHook))
@@ -150,7 +154,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("CreateDestroyObjects")]
         private static bool CreateDestroyObjectsPrefix(ZNetScene __instance) {
             _ranFullPass = false;
-            if (!Hooks.Healthy) { return true; }
+            if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             ZoneSystem zoneSystem = ZoneSystem.instance;
             ZNet znet = ZNet.instance;

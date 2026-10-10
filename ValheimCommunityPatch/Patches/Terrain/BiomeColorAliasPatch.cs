@@ -38,13 +38,14 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     //
     // Client: vertex colors are rendering state.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class BiomeColorAliasPatch {
         private const string FixName = "Fix Swamp Plains Shore Seams";
 
         internal enum BridgeGround { BlackForest, Ashlands }
 
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
         internal static ConfigEntry<float> Sharpness;
         internal static ConfigEntry<BridgeGround> Bridge;
 
@@ -94,6 +95,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         }
 
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(BiomeColorAliasPatch),
             AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildRenderMesh"),
             transpilers: false,
             owners => $"Terrain mesh building is changed by {owners}, so '{FixName}' stands down and that " +

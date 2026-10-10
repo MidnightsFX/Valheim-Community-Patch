@@ -28,6 +28,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: a dedicated server has no local player, so its walk would always look like a loading screen.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZoneSystem))]
     internal static class LoadingZoneCadencePatch {
         internal const string FastLoadingGuid = "touzki.valheim.fastloading";
@@ -56,6 +57,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static ZoneSystem _checkedFor;
         private static bool _standDown;
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(LoadingZoneCadencePatch));
 
         // Debug summary of one loading screen.
         private static bool _inEpisode;
@@ -105,7 +108,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             center = default;
             distance = default;
 
-            if (BudgetMs == null || BudgetMs.Value <= 0) { return false; }
+            if (BudgetMs == null || BudgetMs.Value <= 0 || ApiSwitch.Off) { return false; }
             if (StandDown(zoneSystem)) { return false; }
 
             ZNet net = ZNet.instance;
@@ -190,6 +193,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             _standDown = owners.Count > 0;
             if (_standDown) {
+                FixRegistry.MarkStoodDown(typeof(LoadingZoneCadencePatch));
                 Logger.LogInfo(
                     $"Zone loading is changed by {string.Join(", ", owners)}, so 'Fix Loading Zone Cadence' " +
                     "stands down and that mod's pace applies.");

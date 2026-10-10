@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -25,9 +24,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // Client: the decision is the respawning player's, and a host holds every object itself.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Game))]
     internal static class LostBedSpawnPointPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -152,7 +152,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         private static void BedMissingLog(object message) {
-            if (_deferSince >= 0f) { return; }
+            if (_deferSince >= 0f && Enabled.Value) { return; }
 
             ZLog.Log(message);
         }

@@ -23,6 +23,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: lights and flicker are rendering.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(LightFlicker))]
     internal static class LightCostPatch {
         internal static ConfigEntry<float> FlickerDistance;
@@ -60,10 +61,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _referenceFrame = -1;
         private static Vector3 _reference;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(LightCostPatch));
+
         [HarmonyPrefix]
         [HarmonyPatch(nameof(LightFlicker.CustomUpdate))]
         private static bool CustomUpdatePrefix(LightFlicker __instance) {
-            if (__instance.m_ttl > 0f) { return true; }
+            if (ApiSwitch.Off || __instance.m_ttl > 0f) { return true; }
 
             Player player = Player.m_localPlayer;
             if (ReferenceEquals(player, null)) { return true; }

@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -21,7 +20,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ObjectDB))]
     internal static class ObjectDbNonItemPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

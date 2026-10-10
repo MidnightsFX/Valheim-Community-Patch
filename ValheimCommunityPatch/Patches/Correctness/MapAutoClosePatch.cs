@@ -23,9 +23,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // Client: the map only exists on a client, and UpdateNoMap runs there on every key change.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Game))]
     internal static class MapAutoClosePatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
         internal static ConfigEntry<float> BossRange;
 
         internal static void BindConfig() {

@@ -25,9 +25,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: a server generating land ahead of the players places these rocks on terrain it builds too.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(TerrainModifier), "PokeHeightmaps")]
     internal static class PaintOnlyRebuildPatch {
         private const string FixName = "Fix Paint-Only Terrain Rebuilds";
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(PaintOnlyRebuildPatch));
 
         private static readonly MethodInfo PokeMethod =
             AccessTools.Method(typeof(Heightmap), nameof(Heightmap.Poke), new[] { typeof(int), typeof(bool) });
@@ -37,6 +40,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // The height guard is what keeps a paint-only rebuild honest when a tile's terrain edits
         // unload first, so without it every modifier keeps vanilla's full rebuild.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(PaintOnlyRebuildPatch),
             FixName,
             () => PatchHelper.HasHook(
                 AccessTools.DeclaredMethod(typeof(Heightmap), nameof(Heightmap.Regenerate)), typeof(HeightGuardHook)));
@@ -78,8 +82,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Vanilla's Poke, asking for the paint-only rebuild when the modifier cannot change heights.
+        // Turned off, the height guard stays on for tiles already asked for one.
         private static void PokeFor(Heightmap hmap, int delayed, bool paintOnly, TerrainModifier modifier) {
-            hmap.Poke(delayed, paintOnly || (!modifier.m_level && !modifier.m_smooth && Hooks.Healthy));
+            hmap.Poke(delayed, paintOnly || (!modifier.m_level && !modifier.m_smooth && !ApiSwitch.Off && Hooks.Healthy));
         }
 
         // Every paint-only rebuild, vanilla's paint ops included: the meshes are kept only when the

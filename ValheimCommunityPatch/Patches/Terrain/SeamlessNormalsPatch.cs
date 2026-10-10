@@ -32,11 +32,12 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // Client: normals are shading only. The target method runs on a dedicated server too, for the
     // collider, so a runtime IsDedicated guard backs the patch-time gate.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class SeamlessNormalsPatch {
         private const string FixName = "Fix Terrain Seams";
 
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
         internal static ConfigEntry<bool> VerifyTangents;
 
         internal static void BindConfig() {
@@ -77,6 +78,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
         // Transpilers do not count: the mesh is still built inside the method, and this pass runs after it.
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(SeamlessNormalsPatch),
             AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildRenderMesh"),
             transpilers: false,
             owners => $"Terrain mesh building is changed by {owners}, so '{FixName}' stands down and that " +

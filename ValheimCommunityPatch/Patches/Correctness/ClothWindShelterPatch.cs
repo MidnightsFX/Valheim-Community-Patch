@@ -1,5 +1,4 @@
 using System;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -23,9 +22,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Both: the error fires wherever the item is created, and a dedicated server creates the objects
     // around its own reference point too.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(PlayerClothWindShelter))]
     internal static class ClothWindShelterPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

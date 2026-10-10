@@ -33,6 +33,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: the minimap exists only where there is a local player.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Minimap), "Explore", typeof(Vector3), typeof(float))]
     internal static class MinimapFogUploadPatch {
         private const string FixName = "Fix Minimap Fog Upload";
@@ -61,6 +62,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static Texture2D _stage;
         private static bool _failed;
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(MinimapFogUploadPatch));
 
         // Whether a fog texture can be served, decided once per texture: a new world makes a new one.
         private static Texture2D _checkedFog;
@@ -100,7 +103,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         private static void UploadExplored(Texture2D fog, Minimap map, Vector3 p, float radius) {
-            if (_failed || !Usable(fog, map)) {
+            if (_failed || ApiSwitch.Off || !Usable(fog, map)) {
                 fog.Apply();
                 return;
             }

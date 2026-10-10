@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -31,9 +30,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Both: death is decided on the creature's owner, usually the nearest client, and a server owns
     // some creatures itself.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Character))]
     internal static class UnkillableCreaturePatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         private const string FixName = "Fix Unkillable Creatures";
 
@@ -59,6 +59,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private const float DeathAnimationGraceSeconds = 20f;
 
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(UnkillableCreaturePatch),
             FixName,
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Character), nameof(Character.OnDeath)), typeof(UnkillableCreaturePatch)));
 

@@ -18,9 +18,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: ClutterSystem needs a camera.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ClutterSystem))]
     internal static class ClutterRebuildCapPatch {
         internal static ConfigEntry<int> Budget;
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ClutterRebuildCapPatch));
 
         internal static void BindConfig() {
             Budget = ValConfig.BindServerConfig(
@@ -37,7 +40,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("GeneratePatches")]
         private static bool GeneratePatchesPrefix(ClutterSystem __instance, bool rebuildAll, Vector3 center) {
-            if (!rebuildAll) { return true; }
+            // Turned off with a rebuild under way, vanilla's next full rebuild finishes it at once.
+            if (!rebuildAll || ApiSwitch.Off) { return true; }
 
             int budget = Budget != null ? Budget.Value : 8;
             bool lastPassGenerated = false;

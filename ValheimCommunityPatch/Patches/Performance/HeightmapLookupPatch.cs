@@ -23,6 +23,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: FindHeightmap runs on a dedicated server through ground queries and StaticPhysics.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class HeightmapLookupPatch {
         internal static ConfigEntry<bool> Verify;
@@ -50,9 +51,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly List<Entry> Registered = new List<Entry>();
         private static readonly Dictionary<Vector2s, Entry> ByZone = new Dictionary<Vector2s, Entry>();
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(HeightmapLookupPatch));
+
         // A missing hook means the registry diverges from s_heightmaps and a wrong FindHeightmap
         // answer feeds terrain queries game-wide, so the answer gates the fix entirely.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(HeightmapLookupPatch),
             "Heightmap registry",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "Awake"), typeof(AwakeHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "OnDestroy"), typeof(DestroyHook))
@@ -84,7 +88,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             hmap = null;
             origin = default;
 
-            if (!Hooks.Healthy) { return false; }
+            if (ApiSwitch.Off || !Hooks.Healthy) { return false; }
 
             if (ByZone.TryGetValue(ZoneSystem.GetZone(point), out Entry entry) && Contains(entry, point)) {
                 hmap = entry.m_hmap;
@@ -197,7 +201,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Heightmap.FindHeightmap), typeof(Vector3))]
         private static bool FindHeightmapPrefix(Vector3 point, ref Heightmap __result) {
-            if (!Hooks.Healthy) { return true; }
+            if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             Heightmap fast = FastFind(point);
 
@@ -241,7 +245,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Heightmap.HaveQueuedRebuild), typeof(Vector3), typeof(float))]
         private static bool HaveQueuedRebuildPrefix(Vector3 point, float radius, ref bool __result) {
-            if (!Hooks.Healthy) { return true; }
+            if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             __result = false;
             for (int i = 0; i < Registered.Count; i++) {

@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 using System.Reflection.Emit;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -38,11 +37,12 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // Both: servers place vegetation and roll spawn levels through the same lookup.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(WorldGenerator))]
     internal static class BiomeSectorLookupPatch {
         private const string FixName = "Fix Biome Sector Lookup";
 
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -68,6 +68,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         // Without the location hook, placement would silently stop matching vanilla, so a missing
         // hook stands the whole fix down.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(BiomeSectorLookupPatch),
             FixName,
             () => PatchHelper.HasHook(LocationPlacementHook.Target, typeof(LocationPlacementHook)));
 
@@ -203,6 +204,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
         // The nearest sample, unbiased but never exact, through the same overload (which clamps).
         private static BiomeSector NearestSector(WorldGenerator gen, float wx, float wy, bool clamp) {
+            // Turned off, the call it replaced, which the prefixes above then leave to vanilla.
+            if (!Enabled.Value) { return gen.GetBiomeSector(wx, wy, clamp); }
             if (!ToGrid(wx, wy, out float fx, out float fz)) { return VanillaSector(gen, wx, wy, clamp); }
 
             return gen.GetBiomeSector(Mathf.FloorToInt(fx + 0.5f), Mathf.FloorToInt(fz + 0.5f), clamp);
@@ -262,7 +265,16 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             private static readonly MethodInfo ZLogWarningMethod =
                 AccessTools.Method(typeof(ZLog), nameof(ZLog.LogWarning), new[] { typeof(object) });
 
-            private static readonly MethodInfo SinkMethod = AccessTools.Method(typeof(Logger), nameof(Logger.DebugSink));
+            private static readonly MethodInfo SinkMethod = AccessTools.Method(typeof(UpdateBiomeWarningHook), nameof(Sink));
+
+            // The debug log, or the game's warning again once the fix is turned off.
+            private static void Sink(object message) {
+                if (Enabled.Value) {
+                    Logger.DebugSink(message);
+                } else {
+                    ZLog.LogWarning(message);
+                }
+            }
 
             // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
             [HarmonyTranspiler]

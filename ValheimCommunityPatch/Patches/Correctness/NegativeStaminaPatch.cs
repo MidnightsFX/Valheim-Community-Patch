@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
@@ -23,9 +22,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // Client: Player.Load, AddStamina and RPC_UseStamina all run on the player's own machine.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Player))]
     internal static class NegativeStaminaPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

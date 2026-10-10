@@ -103,12 +103,15 @@ namespace ValheimCommunityPatch {
     /// and only once because the answer cannot change within a session.
     /// </remarks>
     internal sealed class HookHealth {
+        private readonly Type _fix;
         private readonly string _fixName;
         private readonly Func<bool> _allAttached;
         private bool _checked;
         private bool _healthy;
 
-        internal HookHealth(string fixName, Func<bool> allAttached) {
+        /// <param name="fix">The fix's patch class, whose state the mod API reports.</param>
+        internal HookHealth(Type fix, string fixName, Func<bool> allAttached) {
+            _fix = fix;
             _fixName = fixName;
             _allAttached = allAttached;
         }
@@ -120,6 +123,7 @@ namespace ValheimCommunityPatch {
                 _checked = true;
                 _healthy = _allAttached();
                 if (!_healthy) {
+                    FixRegistry.MarkStoodDown(_fix);
                     Logger.LogError(
                         $"{_fixName}: a maintenance hook is not attached, so this fix stands down to " +
                         "vanilla for this session. A Valheim update has most likely changed one of the " +
@@ -157,18 +161,22 @@ namespace ValheimCommunityPatch {
     /// patched; the answer cannot change within a session.
     /// </remarks>
     internal sealed class TakeoverCheck {
+        private readonly Type _fix;
         private readonly MethodBase _target;
         private readonly HookKinds _kinds;
         private readonly Func<string, string> _message;
         private bool _checked;
         private bool _takenOver;
 
+        /// <param name="fix">The fix's patch class, whose state the mod API reports.</param>
         /// <param name="message">The log line, given the other mods' GUIDs.</param>
-        internal TakeoverCheck(MethodBase target, bool transpilers, Func<string, string> message)
-            : this(target, HookKinds.BoolPrefixes | (transpilers ? HookKinds.Transpilers : 0), message) { }
+        internal TakeoverCheck(Type fix, MethodBase target, bool transpilers, Func<string, string> message)
+            : this(fix, target, HookKinds.BoolPrefixes | (transpilers ? HookKinds.Transpilers : 0), message) { }
 
+        /// <param name="fix">The fix's patch class, whose state the mod API reports.</param>
         /// <param name="message">The log line, given the other mods' GUIDs.</param>
-        internal TakeoverCheck(MethodBase target, HookKinds kinds, Func<string, string> message) {
+        internal TakeoverCheck(Type fix, MethodBase target, HookKinds kinds, Func<string, string> message) {
+            _fix = fix;
             _target = target;
             _kinds = kinds;
             _message = message;
@@ -199,7 +207,10 @@ namespace ValheimCommunityPatch {
                 }
 
                 _takenOver = owners.Count > 0;
-                if (_takenOver) { Logger.LogInfo(_message(string.Join(", ", owners))); }
+                if (_takenOver) {
+                    FixRegistry.MarkStoodDown(_fix);
+                    Logger.LogInfo(_message(string.Join(", ", owners)));
+                }
 
                 return _takenOver;
             }

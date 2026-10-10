@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -24,9 +23,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Both: CustomFixedUpdate has no owner gate, so the dangling-reference loop runs on a server
     // too. Provenance: same two defects as ComfyMods/Effectual (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch]
     internal static class EffectAreaPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -37,10 +37,20 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "Two fixes: grows the fixed 128-collider buffer that made fire warmth and wetness checks " +
                 "silently miss in dense builds, and drops destroyed characters from effect areas instead " +
                 "of throwing every physics step. Changing this requires a game restart.");
+
+            // Switched or turned off, the buffer goes back to the game's size.
+            Enabled.SettingChanged += (sender, args) => {
+                if (!Enabled.Value && _originalLength > 0 && EffectArea.m_tempColliders.Length > _originalLength) {
+                    EffectArea.m_tempColliders = new Collider[_originalLength];
+                }
+            };
         }
 
         private const int BufferGrowth = 128;
         private const int MaxBuffer = 4096;
+
+        // The buffer's size before it was first grown.
+        private static int _originalLength;
 
         private static readonly MethodInfo OverlapSphereNonAllocMethod =
             AccessTools.Method(typeof(Physics), nameof(Physics.OverlapSphereNonAlloc),
@@ -52,8 +62,11 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         // by field on each iteration, so they see the grown array.
         private static int GrowingOverlapSphereNonAlloc(Vector3 position, float radius, Collider[] results, int layerMask) {
             int count = Physics.OverlapSphereNonAlloc(position, radius, results, layerMask);
+            if (!Enabled.Value) { return count; }
 
             while (count == EffectArea.m_tempColliders.Length && EffectArea.m_tempColliders.Length < MaxBuffer) {
+                if (_originalLength == 0) { _originalLength = EffectArea.m_tempColliders.Length; }
+
                 int grown = EffectArea.m_tempColliders.Length + BufferGrowth;
                 Array.Resize(ref EffectArea.m_tempColliders, grown);
                 Logger.LogDebug($"Grew the effect area collider buffer to {grown}.");

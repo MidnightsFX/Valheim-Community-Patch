@@ -1,6 +1,5 @@
 ﻿using System.Collections.Generic;
 using System.Reflection;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
@@ -19,9 +18,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // Server: neither load path runs off the host. Provenance: ComfyMods/Atlas (GPL-3.0, redseiko).
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoLoadDuplicatePatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -40,6 +40,11 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
         // Same stack as the instance Add it replaces: (dictionary, key, value).
         private static void AddOrReplace(Dictionary<ZDOID, ZDO> objectsById, ZDOID uid, ZDO zdo) {
+            if (!Enabled.Value) {
+                objectsById.Add(uid, zdo);
+                return;
+            }
+
             if (objectsById.ContainsKey(uid)) {
                 Logger.LogWarning(
                     $"Duplicate ZDO id {uid} in the save file; keeping the later one. " +

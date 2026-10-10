@@ -42,6 +42,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: a dedicated server owns and updates the pieces in its active area.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(WearNTear))]
     internal static class SupportSleepPatch {
         internal static ConfigEntry<bool> Verify;
@@ -226,9 +227,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly Dictionary<long, List<int>> WakeCells = new Dictionary<long, List<int>>();
         private static readonly Stack<List<int>> WakeCellPool = new Stack<List<int>>();
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(SupportSleepPatch));
+
         // A sleeping piece is woken only by the hooks in this class, so the sleep decision stands
         // down to vanilla's revalidation if any of them is missing.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(SupportSleepPatch),
             "Support sleep",
             () => HasOwnHook("ClearCachedSupport")
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook))
@@ -427,7 +431,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             __state = default;
             _supportVisitedFor = __instance;
             FlushDestroyWakes();
-            if (!Hooks.Healthy) { return true; }
+            if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             PieceState state = GetState(__instance);
             __state.m_state = state;
@@ -749,7 +753,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _supportVisitedFor = null;
             FlushDestroyWakes();
 
-            if (!Hooks.Healthy) { return true; }
+            if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             PieceState state = GetState(__instance);
             __state.m_state = state;
@@ -820,7 +824,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPostfix]
         [HarmonyPatch("UpdateWear")]
         private static void UpdateWearPostfix(WearNTear __instance, WearSnapshot __state) {
-            if (__state.m_skipped) { return; }
+            // Turned off, nothing sleeps, so there is nobody to tell about a change.
+            if (__state.m_skipped || ApiSwitch.Off) { return; }
 
             PieceState state = __state.m_state;
             if (state != null) {
@@ -939,6 +944,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPostfix]
         [HarmonyPatch("Awake")]
         private static void AwakePostfix(WearNTear __instance) {
+            // Turned off, a piece keeps vanilla's placeholder until its first UpdateSupport.
+            if (ApiSwitch.Off) { return; }
+
             // Vanilla's Awake stamps m_support = GetMaxSupport() as a placeholder and never
             // restores the persisted value, so an owned piece advertises an optimistic maximum
             // until its first UpdateSupport and then drops to the real value, waking the

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Logging;
@@ -26,9 +27,12 @@ namespace ValheimCommunityPatch
     {
         public const string PluginGUID = "MidnightsFX.ValheimCommunityPatch";
         public const string PluginName = "ValheimCommunityPatch";
-        public const string PluginVersion = "0.34.1";
+        public const string PluginVersion = "0.35.0";
 
         internal static ManualLogSource Log;
+
+        /// <summary>Unity's main thread, for API calls that must come from it.</summary>
+        internal static int MainThreadId;
 
         private readonly Harmony harmony = new Harmony(PluginGUID);
 
@@ -40,11 +44,13 @@ namespace ValheimCommunityPatch
 
         public void Awake() {
             Log = Logger;
+            MainThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
             UnityEngine.Application.quitting += OnQuitting;
             ValConfig.Bind(Config);
 
             // An engine flag with no Harmony patch behind it.
             Patches.Performance.CollisionCallbackReusePatch.Apply();
+            FixRegistry.RecordPatched(typeof(Patches.Performance.CollisionCallbackReusePatch), patchedAnything: true);
             ApplyPatches();
         }
 
@@ -84,12 +90,16 @@ namespace ValheimCommunityPatch
 
                 if (side == Side.Client && RunMode.IsHeadless && !patchEverySide) {
                     if (isFix) { skipped++; }
+                    FixRegistry.RecordSkipped(type);
                     Log.LogDebug($"Skipped {type.Name}: client-only, and this process is headless.");
                     continue;
                 }
 
                 try {
-                    harmony.CreateClassProcessor(type).Patch();
+                    // Empty when the class's Prepare declined, which is how fixes stand down at
+                    // startup for a mod they know (HearthBelow, NPS).
+                    List<MethodInfo> patched = harmony.CreateClassProcessor(type).Patch();
+                    FixRegistry.RecordPatched(type, patched != null && patched.Count > 0);
                     if (isFix) {
                         applied++;
                         switch (side) {
@@ -101,6 +111,7 @@ namespace ValheimCommunityPatch
                     Log.LogDebug($"Applied {type.Name} {PatchSideAttribute.Tag(side)}.");
                 } catch (Exception ex) {
                     failed++;
+                    FixRegistry.RecordFailed(type);
                     Log.LogError($"Could not apply {type.Name}: {ex}");
                 }
             }

@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -29,9 +28,10 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     //
     // Both: PaintCleared runs on whichever peer owns the zone's terrain compiler.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(TerrainComp))]
     internal static class PaintSpreadOncePatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

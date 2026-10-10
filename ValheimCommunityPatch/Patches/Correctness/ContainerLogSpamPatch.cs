@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Reflection;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
@@ -19,9 +18,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // the calls; where both are installed its rewrite lands first and this one repoints whatever
     // it left.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch]
     internal static class ContainerLogSpamPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -35,7 +35,16 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         private static readonly MethodInfo ZLogMethod = AccessTools.Method(typeof(ZLog), nameof(ZLog.Log));
-        private static readonly MethodInfo SinkMethod = AccessTools.Method(typeof(Logger), nameof(Logger.DebugSink));
+        private static readonly MethodInfo SinkMethod = AccessTools.Method(typeof(ContainerLogSpamPatch), nameof(Sink));
+
+        // The debug log, or the game's log again once the fix is turned off.
+        private static void Sink(object message) {
+            if (Enabled.Value) {
+                Logger.DebugSink(message);
+            } else {
+                ZLog.Log(message);
+            }
+        }
 
         private static IEnumerable<CodeInstruction> RedirectLogCalls(IEnumerable<CodeInstruction> instructions, string method) {
             if (Enabled == null || !Enabled.Value) { return instructions; }

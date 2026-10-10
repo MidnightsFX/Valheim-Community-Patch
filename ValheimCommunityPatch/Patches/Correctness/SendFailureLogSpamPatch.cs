@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Reflection;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
@@ -18,9 +17,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Both, and worse on a server, which holds one socket per connected peer. Provenance: same
     // defect as ComfyMods/BetterZeeLog (GPL-3.0, redseiko), which removes the call outright.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZSteamSocket))]
     internal static class SendFailureLogSpamPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -35,7 +35,16 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         private static readonly MethodInfo ZLogMethod = AccessTools.Method(typeof(ZLog), nameof(ZLog.Log));
-        private static readonly MethodInfo SinkMethod = AccessTools.Method(typeof(Logger), nameof(Logger.DebugSink));
+        private static readonly MethodInfo SinkMethod = AccessTools.Method(typeof(SendFailureLogSpamPatch), nameof(Sink));
+
+        // The debug log, or the game's log again once the fix is turned off.
+        private static void Sink(object message) {
+            if (Enabled.Value) {
+                Logger.DebugSink(message);
+            } else {
+                ZLog.Log(message);
+            }
+        }
 
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]

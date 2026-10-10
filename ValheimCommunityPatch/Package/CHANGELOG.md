@@ -1,8 +1,11 @@
 # Changelog
 
-**0.34.2**
+**0.35.0**
 ```
+- Adds an API for other mods, so mods that change the same game code can work alongside this one instead of switching their own features off.
+- Mods using the API can turn off a fix that does the same job as theirs, this is logged.
 - Fixes smoke fading out too soon when Valheim Performance Overhaul is installed.
+- Fixes the faster server start-up linking creature spawners to their creatures differently from the unmodded game.
 ```
 
 **0.34.1**

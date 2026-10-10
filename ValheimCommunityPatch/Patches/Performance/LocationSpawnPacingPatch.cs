@@ -29,6 +29,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: only a game with a local player streams locations around it.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZoneSystem))]
     internal static class LocationSpawnPacingPatch {
         private const string FixName = "Fix Location Spawn Hitch";
@@ -50,6 +51,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(LocationSpawnPacingPatch),
             AccessTools.DeclaredMethod(typeof(ZoneSystem), nameof(ZoneSystem.ShouldDelayProxyLocationSpawning)),
             HookKinds.BoolPrefixes | HookKinds.Postfixes | HookKinds.Transpilers,
             owners => $"Location spawn timing is changed by {owners}, so '{FixName}' stands down and that " +
@@ -58,6 +60,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // Location spawn time in the frame _frame, in Stopwatch ticks.
         private static int _frame = -1;
         private static long _spent;
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(LocationSpawnPacingPatch));
 
         // Set while LocationProxy.SetLocation spawns a location of a zone generated in full.
         private static int _fullSpawnDepth;
@@ -76,7 +80,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (__result || _frame != Time.frameCount || _fullSpawnDepth > 0) { return; }
 
             int budget = BudgetMs != null ? BudgetMs.Value : 0;
-            if (budget <= 0 || _spent < budget * Stopwatch.Frequency / 1000) { return; }
+            if (budget <= 0 || ApiSwitch.Off || _spent < budget * Stopwatch.Frequency / 1000) { return; }
 
             if (RunMode.InLoadingScreen() || __instance.GetLocation(hash) == null || Takeover.TakenOver) { return; }
 

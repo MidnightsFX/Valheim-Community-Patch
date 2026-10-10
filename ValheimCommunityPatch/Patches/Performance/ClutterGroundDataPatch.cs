@@ -20,9 +20,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: ClutterSystem needs a camera.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ClutterSystem))]
     internal static class ClutterGroundDataPatch {
         private const string FixName = "Fix Grass Ground Raycasts";
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ClutterGroundDataPatch));
 
         private static bool _loggedStandDown;
 
@@ -46,6 +49,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool GetGroundInfoPrefix(
             Vector3 p, out Vector3 point, out Vector3 normal, out Heightmap hmap,
             out Heightmap.Biome biome, ref bool __result) {
+            if (ApiSwitch.Off) {
+                point = default;
+                normal = default;
+                hmap = null;
+                biome = default;
+                return true;
+            }
+
             Heightmap found;
             Vector3 origin;
             if (!HeightmapLookupPatch.TryGetCached(p, out found, out origin)) {

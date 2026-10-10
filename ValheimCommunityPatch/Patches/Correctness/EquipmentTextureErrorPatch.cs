@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Reflection;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -24,9 +23,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Client: Shadows are created and dressed on the client that loads them. Provenance: the defect
     // was reported by nezuma's ShadowPersonMaterialFix, which swaps the Shadow's shader instead.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(VisEquipment))]
     internal static class EquipmentTextureErrorPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -46,7 +46,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             AccessTools.Method(typeof(EquipmentTextureErrorPatch), nameof(GetTextureIfPresent));
 
         private static Texture GetTextureIfPresent(Material material, int nameID) {
-            if (material.HasProperty(nameID)) { return material.GetTexture(nameID); }
+            if (material.HasProperty(nameID) || !Enabled.Value) { return material.GetTexture(nameID); }
 
             if (Logger.DebugEnabled) {
                 Logger.LogDebug(

@@ -28,13 +28,14 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // its timing stays and only the IsAreaReady call is swapped. A host holds every object itself,
     // so it drops the fixed wait and lets IsAreaReady decide. A client of a server without this
     // fix, or of one that has it switched off, never gets a hello back and keeps vanilla's timings
-    // exactly.
+    // exactly; a server that switches it off mid-session sends its clients a hello with no protocol.
     //
     // Both: the server half answers on a dedicated server; the client half needs a local player.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZNet))]
     internal static class LoadingWaitPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
         internal static ConfigEntry<int> ConfirmationTimeout;
 
         internal static void BindConfig() {
@@ -57,12 +58,19 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "before the game's own checks decide alone. Only reached when the server is struggling " +
                 "to send the area.",
                 advanced: true, valMin: 8, valMax: 60);
+
+            Enabled.SettingChanged += (sender, args) => {
+                if (!Enabled.Value) { Server.Withdraw(); }
+            };
         }
 
         private static bool IsOn => Enabled != null && Enabled.Value;
 
         // Bumped whenever a payload changes shape; a mismatch on either side reads as "no support".
         private const int Protocol = 1;
+
+        // Sent in a hello by a server that has stopped confirming.
+        private const int NoSupport = 0;
         private const string HelloRpc = "VCP_LoadingHello";
         private const string QueryRpc = "VCP_LoadingQuery";
         private const string ConfirmedRpc = "VCP_LoadingConfirmed";
@@ -104,6 +112,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                     rpc.Invoke(HelloRpc, reply);
                 } else if (protocol == Protocol) {
                     Client.OnHelloReply(net);
+                } else {
+                    Client.OnNoSupport(net);
                 }
             } catch (Exception ex) {
                 Logger.LogDebug($"Loading confirmation hello ignored: {ex.Message}");
@@ -156,6 +166,23 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             private static readonly List<ZDO> SectorObjects = new List<ZDO>();
             private static ZNet _pendingFor;
             private static float _nextEvaluation;
+
+            // Switched or turned off on the server: every connected client is told, so none waits out
+            // its timeout on the next loading screen for an answer that will not come. A client that
+            // connects later gets no hello back and keeps vanilla's timings, as before.
+            internal static void Withdraw() {
+                ZNet net = ZNet.instance;
+                if (net == null || !net.IsServer()) { return; }
+
+                Pending.Clear();
+                foreach (ZNetPeer peer in net.GetPeers()) {
+                    if (peer?.m_rpc == null) { continue; }
+
+                    ZPackage notice = new ZPackage();
+                    notice.Write(NoSupport);
+                    peer.m_rpc.Invoke(HelloRpc, notice);
+                }
+            }
 
             internal static void OnQuery(ZRpc rpc, int id, Vector3 point) {
                 ZNet net = ZNet.instance;
@@ -287,6 +314,15 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 EnsureSession(net);
                 if (!_serverConfirms) { Logger.LogDebug("The server confirms loading destinations."); }
                 _serverConfirms = true;
+            }
+
+            // Any other protocol, including the server switching the fix off: vanilla's timings from
+            // the next check on, even for a loading screen already up.
+            internal static void OnNoSupport(ZNet net) {
+                EnsureSession(net);
+                if (_serverConfirms) { Logger.LogDebug("The server no longer confirms loading destinations."); }
+                _serverConfirms = false;
+                _haveQuery = false;
             }
 
             internal static void OnConfirmed(int id) {

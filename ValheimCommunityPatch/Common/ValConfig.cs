@@ -132,13 +132,18 @@ namespace ValheimCommunityPatch {
         /// Binds a fix's on/off toggle. The description is prefixed with the side the fix runs on,
         /// read from the class's [PatchSide] attribute so the config and the patch gate cannot
         /// disagree. The side goes in the description rather than the section name so existing
-        /// config files keep their keys.
+        /// config files keep their keys. The toggle also reads the fix's mod API switch, so a fix
+        /// marked [ModDisableable] that another mod turns off reads as off.
         /// </summary>
-        public static ConfigEntry<bool> BindFixToggle(Type patchClass, string category, string key, bool value, string description, bool advanced = false) {
-            return BindServerConfig(
+        public static FixToggle BindFixToggle(Type patchClass, string category, string key, bool value, string description, bool advanced = false) {
+            ConfigEntry<bool> entry = BindServerConfig(
                 category, key, value,
                 PatchSideAttribute.Tag(PatchSideAttribute.Of(patchClass)) + " " + description,
                 null, advanced);
+
+            // The mod API reports a fix switched off here as Disabled.
+            FixRegistry.RecordToggle(patchClass, entry);
+            return new FixToggle(entry, FixRegistry.SwitchOf(patchClass));
         }
 
         // Server-synced, admin-only entries.

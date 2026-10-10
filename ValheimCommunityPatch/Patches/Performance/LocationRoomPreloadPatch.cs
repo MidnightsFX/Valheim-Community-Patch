@@ -31,6 +31,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Server: only the world owner generates zones.
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZoneSystem), "PokeCanSpawnLocation")]
     internal static class LocationRoomPreloadPatch {
         internal static ConfigEntry<float> LoadWait;
@@ -50,7 +51,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         [HarmonyPostfix]
         private static void Postfix(ZoneSystem __instance, ZoneSystem.ZoneLocation location, bool isFirstSpawn, ref bool __result) {
-            if (!isFirstSpawn || location == null) { return; }
+            if (ApiSwitch.Off || !isFirstSpawn || location == null) { return; }
 
             ZoneSystem.LocationPrefabLoadData record = Find(__instance, location);
             if (record == null) { return; }
@@ -150,11 +151,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _ticks;
         private static Vector2s _lastZone;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(LocationRoomPreloadPatch));
+
         // Runs once per zone tick, after this tick's generation and before lifetimes count down.
         [HarmonyPatch(typeof(ZoneSystem), "UpdatePrefabLifetimes")]
         internal static class LoadAheadHook {
             [HarmonyPrefix]
             private static void Prefix(ZoneSystem __instance) {
+                if (ApiSwitch.Off) { return; }
+
                 ZNet znet = ZNet.instance;
                 if (znet == null || !znet.IsServer()) { return; }
 

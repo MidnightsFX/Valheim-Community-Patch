@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -23,9 +22,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Server: hottest where every peer's send tick runs. Off by default.
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZDO))]
     internal static class ZdoSerializeAllocPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

@@ -23,6 +23,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Client: ParticleMist.Update needs a local player, and the AI checks short-circuit on a flag
     // only a client sets. ComfyMods' Dramamist patches different methods and composes with this.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Mister))]
     internal static class MisterCachePatch {
         private struct MisterSnap {
@@ -55,6 +56,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool _mistersDirty = true;
         private static int _misterRebuildFrame = int.MinValue;
         private static int _demisterSnapFrame = -1;
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(MisterCachePatch));
 
         // ---- snapshot maintenance ----------------------------------------------------------
 
@@ -139,6 +142,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Mister.InsideMister))]
         private static bool InsideMisterPrefix(Vector3 p, float radius, ref bool __result) {
+            if (ApiSwitch.Off) { return true; }
+
             EnsureMisters();
             __result = false;
 
@@ -169,6 +174,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Mister.IsInsideOtherMister))]
         private static bool IsInsideOtherMisterPrefix(Vector3 p, Mister ignore, ref bool __result) {
+            if (ApiSwitch.Off) { return true; }
+
             EnsureMisters();
             __result = false;
 
@@ -189,6 +196,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Mister.IsCompletelyInsideOtherMister))]
         private static bool IsCompletelyInsideOtherMisterPrefix(Mister __instance, float thickness, ref bool __result) {
+            if (ApiSwitch.Off) { return true; }
+
             EnsureMisters();
 
             // Any qualifying larger mister strictly contains this position, so its circle overlaps
@@ -223,6 +232,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPatch("IsInsideOtherDemister")]
             private static bool IsInsideOtherDemisterPrefix(
                 List<Demister> fields, Vector3 p, float radius, Demister ignore, ref bool __result) {
+                if (ApiSwitch.Off) { return true; }
+
                 EnsureDemisters();
                 __result = false;
                 for (int i = 0; i < DemisterCount; i++) {
@@ -241,6 +252,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPrefix]
             [HarmonyPatch("InsideDemister")]
             private static bool InsideDemisterPrefix(Vector3 p, ref bool __result) {
+                if (ApiSwitch.Off) { return true; }
+
                 EnsureDemisters();
                 __result = false;
                 for (int i = 0; i < DemisterCount; i++) {
@@ -260,6 +273,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
             [HarmonyPatch("FindMaxMistAlltitude")]
             private static bool FindMaxMistAlltitudePrefix(
                 ParticleMist __instance, float testRange, out float minMistHeight, out float maxMistHeight) {
+                if (ApiSwitch.Off) {
+                    minMistHeight = 0f;
+                    maxMistHeight = 0f;
+                    return true;
+                }
+
                 Vector3 position = __instance.transform.position;
                 float sum = 0f;
                 minMistHeight = 99999f;

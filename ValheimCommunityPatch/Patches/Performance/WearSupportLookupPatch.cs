@@ -31,6 +31,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // prefix. Both: a dedicated server runs UpdateSupport for its active area. Provenance: the
     // map-probe form corroborated by ontrigger's ValheimPerformanceOptimizations (MIT).
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(WearNTear))]
     internal static class WearSupportLookupPatch {
         internal static ConfigEntry<bool> Verify;
@@ -54,8 +55,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly Dictionary<int, WearNTear> ColliderOwner = new Dictionary<int, WearNTear>();
         private static readonly Dictionary<int, List<int>> RegisteredBy = new Dictionary<int, List<int>>();
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(WearSupportLookupPatch));
+
         // Without both hooks the map silently goes stale.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(WearSupportLookupPatch),
             "Support lookup",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "SetupColliders"), typeof(WearSupportLookupPatch))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook)));
@@ -133,7 +137,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // Replaces collider.GetComponentInParent<WearNTear>(). A hit whose piece died is a
         // fake-null the call sites already handle; a miss falls back to the walk and learns it.
         public static WearNTear ResolveSupport(Collider collider) {
-            if (!Hooks.Healthy) { return collider.GetComponentInParent<WearNTear>(); }
+            if (ApiSwitch.Off || !Hooks.Healthy) { return collider.GetComponentInParent<WearNTear>(); }
 
             if (Verify != null && Verify.Value) {
                 _verifyActive = true;
@@ -204,6 +208,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("GetCOM")]
         private static bool GetCOMPrefix(WearNTear __instance, ref Vector3 __result) {
+            if (ApiSwitch.Off) { return true; }
+
             Transform transform = __instance.transform;
             __result = transform.position + transform.rotation * __instance.m_comOffset;
             return false;

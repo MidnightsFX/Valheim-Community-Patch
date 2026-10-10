@@ -19,6 +19,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: only a client reports its position; the host is the server.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZNet))]
     internal static class RefPosSendDelayPatch {
         private const float VanillaReportInterval = 2f;
@@ -27,10 +28,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static ZNet _stateFor;
         private static Vector2s _lastReportedZone;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(RefPosSendDelayPatch));
+
         [HarmonyPrefix]
         [HarmonyPatch("SendPeriodicData")]
         private static void SendPeriodicDataPrefix(ZNet __instance, float dt) {
-            if (__instance.IsServer()) { return; }
+            if (ApiSwitch.Off || __instance.IsServer()) { return; }
 
             // Per session. The server starts from the origin, which is what PeerInfo told it.
             if (!ReferenceEquals(__instance, _stateFor)) {

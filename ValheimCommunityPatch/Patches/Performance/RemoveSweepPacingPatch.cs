@@ -20,6 +20,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // below this one and must see every pass; otherwise RemoveObjectsNrePatch honours this
     // prefix's decision through __runOriginal. Both.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class RemoveSweepPacingPatch {
         internal static ConfigEntry<int> SweepIntervalMs;
@@ -39,11 +40,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static float _lastSweep;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(RemoveSweepPacingPatch));
+
         [HarmonyPrefix]
         [HarmonyPriority(Priority.High)]
         [HarmonyPatch("RemoveObjects")]
         private static bool RemoveObjectsPrefix() {
-            if (ZoneDiffRemovalPatch.Engaged) { return true; }
+            if (ApiSwitch.Off || ZoneDiffRemovalPatch.Engaged) { return true; }
 
             int intervalMs = SweepIntervalMs != null ? SweepIntervalMs.Value : 100;
             if (intervalMs <= 0) { return true; }

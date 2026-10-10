@@ -11,18 +11,27 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Prefixes index the target list by hash once and resolve each source with one lookup,
     // reproducing vanilla's pairing decisions exactly. The three differ, so each follows its own
-    // original: ConnectPortals consumes each target at most once (vanilla re-tests eligibility
-    // on every inner iteration), ConnectSpawners and ConnectSyncTransforms keep the first match
-    // per hash and never consume (vanilla breaks on the first match), and ConnectSyncTransforms
-    // works purely through the static ZDOExtraData maps with no ZDO lookup or null check, so a
-    // connection whose ZDO is gone is still paired, as in vanilla. Priority.Last and
-    // __runOriginal, so a mod that replaces the pairing (XPortalNetworks restores portals from its
-    // own targets) keeps its say instead of gaining vanilla's two-way links on top.
+    // original:
+    // - ConnectPortals consumes each target at most once (vanilla re-tests the target's live
+    //   connection on every inner iteration, and only a pairing in this loop changes it).
+    // - ConnectSpawners consumes each target at most once (vanilla removes the matched target
+    //   from its list), marks a spawner with no match "done", then strips the hash data from
+    //   every target left unclaimed, in list order, and logs the same three counts.
+    // - ConnectSyncTransforms keeps the first match per hash and never consumes (vanilla breaks
+    //   on the first match), and works purely through the static ZDOExtraData maps with no ZDO
+    //   lookup or null check, so a connection whose ZDO is gone is still paired, as in vanilla.
+    // Nothing in these loops writes ZDOExtraData's hash data until ConnectSpawners' orphan pass,
+    // so hashes read up front are the ones vanilla reads live. A ZDOID holds one hash entry, so
+    // no id is in both a source and a target list; vanilla's skip of the source's own id never
+    // fires, and the prefixes keep it only as a guard. Priority.Last and __runOriginal, so a mod
+    // that replaces the pairing (XPortalNetworks restores portals from its own targets) keeps its
+    // say instead of gaining vanilla's two-way links on top.
     //
     // Server: all three are private and only reached from ZDOMan.Load on the host.
     // Provenance: ComfyMods/Atlas's ConnectSpawners rewrite (GPL-3.0, redseiko), extended here
     // to the other two.
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
     internal static class ZdoConnectionIndexPatch {
         private const ZDOExtraData.ConnectionType PortalType = ZDOExtraData.ConnectionType.Portal;
@@ -32,11 +41,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private const ZDOExtraData.ConnectionType SyncTransformType = ZDOExtraData.ConnectionType.SyncTransform;
         private const ZDOExtraData.ConnectionType SyncTransformTargetType = ZDOExtraData.ConnectionType.SyncTransform | ZDOExtraData.ConnectionType.Target;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ZdoConnectionIndexPatch));
+
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("ConnectPortals")]
         private static bool ConnectPortalsPrefix(ZDOMan __instance, bool __runOriginal) {
             if (!__runOriginal) { return false; }
+            if (ApiSwitch.Off) { return true; }
 
             List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(PortalType);
             List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(PortalTargetType);
@@ -104,20 +116,28 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("ConnectSpawners")]
         private static bool ConnectSpawnersPrefix(ZDOMan __instance, bool __runOriginal) {
             if (!__runOriginal) { return false; }
+            if (ApiSwitch.Off) { return true; }
 
             List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(SpawnedType);
             List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(SpawnedTargetType);
 
-            // First match per hash wins and is never consumed, so several spawners may share one
-            // target, as in vanilla.
-            Dictionary<int, ZDOID> firstByHash = new Dictionary<int, ZDOID>();
+            // Indices into targets, grouped by hash in list order. Vanilla removes a matched
+            // target from its list, so each target pairs with one spawner at most.
+            Dictionary<int, LinkedList<int>> available = new Dictionary<int, LinkedList<int>>();
             for (int i = 0; i < targets.Count; i++) {
                 ZDOConnectionHashData hashData = ZDOExtraData.GetConnectionHashData(targets[i], SpawnedTargetType);
-                if (hashData == null || firstByHash.ContainsKey(hashData.m_hash)) { continue; }
+                if (hashData == null) { continue; }
 
-                firstByHash.Add(hashData.m_hash, targets[i]);
+                if (!available.TryGetValue(hashData.m_hash, out LinkedList<int> candidates)) {
+                    candidates = new LinkedList<int>();
+                    available.Add(hashData.m_hash, candidates);
+                }
+
+                candidates.AddLast(i);
             }
 
+            bool[] removed = new bool[targets.Count];
+            int orphans = targets.Count;
             long sessionId = ZDOMan.GetSessionID();
             int connected = 0, done = 0;
 
@@ -129,12 +149,26 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
                 source.SetOwner(sessionId);
 
+                // First remaining target with the same hash, passing over the spawner's own id
+                // (which stays in the list) as vanilla does. Ids are unique, so one skip suffices.
+                LinkedListNode<int> match = null;
                 ZDOConnectionHashData hashData = source.GetConnectionHashData(SpawnedType);
-                if (hashData != null
-                    && firstByHash.TryGetValue(hashData.m_hash, out ZDOID targetId)
-                    && targetId != sourceId) {
+                if (hashData != null && available.TryGetValue(hashData.m_hash, out LinkedList<int> candidates)) {
+                    match = candidates.First;
+                    if (match != null && targets[match.Value] == sourceId) { match = match.Next; }
+                }
+
+                if (match != null) {
+                    ZDOID targetId = targets[match.Value];
                     connected++;
                     source.SetConnection(SpawnedType, targetId);
+
+                    // Vanilla's removal is guarded by targetId != ZDOID.None.
+                    if (targetId != ZDOID.None) {
+                        removed[match.Value] = true;
+                        orphans--;
+                        match.List.Remove(match);
+                    }
                 } else {
                     // Vanilla marks an unmatched spawner as "done" so it is not retried.
                     done++;
@@ -142,8 +176,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 }
             }
 
-            if (connected > 0 || done > 0) {
-                Logger.LogInfo($"ConnectSpawners => Connected {connected} spawners and {done} 'done' spawners.");
+            // Targets no spawner claimed lose their hash data, in list order as in vanilla.
+            for (int i = 0; i < targets.Count; i++) {
+                if (removed[i]) { continue; }
+
+                ZDOExtraData.RemoveConnectionHashData(targets[i], SpawnedTargetType);
+            }
+
+            if (connected > 0 || done > 0 || orphans > 0) {
+                Logger.LogInfo($"ConnectSpawners => Connected {connected} spawners and {done} 'done' spawners. Removed connection from {orphans} orphan spawn:s.");
             }
 
             return false;
@@ -154,6 +195,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("ConnectSyncTransforms")]
         private static bool ConnectSyncTransformsPrefix(bool __runOriginal) {
             if (!__runOriginal) { return false; }
+            if (ApiSwitch.Off) { return true; }
 
             List<ZDOID> sources = ZDOExtraData.GetAllConnectionZDOIDs(SyncTransformType);
             List<ZDOID> targets = ZDOExtraData.GetAllConnectionZDOIDs(SyncTransformTargetType);

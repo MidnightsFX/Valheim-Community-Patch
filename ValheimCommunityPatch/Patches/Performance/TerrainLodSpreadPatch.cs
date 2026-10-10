@@ -23,13 +23,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: the system needs a camera.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(TerrainLod))]
     internal static class TerrainLodSpreadPatch {
         private const string FixName = "Fix Distant Terrain Hitch";
 
         internal static ConfigEntry<int> Budget;
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(TerrainLodSpreadPatch));
+
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(TerrainLodSpreadPatch),
             AccessTools.DeclaredMethod(typeof(TerrainLod), "RebuildAllHeightmaps"),
             transpilers: true,
             owners => $"Distant terrain rebuilding is changed by {owners}, so '{FixName}' stands down and " +
@@ -52,7 +56,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("RebuildAllHeightmaps")]
         private static bool RebuildAllHeightmapsPrefix(TerrainLod __instance, bool __runOriginal) {
-            if (Takeover.TakenOver) { return true; }
+            if (ApiSwitch.Off || Takeover.TakenOver) { return true; }
             if (!__runOriginal) { return false; }
 
             int budget = Budget != null ? Budget.Value : 3;
@@ -83,7 +87,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("IsTerrainReady", typeof(TerrainLod.HeightmapWithOffset))]
         private static bool IsTerrainReadyPrefix(
             TerrainLod.HeightmapWithOffset heightmapWithOffset, ref bool __result, bool __runOriginal) {
-            if (Takeover.TakenOver) { return true; }
+            if (ApiSwitch.Off || Takeover.TakenOver) { return true; }
             if (!__runOriginal) { return false; }
 
             if (heightmapWithOffset.m_state == TerrainLod.HeightmapState.Done) {

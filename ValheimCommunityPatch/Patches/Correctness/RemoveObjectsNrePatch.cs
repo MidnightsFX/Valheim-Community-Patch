@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -27,9 +26,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // engaged and borrows GuardedSweep as its own fallback. Both: every peer runs this pass.
     // Provenance: ComfyMods/Scenic (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class RemoveObjectsNrePatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

@@ -26,6 +26,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // Both: a dedicated server runs UpdateTTL over its own loaded zones, every one of which lies
     // outside the grid because its reference position does.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
     internal static class SectorInstanceIndexPatch {
         internal static ConfigEntry<bool> Verify;
@@ -60,12 +61,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // Without all three maintenance hooks the index silently drifts, so every consumer (the
         // occupancy read here and ZoneDiffRemovalPatch) stands down when any is missing.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(SectorInstanceIndexPatch),
             "Sector instance index",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZNetScene), "AddInstance"), typeof(SectorInstanceIndexPatch))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZNetView), "OnDestroy"), typeof(TeardownHooks.ViewHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "AddToSector"), typeof(SectorMoveHooks)));
 
         internal static bool MaintenanceHealthy => Hooks.Healthy;
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(SectorInstanceIndexPatch));
 
         private const int VerifyReportInterval = 250;
         private static bool _verifyActive;
@@ -185,7 +189,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("HaveInstanceInSector")]
         private static bool HaveInstanceInSectorPrefix(ZNetScene __instance, Vector2s sector, ref bool __result) {
-            if (!Hooks.Healthy) { return true; }
+            // Only the read is turned off: Fix Unload Discovery Scan still reads the index, so the
+            // upkeep hooks and MaintenanceHealthy carry on.
+            if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             // A zone the game files under sector index 0 shares its key with every other such
             // zone, so the tally cannot answer for it.

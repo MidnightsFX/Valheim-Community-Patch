@@ -29,17 +29,22 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: only a host with a local player loads zones around itself.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZoneSystem), "PokeLocalZone")]
     internal static class ArrivingZoneGhostPatch {
         private const string FixName = "Fix Arriving Location Hitch";
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ArrivingZoneGhostPatch));
+
         private static readonly TakeoverCheck PokeTakeover = new TakeoverCheck(
+            typeof(ArrivingZoneGhostPatch),
             AccessTools.DeclaredMethod(typeof(ZoneSystem), "PokeLocalZone"),
             transpilers: true,
             owners => $"Zone loading is changed by {owners}, so '{FixName}' stands down and arriving zones " +
                       "generate as that mod decides.");
 
         private static readonly TakeoverCheck SpawnTakeover = new TakeoverCheck(
+            typeof(ArrivingZoneGhostPatch),
             AccessTools.DeclaredMethod(typeof(ZoneSystem), "SpawnZone"),
             transpilers: true,
             owners => $"Zone generation is changed by {owners}, so '{FixName}' stands down and arriving zones " +
@@ -49,7 +54,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         private static bool Prefix(ZoneSystem __instance, Vector2s zoneID, ref bool __result, bool __runOriginal) {
-            if (!__runOriginal || !GenerateFirst(__instance, zoneID, out string location)) { return true; }
+            if (!__runOriginal || ApiSwitch.Off || !GenerateFirst(__instance, zoneID, out string location)) { return true; }
 
             // Fails, as the full spawn would, while the terrain or the location prefab is still
             // loading; PokeLocalZone then reports nothing done, and the next tick asks again.

@@ -1,4 +1,3 @@
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
@@ -28,9 +27,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // server owns the creatures in its own active area and reaches the same path through the tame
     // console command.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(MonsterAI))]
     internal static class TamedPatrolPointPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

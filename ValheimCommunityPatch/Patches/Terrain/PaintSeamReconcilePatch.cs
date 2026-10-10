@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -30,9 +29,10 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // saved paint is unchanged, though a later paint op near the border will seed from the
     // reconciled value. Runtime IsDedicated guard because a server builds these textures too.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class PaintSeamReconcilePatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

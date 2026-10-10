@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
@@ -25,9 +24,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // Server: the invalidation list is only produced where ZNet.IsServer() is true (dedicated
     // server or listen host), gated at runtime because a client process can start hosting later.
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZDO))]
     internal static class SectorJumpInvalidatePatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -19,9 +18,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // redseiko), which repairs the shared item data instead; this deliberately changes nothing
     // global.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ItemDrop.ItemData))]
     internal static class ItemIconVariantPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

@@ -53,6 +53,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: ZSFX drives an AudioSource, and a dedicated server has no audio.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(ZSFX))]
     internal static class ZsfxIdleDormancyPatch {
         private const float WatchdogInterval = 1f;
@@ -63,6 +64,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly List<ZSFX> WatchdogWakes = new List<ZSFX>();
         private static float _nextWatchdog;
 
+        // Turned off, every sleeper goes back to the game's updater list.
+        private static readonly FixSwitch ApiSwitch = CreateSwitch();
+
+        private static FixSwitch CreateSwitch() {
+            FixSwitch fixSwitch = FixRegistry.SwitchOf(typeof(ZsfxIdleDormancyPatch));
+            fixSwitch.TurnedOff += RestoreAll;
+            return fixSwitch;
+        }
+
         private static void Wake(ZSFX sfx) {
             // Only a recorded instance is missing from the list, so this is the whole wake path -
             // no Contains scan over a list that runs into the thousands.
@@ -72,6 +82,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPostfix]
         [HarmonyPatch(nameof(ZSFX.CustomUpdate))]
         private static void CustomUpdatePostfix(ZSFX __instance) {
+            if (ApiSwitch.Off) { return; }
+
             AudioSource source = __instance.m_audioSource;
             if (source == null) { return; }
 

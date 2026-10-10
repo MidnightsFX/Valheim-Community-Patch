@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 
@@ -29,9 +28,10 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // Both, and not gated on side: TerrainOp has no ZNetView, so Awake runs only on the peer that
     // created it, and the record has to be correct wherever that is.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(TerrainOp))]
     internal static class TerrainOpPaintFanoutPatch {
-        internal static ConfigEntry<bool> Enabled;
+        internal static FixToggle Enabled;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(

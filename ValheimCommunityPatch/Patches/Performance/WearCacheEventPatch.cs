@@ -24,6 +24,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Both: a dedicated server runs WearNTear and Regenerate for its active area.
     [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch(typeof(WearNTear))]
     internal static class WearCacheEventPatch {
         // The registered pieces of one heightmap, and the one subscriber that serves them.
@@ -45,9 +46,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // for the same heightmap would subscribe a second time.
         private static readonly Dictionary<int, PieceSet> Registered = new Dictionary<int, PieceSet>();
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(WearCacheEventPatch));
+
         // A registered piece is served only by these hooks, so Start must not route pieces into
         // the registry unless both attached.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(WearCacheEventPatch),
             "Piece event fix",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "OnDestroy"), typeof(HeightmapHooks)));
@@ -57,7 +61,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("Start")]
         private static bool StartPrefix(WearNTear __instance) {
-            if (!Hooks.Healthy) { return true; }
+            // Turned off, pieces already registered stay on the one forwarder each heightmap has,
+            // which clears them exactly as their own subscriptions would.
+            if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             Heightmap hmap = Heightmap.FindHeightmap(__instance.transform.position);
             __instance.m_connectedHeightMap = hmap;

@@ -29,6 +29,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Server: only the world owner generates zones.
     [PatchSide(Side.Server)]
+    [ModDisableable]
     [HarmonyPatch(typeof(DungeonGenerator), "PlaceRoom",
         typeof(DungeonDB.RoomData), typeof(Vector3), typeof(Quaternion), typeof(RoomConnection), typeof(ZoneSystem.SpawnMode))]
     internal static class GhostDungeonStandInPatch {
@@ -52,6 +53,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             new[] { typeof(DungeonDB.RoomData), typeof(Vector3), typeof(Quaternion), typeof(RoomConnection), typeof(ZoneSystem.SpawnMode) });
 
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(GhostDungeonStandInPatch),
             PlaceRoomTarget,
             HookKinds.Any,
             owners => $"Dungeon room placement is hooked by {owners}, which may read the room models, so " +
@@ -59,6 +61,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // Above zero while a ghost-mode PlaceRoom runs.
         private static int _ghostDepth;
+
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(GhostDungeonStandInPatch));
 
         [HarmonyPrefix]
         private static void Prefix(ZoneSystem.SpawnMode mode, out bool __state) {
@@ -89,7 +93,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             // PlaceRoom loaded the prefab before calling here.
             GameObject asset = prefab.Asset;
-            if (asset == null || !CanStandIn(asset) || Takeover.TakenOver) {
+            if (asset == null || ApiSwitch.Off || !CanStandIn(asset) || Takeover.TakenOver) {
                 return ModelTemplatePatch.RoomModel(prefab, position, rotation, parent);
             }
 

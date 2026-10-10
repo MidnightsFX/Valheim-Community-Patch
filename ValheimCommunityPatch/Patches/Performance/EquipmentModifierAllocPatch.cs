@@ -22,11 +22,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //
     // Client: only the local player's modifiers are totalled.
     [PatchSide(Side.Client)]
+    [ModDisableable]
     [HarmonyPatch(typeof(Player), "UpdateModifiers")]
     internal static class EquipmentModifierAllocPatch {
         private const string FixName = "Fix Equipment Modifier Allocation";
 
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(EquipmentModifierAllocPatch));
+
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(EquipmentModifierAllocPatch),
             AccessTools.DeclaredMethod(typeof(Player), "UpdateModifiers"),
             HookKinds.Transpilers,
             owners => $"Equipment modifier totals are changed by {owners}, so '{FixName}' stands down and " +
@@ -41,6 +45,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPriority(Priority.Last)]
         private static bool Prefix(Player __instance, bool __runOriginal) {
             if (!__runOriginal) { return false; }
+            if (ApiSwitch.Off) { return true; }
 
             FieldInfo[] fields = Player.s_equipmentModifierSourceFields;
             float[] values = __instance.m_equipmentModifierValues;
