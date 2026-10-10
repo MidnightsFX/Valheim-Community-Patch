@@ -60,6 +60,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // Without all three maintenance hooks the index silently drifts, so every consumer (the
         // occupancy read here and ZoneDiffRemovalPatch) stands down when any is missing.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(SectorInstanceIndexPatch),
             "Sector instance index",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZNetScene), "AddInstance"), typeof(SectorInstanceIndexPatch))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZNetView), "OnDestroy"), typeof(TeardownHooks.ViewHook))

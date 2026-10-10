@@ -53,6 +53,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // A missing hook means the index stops tracking a whole class of change, and acting on
         // it would destroy live objects or leak dead ones.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(OrphanZdoIndexPatch),
             "Orphan index",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.SetOwnerInternal)), typeof(SetOwnerInternalHook))
                && PatchHelper.HasHook(AccessTools.DeclaredPropertySetter(typeof(ZDO), nameof(ZDO.Persistent)), typeof(PersistentSetterHook))

@@ -77,6 +77,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
         // Transpilers do not count: the mesh is still built inside the method, and this pass runs after it.
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(SeamlessNormalsPatch),
             AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildRenderMesh"),
             transpilers: false,
             owners => $"Terrain mesh building is changed by {owners}, so '{FixName}' stands down and that " +

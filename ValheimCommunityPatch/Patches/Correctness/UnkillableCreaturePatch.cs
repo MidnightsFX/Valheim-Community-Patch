@@ -59,6 +59,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private const float DeathAnimationGraceSeconds = 20f;
 
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(UnkillableCreaturePatch),
             FixName,
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Character), nameof(Character.OnDeath)), typeof(UnkillableCreaturePatch)));
 

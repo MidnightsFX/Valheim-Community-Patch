@@ -85,12 +85,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
             AccessTools.DeclaredMethod(typeof(DungeonGenerator), "ReleaseHeldReferences");
 
         private static readonly TakeoverCheck LoadedTakeover = new TakeoverCheck(
+            typeof(DungeonRoomSpreadPatch),
             AccessTools.DeclaredMethod(typeof(DungeonGenerator), "OnRoomLoaded"),
             HookKinds.Any,
             owners => $"Dungeon room placement is changed by {owners}, so '{FixName}' stands down and that " +
                       "mod's pace applies.");
 
         private static readonly TakeoverCheck SpawnTakeover = new TakeoverCheck(
+            typeof(DungeonRoomSpreadPatch),
             SpawnMethod,
             HookKinds.Any,
             owners => $"Dungeon room placement is changed by {owners}, so '{FixName}' stands down and that " +

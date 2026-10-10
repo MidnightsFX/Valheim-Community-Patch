@@ -73,12 +73,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private const float QuietFrameSeconds = 1f / 30f;
 
         private static readonly TakeoverCheck LocationTakeover = new TakeoverCheck(
+            typeof(ModelTemplatePatch),
             AccessTools.DeclaredMethod(typeof(ZoneSystem), "SpawnLocation"),
             HookKinds.BoolPrefixes | HookKinds.Postfixes | HookKinds.Transpilers,
             owners => $"Location spawning is hooked by {owners}, which may read the model, so '{FixName}' " +
                       "stands down for locations and the game clones them whole.");
 
         private static readonly TakeoverCheck RoomTakeover = new TakeoverCheck(
+            typeof(ModelTemplatePatch),
             AccessTools.Method(typeof(DungeonGenerator), "PlaceRoom",
                 new[] { typeof(DungeonDB.RoomData), typeof(Vector3), typeof(Quaternion), typeof(RoomConnection), typeof(ZoneSystem.SpawnMode) }),
             HookKinds.Any,

@@ -53,6 +53,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // A missing hook means the registry diverges from s_heightmaps and a wrong FindHeightmap
         // answer feeds terrain queries game-wide, so the answer gates the fix entirely.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(HeightmapLookupPatch),
             "Heightmap registry",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "Awake"), typeof(AwakeHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "OnDestroy"), typeof(DestroyHook))

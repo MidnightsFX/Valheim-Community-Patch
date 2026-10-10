@@ -18,6 +18,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // a few consecutive skips. The same zones generate identically, only the timing spreads out,
     // and zones a player actually enters (CreateLocalZones) are never touched.
     //
+    // Another mod can also pause ghost generation outright through the mod API's SkipGhostZones,
+    // as SteadyFrame does while its loading screen is up. That pause sits outside the pacing: it
+    // neither counts toward the starvation guard nor is overridden by it. A watchdog ignores a
+    // flag left set for longer than any loading screen, so a mod that never clears it cannot
+    // stop world generation for the session.
+    //
     // Server: only the world owner reaches CreateGhostZones.
     [PatchSide(Side.Server)]
     [HarmonyPatch(typeof(ZoneSystem))]
@@ -32,6 +38,24 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool _skipThisFrame;
         private static int _consecutiveSkips;
         private static int _cooldownRemaining;
+
+        // Set and cleared by other mods through the API, from the main thread.
+        private static volatile bool _skipGhostZones;
+
+        // How long a pause may last before the watchdog ignores it. Loading screens take seconds.
+        private const float MaxSkipSeconds = 120f;
+
+        private static float _skipSince = -1f;
+        private static bool _skipExpired;
+
+        internal static bool SkipGhostZones {
+            get => _skipGhostZones;
+            set => _skipGhostZones = value;
+        }
+
+        /// <summary>True when the CreateGhostZones prefix that honours SkipGhostZones is attached.</summary>
+        internal static bool SkipGhostZonesSupported =>
+            PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZoneSystem), "CreateGhostZones"), typeof(ZoneGenPacingPatch));
 
         internal static void BindConfig() {
             BudgetMs = ValConfig.BindServerConfig(
@@ -56,10 +80,18 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 valMax: 10);
         }
 
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("CreateGhostZones")]
-        private static bool CreateGhostZonesPrefix(ref bool __result, out long __state) {
+        private static bool CreateGhostZonesPrefix(ref bool __result, out long __state, bool __runOriginal) {
             __state = 0;
+            if (!__runOriginal) { return false; }
+
+            if (SkipRequested()) {
+                __result = false;
+                return false;
+            }
 
             // One decision per frame, shared by the host's call and each peer's.
             int frame = Time.frameCount;
@@ -87,6 +119,30 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             __state = Stopwatch.GetTimestamp();
+            return true;
+        }
+
+        private static bool SkipRequested() {
+            if (!_skipGhostZones) {
+                _skipSince = -1f;
+                _skipExpired = false;
+                return false;
+            }
+
+            if (_skipExpired) { return false; }
+
+            float now = Time.unscaledTime;
+            if (_skipSince < 0f) { _skipSince = now; }
+
+            if (now - _skipSince > MaxSkipSeconds) {
+                _skipExpired = true;
+                Logger.LogWarning(
+                    $"Another mod has paused background zone generation for over {MaxSkipSeconds:0} s " +
+                    "through SkipGhostZones and not resumed it, so the pause is ignored until that mod " +
+                    "clears it.");
+                return false;
+            }
+
             return true;
         }
 

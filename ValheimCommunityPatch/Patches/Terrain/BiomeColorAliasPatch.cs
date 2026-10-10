@@ -94,6 +94,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         }
 
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(BiomeColorAliasPatch),
             AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildRenderMesh"),
             transpilers: false,
             owners => $"Terrain mesh building is changed by {owners}, so '{FixName}' stands down and that " +

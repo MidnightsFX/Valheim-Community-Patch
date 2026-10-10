@@ -72,6 +72,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             _standDown = owners.Count > 0;
             if (_standDown) {
+                FixRegistry.MarkStoodDown(typeof(PortalConnectionPatch));
                 Logger.LogInfo(
                     $"Portal pairing is changed by {string.Join(", ", owners)}, so 'Fix Portal Connection " +
                     "Scan' stands down and the game's own pairing runs with that mod's rules.");

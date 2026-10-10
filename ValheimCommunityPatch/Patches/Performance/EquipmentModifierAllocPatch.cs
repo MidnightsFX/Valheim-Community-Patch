@@ -27,6 +27,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private const string FixName = "Fix Equipment Modifier Allocation";
 
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(EquipmentModifierAllocPatch),
             AccessTools.DeclaredMethod(typeof(Player), "UpdateModifiers"),
             HookKinds.Transpilers,
             owners => $"Equipment modifier totals are changed by {owners}, so '{FixName}' stands down and " +

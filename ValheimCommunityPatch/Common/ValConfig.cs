@@ -135,10 +135,14 @@ namespace ValheimCommunityPatch {
         /// config files keep their keys.
         /// </summary>
         public static ConfigEntry<bool> BindFixToggle(Type patchClass, string category, string key, bool value, string description, bool advanced = false) {
-            return BindServerConfig(
+            ConfigEntry<bool> toggle = BindServerConfig(
                 category, key, value,
                 PatchSideAttribute.Tag(PatchSideAttribute.Of(patchClass)) + " " + description,
                 null, advanced);
+
+            // The mod API reports a fix switched off here as Disabled.
+            FixRegistry.RecordToggle(patchClass, toggle);
+            return toggle;
         }
 
         // Server-synced, admin-only entries.

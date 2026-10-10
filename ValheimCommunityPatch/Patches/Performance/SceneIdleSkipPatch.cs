@@ -77,6 +77,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // A missing hook means a whole class of scene change goes uncounted and the skip would
         // hide real work, so the answer gates the fix entirely.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(SceneIdleSkipPatch),
             "Scene idle skip",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "AddToSector"), typeof(AddToSectorHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "RemoveFromSector"), typeof(RemoveFromSectorHook))

@@ -30,6 +30,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // A registered light is served only by these hooks, so OnEnable must not route lights
         // into the registry unless both attached.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(LightSettingsEventPatch),
             "Light settings subscription",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(LightFlicker), "OnDisable"), typeof(LightSettingsEventPatch))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(GraphicsSettingsManager), "ApplyGraphicsSettingsToCurrentSession"), typeof(SettingsHook)));

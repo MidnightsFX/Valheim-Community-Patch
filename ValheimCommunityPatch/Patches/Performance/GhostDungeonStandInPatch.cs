@@ -52,6 +52,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             new[] { typeof(DungeonDB.RoomData), typeof(Vector3), typeof(Quaternion), typeof(RoomConnection), typeof(ZoneSystem.SpawnMode) });
 
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(GhostDungeonStandInPatch),
             PlaceRoomTarget,
             HookKinds.Any,
             owners => $"Dungeon room placement is hooked by {owners}, which may read the room models, so " +

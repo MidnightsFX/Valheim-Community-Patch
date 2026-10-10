@@ -51,6 +51,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // Checked against the hook class, not merely "some patch of ours": OrphanZdoIndexPatch
         // also patches HandleDestroyedZDO and Load, and its presence proves nothing about this index.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(ZdoPrefabIndexPatch),
             "Prefab index",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.SetPrefab)), typeof(SetPrefabHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDO), nameof(ZDO.Deserialize)), typeof(DeserializeHook))

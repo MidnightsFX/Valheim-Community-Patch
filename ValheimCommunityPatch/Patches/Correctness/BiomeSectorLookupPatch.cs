@@ -68,6 +68,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         // Without the location hook, placement would silently stop matching vanilla, so a missing
         // hook stands the whole fix down.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(BiomeSectorLookupPatch),
             FixName,
             () => PatchHelper.HasHook(LocationPlacementHook.Target, typeof(LocationPlacementHook)));
 

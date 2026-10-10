@@ -37,6 +37,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // A queued piece is polled only by the pump, so Start must not queue unless it attached.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(RandomMaterialPollPatch),
             "Piece material polling",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZNetScene), "Update"), typeof(PumpHook)));
 

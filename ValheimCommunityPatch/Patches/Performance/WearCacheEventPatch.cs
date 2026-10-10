@@ -48,6 +48,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // A registered piece is served only by these hooks, so Start must not route pieces into
         // the registry unless both attached.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(WearCacheEventPatch),
             "Piece event fix",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "OnDestroy"), typeof(HeightmapHooks)));

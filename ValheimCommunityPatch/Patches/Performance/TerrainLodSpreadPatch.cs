@@ -30,6 +30,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static ConfigEntry<int> Budget;
 
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(TerrainLodSpreadPatch),
             AccessTools.DeclaredMethod(typeof(TerrainLod), "RebuildAllHeightmaps"),
             transpilers: true,
             owners => $"Distant terrain rebuilding is changed by {owners}, so '{FixName}' stands down and " +

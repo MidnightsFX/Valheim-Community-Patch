@@ -56,6 +56,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // Without both hooks the map silently goes stale.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(WearSupportLookupPatch),
             "Support lookup",
             () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "SetupColliders"), typeof(WearSupportLookupPatch))
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook)));

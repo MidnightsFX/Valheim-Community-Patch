@@ -190,6 +190,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             _standDown = owners.Count > 0;
             if (_standDown) {
+                FixRegistry.MarkStoodDown(typeof(LoadingZoneCadencePatch));
                 Logger.LogInfo(
                     $"Zone loading is changed by {string.Join(", ", owners)}, so 'Fix Loading Zone Cadence' " +
                     "stands down and that mod's pace applies.");

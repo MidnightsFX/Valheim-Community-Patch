@@ -50,6 +50,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(LocationSpawnPacingPatch),
             AccessTools.DeclaredMethod(typeof(ZoneSystem), nameof(ZoneSystem.ShouldDelayProxyLocationSpawning)),
             HookKinds.BoolPrefixes | HookKinds.Postfixes | HookKinds.Transpilers,
             owners => $"Location spawn timing is changed by {owners}, so '{FixName}' stands down and that " +

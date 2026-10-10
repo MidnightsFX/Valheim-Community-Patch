@@ -229,6 +229,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // A sleeping piece is woken only by the hooks in this class, so the sleep decision stands
         // down to vanilla's revalidation if any of them is missing.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(SupportSleepPatch),
             "Support sleep",
             () => HasOwnHook("ClearCachedSupport")
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(WearNTear), "OnDestroy"), typeof(TeardownHooks.PieceHook))

@@ -1,5 +1,13 @@
 # Changelog
 
+**0.35.0**
+```
+- Adds an API for other mods, so mods that change the same game code can work alongside this one instead of switching their own features off.
+    - Other mods can have the ground at a destination built first, reuse ground they have already built, and pause background zone generation during their loading screens.
+    - Other mods can check which fixes are running.
+- SteadyFrame can now keep its portal terrain speedups when this mod is installed (needs a SteadyFrame version that uses the API).
+```
+
 **0.34.1**
 ```
 - HearthBelow Compatibility fixes

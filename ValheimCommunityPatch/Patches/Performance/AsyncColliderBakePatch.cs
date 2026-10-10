@@ -56,6 +56,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // Asked at the first rebuild this fix would defer, before anything is queued.
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(AsyncColliderBakePatch),
             AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildCollisionMesh"),
             transpilers: true,
             owners => $"Terrain collider building is changed by {owners}, so '{FixName}' stands down and " +

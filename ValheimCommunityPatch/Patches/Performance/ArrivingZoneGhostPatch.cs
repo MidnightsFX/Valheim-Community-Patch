@@ -34,12 +34,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private const string FixName = "Fix Arriving Location Hitch";
 
         private static readonly TakeoverCheck PokeTakeover = new TakeoverCheck(
+            typeof(ArrivingZoneGhostPatch),
             AccessTools.DeclaredMethod(typeof(ZoneSystem), "PokeLocalZone"),
             transpilers: true,
             owners => $"Zone loading is changed by {owners}, so '{FixName}' stands down and arriving zones " +
                       "generate as that mod decides.");
 
         private static readonly TakeoverCheck SpawnTakeover = new TakeoverCheck(
+            typeof(ArrivingZoneGhostPatch),
             AccessTools.DeclaredMethod(typeof(ZoneSystem), "SpawnZone"),
             transpilers: true,
             owners => $"Zone generation is changed by {owners}, so '{FixName}' stands down and arriving zones " +

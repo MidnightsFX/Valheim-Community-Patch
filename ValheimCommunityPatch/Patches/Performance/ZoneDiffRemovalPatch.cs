@@ -91,6 +91,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool _loggedEditedLists;
 
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(ZoneDiffRemovalPatch),
             "Unload discovery",
             () => ListVersion != null
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(ZDOMan), "FindSectorObjects"), typeof(ListFillHook)));

@@ -589,7 +589,9 @@ and the arrival still waits for the server to send the destination, and the log 
 *"another mod has replaced the fixed portal arrival wait ..."*. Its building support lookup is the
 same as Fix Support Lookup Cost's, so that fix stands down with a warning in the log and SteadyFrame's
 version applies. SteadyFrame turns its own object streaming, terrain and housekeeping changes off when this
-mod is installed.
+mod is installed. From 0.35.0 it can instead keep its terrain priority, terrain cache and loading-screen
+ghost zone pause through this mod's API (see below), once a SteadyFrame version that uses the API is
+installed.
 
 Known overlap: **ValheimOptimized** builds terrain colliders on a background thread itself, as Fix
 Zone Collider Stall does. Before 0.32.5 the two worked on the same terrain at once and crashed the
@@ -618,6 +620,21 @@ Static Object Ground Checks replaces the ground check that HearthBelow hooks to 
 ground being pushed up out of it. While HearthBelow is installed, both fixes stand down and say so
 once in the log with *"HearthBelow is loaded, so '...' stands down"*. Grass placement and the ground
 check then run as they do in the game, with HearthBelow's changes applied.
+
+## API for other mods
+
+Where another mod would change the same game code as one of these fixes, it can usually work through
+this mod instead of standing down. The API is a single file other mods copy into their own project (or
+a small DLL they merge in). It finds this mod at runtime and does nothing when it is not installed.
+It lets a mod:
+
+- have the ground at a destination built before anything else queued,
+- keep finished ground and hand it back, so returning somewhere does not build it again,
+- pause background zone generation while its loading screen is up,
+- check which fixes are running, applied, switched off or standing down.
+
+See the [API documentation](https://github.com/MidnightsFX/Valheim-Community-Patch/tree/master/ValheimCommunityPatch.API)
+for setup and examples.
 
 ## Reporting a bug
 

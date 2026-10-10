@@ -62,6 +62,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         // Without the dispatch hook no message ever looks addressed here and nothing is refunded,
         // which is the safe failure; the check exists so that failure is logged rather than silent.
         private static readonly HookHealth Health = new HookHealth(
+            typeof(StationRefundPatch),
             FixName, () => PatchHelper.HasHook(HandleRoutedRpcMethod, typeof(StationRefundPatch)));
 
         // The peer the message being dispatched was addressed to. Zero between dispatches, which is

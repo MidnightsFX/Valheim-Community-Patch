@@ -37,6 +37,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // The height guard is what keeps a paint-only rebuild honest when a tile's terrain edits
         // unload first, so without it every modifier keeps vanilla's full rebuild.
         private static readonly HookHealth Hooks = new HookHealth(
+            typeof(PaintOnlyRebuildPatch),
             FixName,
             () => PatchHelper.HasHook(
                 AccessTools.DeclaredMethod(typeof(Heightmap), nameof(Heightmap.Regenerate)), typeof(HeightGuardHook)));
