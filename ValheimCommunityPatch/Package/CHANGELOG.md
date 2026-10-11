@@ -1,5 +1,11 @@
 # Changelog
 
+**0.35.1**
+```
+- Fixes water material errors
+- Option to reduces dedicated server GC spikes
+```
+
 **0.35.0**
 ```
 - Adds an API for other mods, so mods that change the same game code can work alongside this one instead of switching their own features off.

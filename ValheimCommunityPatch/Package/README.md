@@ -215,6 +215,12 @@ fix under [Credit and sources](#credit-and-sources).
   or unloads, like the big rocks and copper deposits of the Black Forest, coast and heath, refreshes
   just the terrain paint under it instead of also rebuilding the ground's collision and shape. Each
   such refresh checks the ground's heights came out the same, and does the full rebuild if not.
+- **Fix Hourly Server Freeze** *(server)* — on a dedicated server, holds the game's hourly cleanup of
+  unused assets until nobody has been connected for two minutes, instead of running it on the hour.
+  On a large world that cleanup freezes the server, and everyone on it, for most of a second. On a
+  server that is never empty it still runs within `Asset Unload Max Delay` (default 12 h). Each run is
+  logged with the freeze that followed it and the memory before and after, so you can see what the
+  cleanup gives back on your server. Can be turned off for the game's own hourly timing.
 
 ### Terrain
 
@@ -444,6 +450,7 @@ The mods involved:
 | Fix Active Area Check Allocation | MidnightsFX | — |
 | Fix Idle Creature Sync | MidnightsFX | — |
 | Fix Paint-Only Terrain Rebuilds | MidnightsFX | — |
+| Fix Hourly Server Freeze | MidnightsFX | — |
 
 ### Terrain
 

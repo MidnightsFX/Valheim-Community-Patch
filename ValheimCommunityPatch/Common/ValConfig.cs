@@ -15,7 +15,8 @@ namespace ValheimCommunityPatch {
         // Correctness and terrain fixes each have an on/off toggle. Performance fixes are always
         // on; the Performance section holds only their tuning values. The exceptions can be turned
         // off: Fix Idle Creature Sync, which changes what other players see, by a bounded amount,
-        // and Fix Portal Destination Send Delay, which sends players areas they may not visit.
+        // Fix Portal Destination Send Delay, which sends players areas they may not visit, and Fix
+        // Hourly Server Freeze, which moves when the game's asset cleanup runs.
         public const string SectionPerformance = "Fixes - Performance";
         public const string SectionCorrectness = "Fixes - Correctness";
         public const string SectionTerrain = "Fixes - Terrain";
@@ -93,6 +94,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.WorldGenTimingStats.BindConfig();
             Patches.Performance.CreatureSyncDeadbandPatch.BindConfig();
             Patches.Performance.PortalPrefetchPatch.BindConfig();
+            Patches.Performance.HourlyAssetUnloadPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();

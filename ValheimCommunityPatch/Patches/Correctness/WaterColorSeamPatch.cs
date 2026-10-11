@@ -91,19 +91,26 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             MeshRenderer surface = __instance.m_waterSurface;
             if (surface == null) { return; }
 
+            // Fixed-depth water has no heightmap corners: all four _depth values are the same, so it
+            // renders one flat color either way and its material is not touched.
+            if (__instance.m_heightmap == null || __instance.m_forceDepth >= 0f) { return; }
+
             // The per-renderer instance vanilla has just written _depth to.
             Material material = surface.material;
             if (material.HasProperty(MainTex)) { return; }
 
+            // The shader uses _MainTex_ST without declaring it, so the material does not list it:
+            // reading it would log a Unity error per tile, and the value the shader gets is zero. Writing
+            // it still reaches the shader, so the write below must stay unguarded.
             if (!Vanilla.TryGetValue(material, out VanillaValues vanilla)) {
-                vanilla = new VanillaValues { MainTexSt = material.GetVector(MainTexSt) };
+                vanilla = new VanillaValues {
+                    MainTexSt = material.HasProperty(MainTexSt) ? material.GetVector(MainTexSt) : Vector4.zero
+                };
                 Vanilla.Add(material, vanilla);
             }
 
             material.SetVector(MainTexSt, IdentitySt);
 
-            // Fixed-depth water renders one flat color either way and has no heightmap corners.
-            if (__instance.m_heightmap == null || __instance.m_forceDepth >= 0f) { return; }
             if (!material.HasProperty(Shallow) || !material.HasProperty(Deep)) { return; }
 
             if (!vanilla.Tinted) {
