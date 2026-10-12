@@ -107,6 +107,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.ItemIconVariantPatch.BindConfig();
             Patches.Correctness.SendFailureLogSpamPatch.BindConfig();
             Patches.Correctness.ContainerLogSpamPatch.BindConfig();
+            Patches.Correctness.ContainerGridAlignmentPatch.BindConfig();
             Patches.Correctness.NegativeStaminaPatch.BindConfig();
             Patches.Correctness.SectorJumpInvalidatePatch.BindConfig();
             Patches.Correctness.ReceivedZdoDirtyPatch.BindConfig();

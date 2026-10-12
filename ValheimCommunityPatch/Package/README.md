@@ -276,6 +276,8 @@ what is recorded, so they run on every side.
   debug logging.
 - **Fix Container Log Spam** *(both)* — redirects the four log lines written on every chest open,
   stack-all and take-all to debug logging.
+- **Fix Container Grid Alignment** *(client)* - resets the container grid pivot when switching chests,
+  so standard chests open centered instead of keeping the top-aligned layout of a larger container.
 - **Fix Item Icon Crash** *(client)* — draws the first icon for an item whose stored icon variant is
   out of range instead of throwing from every UI panel.
 - **Fix Negative Stamina** *(client)* — floors player stamina at zero (`NaN` included), repairs a
