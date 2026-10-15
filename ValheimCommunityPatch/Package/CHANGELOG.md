@@ -1,5 +1,10 @@
 # Changelog
 
+**0.36.1**
+```
+- Fixes terrain near biome borders being colored as a different biome than the map and its vegetation show.
+```
+
 **0.36.0**
 ```
 - Fixes a chest opening scrolled or stuck to the top of its window after a larger chest was opened (Thanks Dreamwraith)

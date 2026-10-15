@@ -303,11 +303,13 @@ what is recorded, so they run on every side.
   anyone wakes or kills a boss; vanilla closes an open map on every world key change. It still closes
   for a player with a boss within `Map Auto-Close Boss Range` (default 100 m, the boss health bar
   range).
-- **Fix Biome Sector Lookup** *(both)* — makes the biome sector lookup agree with the actual biome near
+- **Fix Biome Sector Lookup** *(both)* — makes the player's biome agree with the actual biome near
   borders. Vanilla reads its 12 m biome grid rounded down, so within about 12 m of a border the player's
-  biome, weather, spawn levels, the map's biome name and terrain coloring follow the neighbouring biome,
-  and a `GetBiome error` warning is logged every second. Location placement keeps vanilla's lookup, so
-  seeds still place locations where unmodded Valheim does.
+  biome, weather, spawn levels and the map's biome name follow the neighbouring biome, and a
+  `GetBiome error` warning is logged every second. Terrain coloring, vegetation and location placement
+  keep vanilla's lookup, so land generates and looks the same with or without the fix. Before 0.36.1
+  terrain coloring used the corrected lookup too, which could repaint land near a border away from the
+  vegetation already growing on it.
 - **Fix Loading Screen Hang** *(both)* — unregisters a networked object that was destroyed without the
   game's object manager being told, so a dungeon exit, portal trip or respawn next to it can finish
   loading. Vanilla leaves one behind on your client each time another player opens an Infested Mine
@@ -668,3 +670,9 @@ To decide whether a fix belongs here, the test is:
 - Does it address a significant performance problem (eg 2-5x slowdown)
 
 If it does not meet these criteria, it will not be accepted. This mod is purely bug and performance fixes.
+
+---
+
+If you enjoy my mods donations are appreciated. My mods will never be paid and donations are not required.
+
+<a href="https://ko-fi.com/midnightsfx"><img height="36" src="https://storage.ko-fi.com/cdn/kofi2.png?v=3" alt="Support me on Ko-fi"></a>
