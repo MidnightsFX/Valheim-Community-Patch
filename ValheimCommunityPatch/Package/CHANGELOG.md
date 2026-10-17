@@ -9,6 +9,7 @@
 - Returning to the main menu no longer leaves the old menu and inventory screen in memory.
 - Being disconnected with the settings window open no longer breaks later graphics setting changes.
 - Beehives, fermenters, spinning wheels and other looping sounds no longer go silent after they stop and start again or when a different machine or fire is closer.
+- The crafting screen at a workbench no longer slows the game down when mods add a lot of recipes (Thanks redseiko)
 ```
 
 **0.36.1**

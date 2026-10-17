@@ -99,6 +99,7 @@ Where a fix was sourced from, or corroborated against, another modder's work, th
 [*][b]Fix Build Menu Language Subscription[/b] [i](client)[/i] — refreshes the hammer menu's search terms through one language-change handler, instead of subscribing every piece button again each time the menu shows it. In vanilla that list grew with every menu open and category switch, was copied whole on every addition, and kept every destroyed repair button in memory.
 [*][b]Fix Main Menu Popup Subscription[/b] [i](client)[/i] — removes the main menu's content-popup handler when the menu closes, so each return to the main menu no longer keeps the old one in memory for the rest of the session, with every character profile and explored map it loaded.
 [*][b]Fix Inventory Touch Subscription[/b] [i](client)[/i] — takes the inventory screen's touch long-press handlers off when the screen is torn down at logout. Vanilla adds them a second time there instead, which keeps every old inventory screen in memory.
+[*][b]Fix Recipe Lookup Scan[/b] [i](client)[/i] — finds an item's recipe from a cache instead of searching every recipe in the game, which the crafting screen does for each worn item on every frame it is open at a workbench. Recipes that mods add, remove or change while playing are still found.
 [/list]
 
 [size=4][b]Terrain[/b][/size]
@@ -175,7 +176,7 @@ This mod fixes vanilla defects, and other modders found — and in several cases
 The mods involved:
 
 [list]
-[*][b][url=https://github.com/redseiko/ComfyMods]ComfyMods[/url][/b] — redseiko (GPL-3.0), the same licence as this project. Seven of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Compress, Effectual and Atlas — account for eleven of the entries below.
+[*][b][url=https://github.com/redseiko/ComfyMods]ComfyMods[/url][/b] — redseiko (GPL-3.0), the same licence as this project. Eight of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Compress, Effectual, Atlas and ComfyAutoRepair — account for twelve of the entries below.
 [*][b][url=https://github.com/ontrigger/ValheimPerformanceOptimizations]ValheimPerformanceOptimizations[/url][/b] — ontrigger (MIT). Independent corroboration of one of the performance entries below.
 [*][b][url=https://github.com/AzumattDev/MyPitsDontLeak]MyPitsDontLeak[/url][/b] — Azumatt (MIT).
 [*][b]Zen.ModLib[/b] — ZenDragon. Used as a reference; no code was used.
@@ -190,6 +191,7 @@ The mods involved:
 [*][b]Fix ZDO Packet Allocation[/b] — ComfyMods, Compress: the technique, taken on its own without that mod's GZip protocol change.
 [*][b]Fix Support Lookup Cost[/b] — MidnightsFX, corroborated by ontrigger's ValheimPerformanceOptimizations (MIT): arrived at the same map-probe and lazy-default forms, and the single-fetch centre of mass.
 [*][b]Fix Cooking Slot Keys[/b] — Iron Gate Studio: the key-hash pattern, taken from [font=Courier New]ArmorStand.InitKeys[/font].
+[*][b]Fix Recipe Lookup Scan[/b] — ComfyMods, ComfyAutoRepair: the recipe cache; change detection added here.
 [*]Every other performance fix — MidnightsFX.
 [/list]
 

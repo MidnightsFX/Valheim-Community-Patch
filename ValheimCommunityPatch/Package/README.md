@@ -232,6 +232,9 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Inventory Touch Subscription** *(client)* — takes the inventory screen's touch long-press
   handlers off when the screen is torn down at logout. Vanilla adds them a second time there instead,
   which keeps every old inventory screen in memory.
+- **Fix Recipe Lookup Scan** *(client)* — finds an item's recipe from a cache instead of searching
+  every recipe in the game, which the crafting screen does for each worn item on every frame it is
+  open at a workbench. Recipes that mods add, remove or change while playing are still found.
 
 ### Terrain
 
@@ -420,8 +423,8 @@ patch file.
 The mods involved:
 
 - **[ComfyMods](https://github.com/redseiko/ComfyMods)** — redseiko (GPL-3.0), the same licence as
-  this project. Seven of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Compress,
-  Effectual and Atlas — account for eleven of the entries below.
+  this project. Eight of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Compress,
+  Effectual, Atlas and ComfyAutoRepair — account for twelve of the entries below.
 - **[ValheimPerformanceOptimizations](https://github.com/ontrigger/ValheimPerformanceOptimizations)**
   — ontrigger (MIT). Independent corroboration of one of the performance entries below.
 - **[MyPitsDontLeak](https://github.com/AzumattDev/MyPitsDontLeak)** — Azumatt (MIT).
@@ -493,6 +496,7 @@ The mods involved:
 | Fix Build Menu Language Subscription | MidnightsFX | — |
 | Fix Main Menu Popup Subscription | MidnightsFX | — |
 | Fix Inventory Touch Subscription | MidnightsFX | — |
+| Fix Recipe Lookup Scan | ComfyMods — ComfyAutoRepair | The recipe cache; change detection added here |
 
 ### Terrain
 
