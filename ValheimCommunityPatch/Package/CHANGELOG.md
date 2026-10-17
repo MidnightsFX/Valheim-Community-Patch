@@ -3,8 +3,8 @@
 **0.37.0**
 ```
 - The Love Potion attracts starred trolls again, including during troll raids and for every player in multiplayer.
-- Water keeps moving after Seasonality freezes or thaws it, and water that freezes nearby matches the color of the rest.
-- Creatures keep finding paths after sailing or portalling past busy coasts, and the log no longer floods with path-finding errors.
+- Improves frozen water compatibility with seaon mods
+- Creatures keep finding paths after sailing or portalling past busy coasts
 - The hammer build menu no longer slows down and holds on to more memory the longer you play.
 - Returning to the main menu no longer leaves the old menu and inventory screen in memory.
 - Being disconnected with the settings window open no longer breaks later graphics setting changes.
