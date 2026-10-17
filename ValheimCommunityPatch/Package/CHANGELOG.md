@@ -1,5 +1,16 @@
 # Changelog
 
+**0.37.0**
+```
+- The Love Potion attracts starred trolls again, including during troll raids and for every player in multiplayer.
+- Water keeps moving after Seasonality freezes or thaws it, and water that freezes nearby matches the color of the rest.
+- Creatures keep finding paths after sailing or portalling past busy coasts, and the log no longer floods with path-finding errors.
+- The hammer build menu no longer slows down and holds on to more memory the longer you play.
+- Returning to the main menu no longer leaves the old menu and inventory screen in memory.
+- Being disconnected with the settings window open no longer breaks later graphics setting changes.
+- Beehives, fermenters, spinning wheels and other looping sounds no longer go silent after they stop and start again or when a different machine or fire is closer.
+```
+
 **0.36.1**
 ```
 - Fixes terrain near biome borders being colored as a different biome than the map and its vegetation show.

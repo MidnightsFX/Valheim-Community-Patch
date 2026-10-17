@@ -122,6 +122,10 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.ClothWindShelterPatch.BindConfig();
             Patches.Correctness.LoadingWaitPatch.BindConfig();
             Patches.Correctness.LostBedSpawnPointPatch.BindConfig();
+            Patches.Correctness.LovePotionSpawnPatch.BindConfig();
+            Patches.Correctness.PathfindingLinkLimitPatch.BindConfig();
+            Patches.Correctness.GraphicsSettingsEventPatch.BindConfig();
+            Patches.Correctness.LoopingSoundConcurrencyPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();

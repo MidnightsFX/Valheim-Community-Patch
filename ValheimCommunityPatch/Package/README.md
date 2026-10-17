@@ -84,7 +84,8 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Background Zone Pacing** *(server)* — defers background zone pre-generation by a tick when the
   previous frame ran long or the last generation was expensive (both configurable).
 - **Fix Water Material Lookup** *(client)* — caches each water tile's surface material instead of
-  fetching it from the engine every frame.
+  fetching it from the engine every frame, and picks up a material another mod swaps in (Seasonality's
+  frozen water) within half a second, set up with the tile's depth and wind as a reload would.
 - **Fix Distant Terrain Hitch** *(client)* — rebuilds the far-terrain ring a few tiles per frame
   (configurable; 9 is vanilla) instead of all nine at once.
 - **Fix Idle Scene Sweep** *(both)* — skips the 30 Hz object create/destroy pass when cheap
@@ -221,6 +222,16 @@ fix under [Credit and sources](#credit-and-sources).
   server that is never empty it still runs within `Asset Unload Max Delay` (default 12 h). Each run is
   logged with the freeze that followed it and the memory before and after, so you can see what the
   cleanup gives back on your server. Can be turned off for the game's own hourly timing.
+- **Fix Build Menu Language Subscription** *(client)* — refreshes the hammer menu's search terms
+  through one language-change handler, instead of subscribing every piece button again each time the
+  menu shows it. In vanilla that list grew with every menu open and category switch, was copied whole
+  on every addition, and kept every destroyed repair button in memory.
+- **Fix Main Menu Popup Subscription** *(client)* — removes the main menu's content-popup handler when
+  the menu closes, so each return to the main menu no longer keeps the old one in memory for the rest
+  of the session, with every character profile and explored map it loaded.
+- **Fix Inventory Touch Subscription** *(client)* — takes the inventory screen's touch long-press
+  handlers off when the screen is torn down at logout. Vanilla adds them a second time there instead,
+  which keeps every old inventory screen in memory.
 
 ### Terrain
 
@@ -339,6 +350,29 @@ what is recorded, so they run on every side.
   not yet sent the area around it, for up to 30 s, instead of sending you to the world start. Vanilla
   decides the bed is gone as soon as the ground there has loaded, which can be before the buildings
   have; mods that shorten the respawn wait make it common.
+- **Fix Love Potion Spawns** *(client)* — makes the Love Potion attract starred trolls again; the Deep
+  North update stopped applying it, so it did nothing for spawns. While it lasts, troll spawners in the
+  zone you stand in spawn at least 25% of the time, allow two trolls at once, and spawn them at one star
+  or more with a better chance of a second star. Unlike the old potion, it never lowers a troll raid's
+  spawn chance, raid trolls can reach two stars, and in multiplayer it works whoever's machine runs the
+  zone's spawning, as long as the drinker has the mod too.
+- **Fix Pathfinding Link Limit** *(both)* — while the engine's 65,535 path-finding links are nearly
+  used up, drops path-finding tiles nobody has used for 10 s instead of 60 s, until usage is back
+  under a lower mark. Sailing or travelling by portal past coasts full of creatures could keep enough
+  tiles loaded to use every link; from then on each new link failed with an error in the log, and
+  creatures could not find paths from one tile to the next. Tiles in use are never dropped, and below
+  the mark nothing changes.
+- **Fix Settings Window Disconnect** *(client)* — removes the graphics settings' change handler when the
+  settings window is destroyed by a disconnect or kick instead of being closed. Vanilla leaves it
+  behind, so every later graphics change throws an error and skips the handlers added after it, such
+  as the next world's terrain and grass.
+- **Fix Looping Sound Muting** *(client)* — keeps looping sounds playing after they stop and start
+  again. Vanilla registers the sound again each time it starts, and the copy mutes the original until
+  the area reloads, so a beehive goes quiet from its first dawn and a fermenter or spinning wheel from
+  its second run. Sounds that are switched off, such as an unlit torch, also no longer take the place
+  of nearby ones that are playing. The game also treats the bonfire, cauldrons, spinning wheel, blast
+  furnace, eitr refinery, bathtub and sap collector as one sound, so only the nearest of them plays;
+  each now plays on its own. How many of the same sound play at once is unchanged.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -456,6 +490,9 @@ The mods involved:
 | Fix Idle Creature Sync | MidnightsFX | — |
 | Fix Paint-Only Terrain Rebuilds | MidnightsFX | — |
 | Fix Hourly Server Freeze | MidnightsFX | — |
+| Fix Build Menu Language Subscription | MidnightsFX | — |
+| Fix Main Menu Popup Subscription | MidnightsFX | — |
+| Fix Inventory Touch Subscription | MidnightsFX | — |
 
 ### Terrain
 
@@ -500,6 +537,10 @@ The mods involved:
 | Fix Unkillable Creatures | MidnightsFX | The `NaN` health handling follows StarLevelSystem's |
 | Fix Loading Screen Wait | MidnightsFX | — |
 | Fix Lost Bed Spawn Point | MidnightsFX | — |
+| Fix Love Potion Spawns | MidnightsFX | — |
+| Fix Pathfinding Link Limit | MidnightsFX | — |
+| Fix Settings Window Disconnect | MidnightsFX | — |
+| Fix Looping Sound Muting | MidnightsFX | — |
 
 ### Server memory
 
@@ -640,6 +681,14 @@ shorter columns. Fix Smoke Overhead now leaves a puff's update to a mod that has
 and says so once in the log with *"Smoke puff updates are replaced by ..."*. Its smoke rendering
 change stays on. With Valheim Performance Overhaul's smoke option off, this mod's version applies as
 before.
+
+Known overlap: **Seasonality** freezes and thaws water by giving the water tiles a new material. Fix
+Water Material Lookup kept animating the old one, so before 0.37.0 the water stopped moving after a
+season change while boats and fish still rode the waves, until the area reloaded. The fix now checks
+every half second that each tile still shows the material it animates and picks up the new one.
+Seasonality writes a tile's depth and wind to its material again only when it thaws the water, so
+water that froze while loaded was also colored differently from water that loaded frozen. The fix
+now does that setup on the new material itself, as a reload would. Nothing needs configuring.
 
 ## API for other mods
 
