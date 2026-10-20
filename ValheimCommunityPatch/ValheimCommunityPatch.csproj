@@ -37,12 +37,14 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
 
-  <ItemGroup>
+  <Import Project="ModPackageTool.targets" Condition="Exists('ModPackageTool.targets')" />
+
+	<ItemGroup>
     <None Include="app.config" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="JotunnLib" Version="2.27.1" />
+    <PackageReference Include="JotunnLib" Version="2.30.2" />
   </ItemGroup>
 
   <ItemGroup>
