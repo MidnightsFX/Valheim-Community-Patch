@@ -98,15 +98,16 @@ namespace ValheimCommunityPatch {
 
             int found = 0;
             CodeMatcher matcher = new CodeMatcher(codes);
-            if (matcher.TryMatchStartForward(original))
+            while (matcher.TryMatchStartForward(original))
             {
                 matcher.RemoveInstructions(original.Length);
                 matcher.InsertAndAdvance(replacement);
                 found++;
             }
 
+            Logger.LogInfo($"{site}: Found {found} match(es) and replaced them.");
             bool ok = expected == AnyCount ? found > 0 : found == expected;
-            if (ok) { return codes; }
+            if (ok) { return matcher.InstructionEnumeration(); }
 
             string wanted = expected == AnyCount ? "at least 1" : expected.ToString();
             Logger.LogWarning(
