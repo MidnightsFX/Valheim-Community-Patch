@@ -11,7 +11,7 @@ namespace ValheimCommunityPatch.Patches.Performance
 {
     [PatchSide(Side.Client)]
     [HarmonyPatch]
-    internal static class SEManPatch
+    public static class SEManPatch
     {
         //private static readonly MethodInfo SEManConstructor = AccessTools.Method(typeof(SEMan), ".ctor");
         private static readonly Dictionary<SEMan, Dictionary<int, StatusEffect>> SEManTracker = new Dictionary<SEMan, Dictionary<int, StatusEffect>>();
@@ -89,15 +89,11 @@ namespace ValheimCommunityPatch.Patches.Performance
                 matcher.Advance(1).InsertAndAdvance(
                     new[] { new CodeInstruction(OpCodes.Ldarg_1) } // SEMan already loaded so just load input NameHash
                 ).InsertAndAdvance(Transpilers.EmitDelegate(GetStatusEffectFromTracker)) // call method to check for effect from tracker
-                .InsertAndAdvance(new CodeInstruction(OpCodes.Ret)) // return the result from the tracker
-                .RemoveInstructions(matcher.Length - matcher.Pos);
+                .InsertAndAdvance(new CodeInstruction(OpCodes.Ret)); // return the result from the tracker
                 
-                codes = matcher.InstructionEnumeration(); // return instructions
-                foreach(var code in codes)
-                {
-                    Logger.LogInfo(code.ToString());
-                }
-                return codes;
+                matcher.InsertAndAdvance(new CodeInstruction(OpCodes.Pop)).InsertAndAdvance(new CodeInstruction(OpCodes.Ldarg_0));
+                //matcher.RemoveInstructions(matcher.Length - matcher.Pos);
+                return matcher.InstructionEnumeration();
             }
 
             return instructions;
@@ -111,8 +107,8 @@ namespace ValheimCommunityPatch.Patches.Performance
         /// <returns></returns>
         private static StatusEffect GetStatusEffectFromTracker(SEMan seMan, int nameHash)
         {
-            if (SEManTracker.TryGetValue(seMan, out Dictionary<int, StatusEffect> effectMap) && effectMap.TryGetValue(nameHash, out StatusEffect statusEffect)) { 
-                return statusEffect;
+            if (SEManTracker.TryGetValue(seMan, out Dictionary<int, StatusEffect> effectMap) && effectMap.ContainsKey(nameHash)) { 
+                return effectMap[nameHash];
             }
             return null;
         }
@@ -160,14 +156,18 @@ namespace ValheimCommunityPatch.Patches.Performance
         {
             IEnumerable<CodeInstruction> codes = PatchHelper.Copy(instructions);
             CodeMatcher matcher = new(codes);
-            CodeMatch[] matches = new[] { new CodeMatch(OpCodes.Ret) };
-            if (matcher.TryMatchStartForward(matches))
+            try
             {
+                matcher.Start();  // insert code at the start to bypass the entire method
                 return matcher.InsertAndAdvance(
                     new[] { new CodeInstruction(OpCodes.Ldarg_0), new CodeInstruction(OpCodes.Ldarg_1), new CodeInstruction(OpCodes.Ldarg_2) } // load SEMan, input NameHash, and quiet flag
                 ).InsertAndAdvance(Transpilers.EmitDelegate(RemoveStatusEffectFromTracker)) // call method to check for effect in tracker
                 .InsertAndAdvance(new CodeInstruction(OpCodes.Ret)) // return the result from the tracker
                 .InstructionEnumeration(); // return instructions
+            }
+            catch (Exception e) 
+            {
+                    Logger.LogWarning($"{e.Message}");
             }
             return instructions;
         }
@@ -180,6 +180,10 @@ namespace ValheimCommunityPatch.Patches.Performance
         /// <returns></returns>
         private static bool RemoveStatusEffectFromTracker(SEMan seMan, int nameHash, bool quiet)
         {
+            if (nameHash == 0)
+            {
+                return false;
+            }
             if (SEManTracker.TryGetValue(seMan, out Dictionary<int, StatusEffect> effectMap) && effectMap.TryGetValue(nameHash, out StatusEffect statusEffect))
             {
                 if (quiet)
