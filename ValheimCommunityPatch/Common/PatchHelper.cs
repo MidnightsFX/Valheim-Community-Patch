@@ -204,7 +204,6 @@ namespace ValheimCommunityPatch {
             return true;
         }
     }
-}
 
     /// <summary>
     /// A once-only check that every hook a fix depends on actually attached. A fix whose index or
