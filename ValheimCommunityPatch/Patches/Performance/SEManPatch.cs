@@ -91,8 +91,6 @@ namespace ValheimCommunityPatch.Patches.Performance
                 ).InsertAndAdvance(Transpilers.EmitDelegate(GetStatusEffectFromTracker)) // call method to check for effect from tracker
                 .InsertAndAdvance(new CodeInstruction(OpCodes.Ret)); // return the result from the tracker
                 
-                matcher.InsertAndAdvance(new CodeInstruction(OpCodes.Pop)).InsertAndAdvance(new CodeInstruction(OpCodes.Ldarg_0));
-                //matcher.RemoveInstructions(matcher.Length - matcher.Pos);
                 return matcher.InstructionEnumeration();
             }
 
