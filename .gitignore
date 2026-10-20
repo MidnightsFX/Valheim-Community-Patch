@@ -377,3 +377,6 @@ Environment.props
 
 # profiling-session working notes (findings that survive become patch headers/CHANGELOG entries)
 Investigations/
+
+# ignore post build deployment
+ModPackageTool.targets

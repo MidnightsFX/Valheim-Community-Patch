@@ -37,7 +37,9 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
 
-  <ItemGroup>
+  <Import Project="ModPackageTool.targets" Condition="Exists('ModPackageTool.targets')" />
+
+	<ItemGroup>
     <None Include="app.config" />
   </ItemGroup>
 
