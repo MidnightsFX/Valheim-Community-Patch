@@ -70,6 +70,52 @@ namespace ValheimCommunityPatch {
             return instructions;
         }
 
+
+        /// <summary>
+        /// Rewrites every instance found that matches to <paramref name="original"/> with the instructions 
+        /// provided by <paramref name="replacement"/>, which must take the same stack and return the same type.
+        /// </summary>
+        /// <remarks>
+        /// Returns the input untouched, and logs why, when the number of matches found is not
+        /// <paramref name="expected"/> (or is zero for <see cref="AnyCount"/>). That usually means
+        /// another mod has already rewritten the method, in which case standing down is the right
+        /// outcome; see the Priority.Last note in ValheimCommunityPatch.ApplyPatches.
+        /// </remarks>
+        internal static IEnumerable<CodeInstruction> ReplaceAllMatches(
+            IEnumerable<CodeInstruction> instructions, 
+            CodeMatch[] original, 
+            List<CodeInstruction> replacement,
+            string site, 
+            int expected = AnyCount)
+        {
+            if (original == null || replacement == null)
+            {
+                Logger.LogWarning($"{site}: a method this fix needs could not be resolved, so it is inactive here.");
+                return instructions;
+            }
+
+            List<CodeInstruction> codes = Copy(instructions);
+
+            int found = 0;
+            CodeMatcher matcher = new CodeMatcher(codes);
+            if (matcher.TryMatchStartForward(original))
+            {
+                matcher.RemoveInstructions(original.Length);
+                matcher.InsertAndAdvance(replacement);
+                found++;
+            }
+
+            bool ok = expected == AnyCount ? found > 0 : found == expected;
+            if (ok) { return codes; }
+
+            string wanted = expected == AnyCount ? "at least 1" : expected.ToString();
+            Logger.LogWarning(
+                $"{site}: expected {wanted} match(es) to for original instructions, found {found}, " +
+                "so this fix is inactive here. Another mod has most likely already rewritten the " +
+                "method - if so, nothing is wrong.");
+            return instructions;
+        }
+
         /// <summary>
         /// True when <paramref name="target"/> carries a prefix, postfix or finalizer declared by
         /// <paramref name="hookClass"/> and owned by this mod.
@@ -91,7 +137,74 @@ namespace ValheimCommunityPatch {
 
             return false;
         }
+
+        /// <summary>
+        /// Runs a forward match without mutating anything when it fails. A failed
+        /// <see cref="CodeMatcher.MatchStartForward"/> leaves Pos at -1, so any chained
+        /// RemoveInstruction/Insert throws an out of range exception - and a throwing
+        /// transpiler makes HarmonyX discard every patch on the target method, including
+        /// other mods'. Bail out through this instead so a stolen anchor only costs us
+        /// our own patch.
+        /// </summary>
+        public static bool TryMatchStartForward(this CodeMatcher matcher, string failureMessage, params CodeMatch[] matches)
+        {
+            matcher.MatchStartForward(matches);
+            if (matcher.IsInvalid)
+            {
+                Logger.LogWarning($"{failureMessage} Anchor instruction not found, it was likely consumed by another mod. Skipping this patch.");
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Runs a forward match without mutating anything when it fails. A failed
+        /// <see cref="CodeMatcher.MatchStartForward"/> leaves Pos at -1, so any chained
+        /// RemoveInstruction/Insert throws an out of range exception - and a throwing
+        /// transpiler makes HarmonyX discard every patch on the target method, including
+        /// other mods'. Bail out through this instead so a stolen anchor only costs us
+        /// our own patch.
+        /// </summary>
+        public static bool TryMatchStartForward(this CodeMatcher matcher, params CodeMatch[] matches)
+        {
+            matcher.MatchStartForward(matches);
+            if (matcher.IsInvalid)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// <see cref="TryMatchStartForward"/>, but leaving the position on the last matched
+        /// instruction instead of the first.
+        /// </summary>
+        public static bool TryMatchEndForward(this CodeMatcher matcher, string failureMessage, params CodeMatch[] matches)
+        {
+            matcher.MatchEndForward(matches);
+            if (matcher.IsInvalid)
+            {
+                Logger.LogWarning($"{failureMessage} Anchor instruction not found, it was likely consumed by another mod. Skipping this patch.");
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// <see cref="TryMatchStartForward"/>, but leaving the position on the last matched
+        /// instruction instead of the first.
+        /// </summary>
+        public static bool TryMatchEndForward(this CodeMatcher matcher, params CodeMatch[] matches)
+        {
+            matcher.MatchEndForward(matches);
+            if (matcher.IsInvalid)
+            {
+                return false;
+            }
+            return true;
+        }
     }
+}
 
     /// <summary>
     /// A once-only check that every hook a fix depends on actually attached. A fix whose index or
