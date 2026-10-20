@@ -105,7 +105,7 @@ namespace ValheimCommunityPatch {
                 found++;
             }
 
-            Logger.LogInfo($"{site}: Found {found} match(es) and replaced them.");
+            //Logger.LogInfo($"{site}: Found {found} match(es) and replaced them.");
             bool ok = expected == AnyCount ? found > 0 : found == expected;
             if (ok) { return matcher.InstructionEnumeration(); }
 
