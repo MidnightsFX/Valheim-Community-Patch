@@ -1,9 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 using HarmonyLib;
 using System.Reflection.Emit;
 
@@ -18,6 +15,8 @@ namespace ValheimCommunityPatch.Patches.Performance
 
         private static readonly FieldInfo RemoveStatusEffectsListField = AccessTools.Field(typeof(SEMan), nameof(SEMan.m_removeStatusEffects));
         private static readonly MethodInfo StatusEffectListClearMethod = AccessTools.Method(typeof(List<StatusEffect>), nameof(List<StatusEffect>.Clear));
+
+        private static readonly HashSet<int> PriorityEffectsOnDamaged = new HashSet<int>() { "SE_React".GetStableHashCode() };
 
         /// <summary>
         ///     Adds all new instances of SEMan to tracker upon construction
@@ -254,6 +253,76 @@ namespace ValheimCommunityPatch.Patches.Performance
                 }   
             }
             return;
+        }
+
+        /// <summary>
+        ///     The order status effects are triggered on receiving damage is entirely based on the order
+        ///     they were inserted into the list of status effects. This creates inconsistent and unintuitive
+        ///     interactions between status effects that modify damage taken and status effects that trigger based
+        ///     on damage taken. This transpiler redirects the execution of SEMan.OnDamaged to a delegate method
+        ///     that prioritizes triggering status effects that trigger based on damage taken before triggering
+        ///     any other status effects.
+        /// </summary>
+        /// <param name="instructions"></param>
+        /// <returns></returns>
+        [HarmonyTranspiler]
+        [HarmonyPatch(typeof(SEMan), nameof(SEMan.OnDamaged))]
+        private static IEnumerable<CodeInstruction> SEMan_OnDamaged_PriorityPatch(IEnumerable<CodeInstruction> instructions)
+        {
+            IEnumerable<CodeInstruction> codes = PatchHelper.Copy(instructions);
+            CodeMatcher matcher = new(codes);
+
+            CodeMatch[] matches = new[] {
+                new CodeMatch(OpCodes.Ldarg_0),
+       
+            };
+
+      
+            if (matcher.TryMatchStartForward("Failed to find anchor instructions for SEMan.OnDamaged Transpiler", matches))
+            {
+                return matcher.InsertAndAdvance(new[] {
+                    new CodeInstruction(OpCodes.Ldarg_1),  // load HitData onto stack
+                    new CodeInstruction(OpCodes.Ldarg_2), // load Character attacker onto stack
+                }).InsertAndAdvance(Transpilers.EmitDelegate(PriorityOnDamaged)) // call delegate with SEMan instance
+                .InsertAndAdvance(new CodeInstruction(OpCodes.Ret)) // return and exit the orginal method after running delegate
+                .InstructionEnumeration();
+            }
+
+            return instructions;
+        }
+
+        /// <summary>
+        ///     Triggers the OnDamaged method for all priority status effects first if they are active
+        ///     and then triggers the OnDamaged method for all active non-priority status effects after that
+        /// </summary>
+        /// <param name="seMan"></param>
+        /// <param name="hit"></param>
+        /// <param name="attacker"></param>
+        private static void PriorityOnDamaged(SEMan seMan, HitData hit, Character attacker)
+        {
+            if (!SEManTracker.TryGetValue(seMan, out var tracker))
+            {
+                return;
+            }
+       
+            StatusEffect statusEffect;
+            foreach (int nameHash in PriorityEffectsOnDamaged)
+            { 
+                if (tracker.TryGetValue(nameHash, out statusEffect)) 
+                {
+                    statusEffect.OnDamaged(hit, attacker);
+                }
+            }
+
+            foreach (int nameHash in tracker.Keys)
+            {
+                if (PriorityEffectsOnDamaged.Contains(nameHash))
+                {
+                    continue;
+                }
+                tracker[nameHash].OnDamaged(hit, attacker);
+            }
+
         }
         
     }
