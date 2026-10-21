@@ -48,9 +48,7 @@ namespace ValheimCommunityPatch.Patches.Performance
             if (!SEManTracker.ContainsKey(seMan))
             {
                 SEManTracker.Add(seMan, new Dictionary<int, StatusEffect>());
-                Logger.LogInfo("Added SEMan to tracker!");
             }
-            return;
         }
 
         /// <summary>
@@ -81,8 +79,7 @@ namespace ValheimCommunityPatch.Patches.Performance
         {
             IEnumerable<CodeInstruction> codes = PatchHelper.Copy(instructions);
             CodeMatcher matcher = new(codes);
-            CodeMatch[] matches = new[] { new CodeMatch(OpCodes.Ldarg_0) };
-            List<Label> labels = matcher.DistinctLabels(codes);
+            CodeMatch[] matches = new[] { new CodeMatch(OpCodes.Ldarg_0) }; // targets the first line after the initial guard
 
             if (matcher.TryMatchStartForward(matches))
             {
