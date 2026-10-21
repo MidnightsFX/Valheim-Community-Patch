@@ -202,7 +202,7 @@ namespace ValheimCommunityPatch.Patches.Performance
         /// <param name="instructions"></param>
         /// <returns></returns>
         [HarmonyTranspiler]
-        [HarmonyEmitIL(".dumps")]
+        //[HarmonyEmitIL(".dumps")]
         [HarmonyPatch(typeof(SEMan), nameof(SEMan.Update))]
         internal static IEnumerable<CodeInstruction> Patch_SEMan_Update(IEnumerable<CodeInstruction> instructions)
         {
