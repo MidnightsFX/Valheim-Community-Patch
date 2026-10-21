@@ -11,11 +11,13 @@ namespace ValheimCommunityPatch.Patches.Performance
 {
     [PatchSide(Side.Client)]
     [HarmonyPatch]
-    public static class SEManPatch
+    internal static class SEManPatch
     {
         //private static readonly MethodInfo SEManConstructor = AccessTools.Method(typeof(SEMan), ".ctor");
         private static readonly Dictionary<SEMan, Dictionary<int, StatusEffect>> SEManTracker = new Dictionary<SEMan, Dictionary<int, StatusEffect>>();
 
+        private static readonly FieldInfo RemoveStatusEffectsListField = AccessTools.Field(typeof(SEMan), nameof(SEMan.m_removeStatusEffects));
+        private static readonly MethodInfo StatusEffectListClearMethod = AccessTools.Method(typeof(List<StatusEffect>), nameof(List<StatusEffect>.Clear));
 
         /// <summary>
         ///     Adds all new instances of SEMan to tracker upon construction
@@ -73,7 +75,7 @@ namespace ValheimCommunityPatch.Patches.Performance
         /// <param name="instructions"></param>
         /// <returns></returns>
         [HarmonyTranspiler]
-        [HarmonyEmitIL(".dumps")]
+        //[HarmonyEmitIL(".dumps")]
         [HarmonyPatch(typeof(SEMan), nameof(SEMan.GetStatusEffect), new[] { typeof(int) })]
         internal static IEnumerable<CodeInstruction> PatchGetStatusEffect(IEnumerable<CodeInstruction> instructions)
         {
@@ -117,7 +119,7 @@ namespace ValheimCommunityPatch.Patches.Performance
         [HarmonyPatch(typeof(SEMan), nameof(SEMan.AddStatusEffect), new[] { typeof(StatusEffect), typeof(bool), typeof(int), typeof(float), typeof(short) })]
         internal static void Patch_AddStatusEffect(SEMan __instance, ref StatusEffect __result)
         {
-            if (!SEManTracker.ContainsKey(__instance) || __result is null)
+            if (!SEManTracker.ContainsKey(__instance) || !__result)
             {
                 return;
             }
@@ -200,6 +202,7 @@ namespace ValheimCommunityPatch.Patches.Performance
         /// <param name="instructions"></param>
         /// <returns></returns>
         [HarmonyTranspiler]
+        [HarmonyEmitIL(".dumps")]
         [HarmonyPatch(typeof(SEMan), nameof(SEMan.Update))]
         internal static IEnumerable<CodeInstruction> Patch_SEMan_Update(IEnumerable<CodeInstruction> instructions)
         {
@@ -210,20 +213,22 @@ namespace ValheimCommunityPatch.Patches.Performance
 
             IEnumerable<CodeInstruction> codes = PatchHelper.Copy(instructions);
             CodeMatcher matcher = new(codes);
+            
             CodeMatch[] matches = new[] { 
                 new CodeMatch(OpCodes.Ldarg_0),
-                new CodeMatch(OpCodes.Ldfld, nameof(SEMan.m_removeStatusEffects)),
-                new CodeMatch(OpCodes.Callvirt, nameof(List<StatusEffect>.Clear)),
+                new CodeMatch(OpCodes.Ldfld, RemoveStatusEffectsListField),
+                new CodeMatch(OpCodes.Callvirt, StatusEffectListClearMethod),
             };
 
-            if (matcher.TryMatchStartForward(matches))
+            matcher.End();
+            if (matcher.TryMatchStartBackwards("Failed to find anchor instructions for SEMan.Update Transpiler", matches))
             {
                 return matcher.InsertAndAdvance(new[] {
                     new CodeInstruction(OpCodes.Ldarg_0),  // load SEMan onto stack
                 }).InsertAndAdvance(Transpilers.EmitDelegate(RemoveStatusEffectsFromTrackerOnUpdate)) // call delegate with SEMan instance
                 .InstructionEnumeration();
             }
-
+            
             return instructions;
         }
 
@@ -231,7 +236,6 @@ namespace ValheimCommunityPatch.Patches.Performance
         ///     During SEMan.Update a bunch of StatusEffects may be stopped and removed. Need to update the tracker accordingly.
         /// </summary>
         /// <param name="seMan"></param>
-        /// <param name="removeStatusEffects"></param>
         /// <returns></returns>
         private static void RemoveStatusEffectsFromTrackerOnUpdate(SEMan seMan)
         {
