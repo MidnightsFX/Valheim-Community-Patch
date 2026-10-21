@@ -34,7 +34,8 @@ namespace ValheimCommunityPatch.Patches.Performance
 
         /// <summary>
         ///     Redirect request for status effect to delegate method and if it returns null then run the original 
-        ///     method in case someone directly modified ObjectDB.m_statusEffects
+        ///     method in case someone directly modified ObjectDB.m_statusEffects without changing the total
+        ///     number of status effects in the list.
         /// </summary>
         /// <param name="instructions"></param>
         /// <param name="il"></param>
@@ -59,10 +60,24 @@ namespace ValheimCommunityPatch.Patches.Performance
                 .InstructionEnumeration();
         }
 
+
+        /// <summary>
+        ///     Check if StatusEffectMap is still current and update the map if it is not
+        ///     because something directly modified the number of items in ObjectDB.m_statusEffects
+        /// </summary>
+        /// <param name="nameHash"></param>
+        /// <returns></returns>
         internal static StatusEffect GetStatusEffectFromMap(int nameHash) {
+
+            if (ObjectDB.instance.m_StatusEffects.Count != StatusEffectMap.Count)
+            {
+                UpdateStatusEffectMap(ObjectDB.instance);
+            }
+
             if (StatusEffectMap.TryGetValue(nameHash, out StatusEffect statusEffect)){
                 return statusEffect;
             }
+
             return null;
         }
     }
