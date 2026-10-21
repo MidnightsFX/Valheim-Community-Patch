@@ -177,6 +177,43 @@ namespace ValheimCommunityPatch {
         }
 
         /// <summary>
+        /// Runs a backwards match without mutating anything when it fails. A failed
+        /// <see cref="CodeMatcher.MatchStartBackwards"/> leaves Pos at -1, so any chained
+        /// RemoveInstruction/Insert throws an out of range exception - and a throwing
+        /// transpiler makes HarmonyX discard every patch on the target method, including
+        /// other mods'. Bail out through this instead so a stolen anchor only costs us
+        /// our own patch.
+        /// </summary>
+        public static bool TryMatchStartBackwards(this CodeMatcher matcher, string failureMessage, params CodeMatch[] matches)
+        {
+            matcher.MatchStartBackwards(matches);
+            if (matcher.IsInvalid)
+            {
+                Logger.LogWarning($"{failureMessage} Anchor instruction not found, it was likely consumed by another mod. Skipping this patch.");
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Runs a backwards match without mutating anything when it fails. A failed
+        /// <see cref="CodeMatcher.MatchStartBackwards"/> leaves Pos at -1, so any chained
+        /// RemoveInstruction/Insert throws an out of range exception - and a throwing
+        /// transpiler makes HarmonyX discard every patch on the target method, including
+        /// other mods'. Bail out through this instead so a stolen anchor only costs us
+        /// our own patch.
+        /// </summary>
+        public static bool TryMatchStartBackwards(this CodeMatcher matcher, params CodeMatch[] matches)
+        {
+            matcher.MatchStartBackwards(matches);
+            if (matcher.IsInvalid)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
         /// <see cref="TryMatchStartForward"/>, but leaving the position on the last matched
         /// instruction instead of the first.
         /// </summary>
