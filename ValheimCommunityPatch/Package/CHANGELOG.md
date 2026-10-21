@@ -1,9 +1,14 @@
 # Changelog
 
+**0.37.1**
+```
+- Leviathans, meteorites and similar rocks no longer get stuck unbreakable after a hit the game cannot trace back to whoever made it (Thanks searica)
+```
+
 **0.37.0**
 ```
 - The Love Potion attracts starred trolls again, including during troll raids and for every player in multiplayer.
-- Improves frozen water compatibility with seaon mods
+- Improves frozen water compatibility with season mods
 - Creatures keep finding paths after sailing or portalling past busy coasts
 - The hammer build menu no longer slows down and holds on to more memory the longer you play.
 - Returning to the main menu no longer leaves the old menu and inventory screen in memory.

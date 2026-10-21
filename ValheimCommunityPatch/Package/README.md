@@ -376,6 +376,11 @@ what is recorded, so they run on every side.
   of nearby ones that are playing. The game also treats the bonfire, cauldrons, spinning wheel, blast
   furnace, eitr refinery, bathtub and sap collector as one sound, so only the nearest of them plays;
   each now plays on its own. How many of the same sound play at once is unchanged.
+- **Fix Rock Hit Crash** *(both)* — stops a hit on a leviathan, meteorite or other rock mined in parts
+  failing halfway when the game cannot find who made it: a hit from a mod that names no attacker, or
+  from a player the rock's owner has not loaded yet. Vanilla saves the damage and then throws, so on the
+  killing blow that part stays in place, drops nothing and can no longer be mined. Tree, log, building
+  and other rock hits also skip a second lookup of the attacker.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -545,6 +550,7 @@ The mods involved:
 | Fix Pathfinding Link Limit | MidnightsFX | — |
 | Fix Settings Window Disconnect | MidnightsFX | — |
 | Fix Looping Sound Muting | MidnightsFX | — |
+| Fix Rock Hit Crash | searica | Contributed the fix ([#21](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/21)) |
 
 ### Server memory
 

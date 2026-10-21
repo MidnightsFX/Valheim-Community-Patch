@@ -39,7 +39,7 @@
 
   <Import Project="ModPackageTool.targets" Condition="Exists('ModPackageTool.targets')" />
 
-	<ItemGroup>
+  <ItemGroup>
     <None Include="app.config" />
   </ItemGroup>
 

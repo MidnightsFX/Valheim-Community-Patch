@@ -10,7 +10,7 @@ namespace ValheimCommunityPatch {
 
     /// <summary>Helpers shared by this mod's patches.</summary>
     internal static class PatchHelper {
-        /// <summary>Pass as <c>expected</c> to <see cref="ReplaceCalls"/> to accept any non-zero count.</summary>
+        /// <summary>Pass as <c>expected</c> to <see cref="ReplaceCalls"/> or <see cref="ReplaceAllMatches"/> to accept any non-zero count.</summary>
         internal const int AnyCount = -1;
 
         /// <summary>A deep copy of a transpiler's input, safe to rewrite in place.</summary>
@@ -70,48 +70,54 @@ namespace ValheimCommunityPatch {
             return instructions;
         }
 
-
         /// <summary>
-        /// Rewrites every instance found that matches to <paramref name="original"/> with the instructions 
-        /// provided by <paramref name="replacement"/>, which must take the same stack and return the same type.
+        /// Rewrites every run of instructions matching <paramref name="pattern"/> into a fresh copy of
+        /// <paramref name="replacement"/>, which must take the same stack and leave the same type.
         /// </summary>
         /// <remarks>
-        /// Returns the input untouched, and logs why, when the number of matches found is not
-        /// <paramref name="expected"/> (or is zero for <see cref="AnyCount"/>). That usually means
-        /// another mod has already rewritten the method, in which case standing down is the right
-        /// outcome; see the Priority.Last note in ValheimCommunityPatch.ApplyPatches.
+        /// A <see cref="CodeMatch"/> built from a null operand matches any operand, so the caller
+        /// must check every member it resolved for the pattern before calling this. Labels and
+        /// exception blocks on a match's first instruction move to the replacement's first; a
+        /// label or block on any later one means something jumps into the middle of the match, so
+        /// the method is left alone. Returns the input untouched, and logs why, when that happens
+        /// or when the number of matches is not <paramref name="expected"/> (or is zero for
+        /// <see cref="AnyCount"/>), as <see cref="ReplaceCalls"/> does.
         /// </remarks>
         internal static IEnumerable<CodeInstruction> ReplaceAllMatches(
-            IEnumerable<CodeInstruction> instructions, 
-            CodeMatch[] original, 
-            List<CodeInstruction> replacement,
-            string site, 
-            int expected = AnyCount)
-        {
-            if (original == null || replacement == null)
-            {
-                Logger.LogWarning($"{site}: a method this fix needs could not be resolved, so it is inactive here.");
-                return instructions;
-            }
-
-            List<CodeInstruction> codes = Copy(instructions);
+            IEnumerable<CodeInstruction> instructions, CodeMatch[] pattern, CodeInstruction[] replacement,
+            string site, int expected = AnyCount) {
+            // CodeMatcher copies every instruction it is given, so the input stays untouched for a bail-out.
+            CodeMatcher matcher = new CodeMatcher(instructions);
 
             int found = 0;
-            CodeMatcher matcher = new CodeMatcher(codes);
-            while (matcher.TryMatchStartForward(original))
-            {
-                matcher.RemoveInstructions(original.Length);
-                matcher.InsertAndAdvance(replacement);
+            while (matcher.MatchStartForward(pattern).IsValid) {
+                for (int i = 1; i < pattern.Length; i++) {
+                    CodeInstruction inner = matcher.InstructionAt(i);
+                    if (inner.labels.Count == 0 && inner.blocks.Count == 0) { continue; }
+
+                    Logger.LogWarning(
+                        $"{site}: a jump or exception block lands inside the code this fix rewrites, " +
+                        "so it is inactive here. Another mod has most likely already rewritten the " +
+                        "method - if so, nothing is wrong.");
+                    return instructions;
+                }
+
+                // Fresh instructions per match: Harmony re-runs every transpiler each time a mod
+                // patches the method, and a shared instance would carry one run's edits into the next.
+                CodeInstruction[] inserted = new CodeInstruction[replacement.Length];
+                for (int i = 0; i < inserted.Length; i++) { inserted[i] = replacement[i].Clone(); }
+                inserted[0].MoveLabelsFrom(matcher.Instruction).MoveBlocksFrom(matcher.Instruction);
+
+                matcher.RemoveInstructions(pattern.Length).InsertAndAdvance(inserted);
                 found++;
             }
 
-            //Logger.LogInfo($"{site}: Found {found} match(es) and replaced them.");
             bool ok = expected == AnyCount ? found > 0 : found == expected;
             if (ok) { return matcher.InstructionEnumeration(); }
 
             string wanted = expected == AnyCount ? "at least 1" : expected.ToString();
             Logger.LogWarning(
-                $"{site}: expected {wanted} match(es) to for original instructions, found {found}, " +
+                $"{site}: expected {wanted} match(es) of the code this fix rewrites, found {found}, " +
                 "so this fix is inactive here. Another mod has most likely already rewritten the " +
                 "method - if so, nothing is wrong.");
             return instructions;

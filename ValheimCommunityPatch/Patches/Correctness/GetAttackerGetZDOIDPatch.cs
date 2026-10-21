@@ -1,90 +1,109 @@
-﻿using HarmonyLib;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
-using UnityEngine;
+using HarmonyLib;
 
-namespace ValheimCommunityPatch.Patches.Correctness
-{
-    [PatchSide(Side.Both)] // I think?
+namespace ValheimCommunityPatch.Patches.Correctness {
+    // Fix Rock Hit Crash: stops a hit on a leviathan, meteorite or other multi-part rock failing
+    // halfway through, and leaving that part unbreakable, when the hit has no attacker this
+    // machine can find.
+    //
+    // MineRock.RPC_Hit passes hit.GetAttacker().GetZDOID() to its hit and destroyed effects with no
+    // null check. GetAttacker is null for a hit that carries no attacker and for an attacker the
+    // rock's owner has not loaded, so a damaging hit throws after the new health is saved: on the
+    // killing blow the part is never hidden and drops nothing, and every later hit stops at
+    // "Already destroyed". MineRock5.DamageArea, TreeBase.RPC_Damage, TreeLog.RPC_Damage,
+    // WearNTear.RPC_Damage and WearNTear.Destroy guard the same expression, but look the attacker
+    // up a second time for it.
+    //
+    // Transpilers replace each GetAttacker().GetZDOID() pair with a call that returns
+    // hit.m_attacker, the id GetZDOID returns whenever GetAttacker finds the attacker, so the
+    // guarded sites skip the second lookup and MineRock no longer throws. The id only tells the
+    // effect whose gamepad to rumble, so passing it for an attacker that is not loaded is harmless.
+    //
+    // Both: the handlers run on the hit object's owner. Provenance: contributed by searica (PR #21).
+    [PatchSide(Side.Both)]
+    [ModDisableable]
     [HarmonyPatch]
-    internal static class GetAttackerGetZDOIDPatch
-    {
-        private static readonly MethodInfo HitData_GetAttacker = AccessTools.Method(typeof(HitData), nameof(HitData.GetAttacker));
-        private static readonly MethodInfo Character_GetZDOID = AccessTools.Method(typeof(Character), nameof(Character.GetZDOID));
-        private static readonly FieldInfo HitData_AttackerZDOID = AccessTools.Field(typeof(HitData), nameof(HitData.m_attacker));
+    internal static class GetAttackerGetZDOIDPatch {
+        internal static FixToggle Enabled;
 
-        // Targets and replaces these two lines
-        //IL_00fd: ldarg.2
-        //IL_00fe: callvirt instance class Character HitData::GetAttacker()
-        //IL_0103: callvirt instance valuetype ZDOID Character::GetZDOID()
-        private static readonly CodeMatch[] GetAttackerGetZDOIDInstructions = new CodeMatch[] { 
-            new CodeMatch(OpCodes.Callvirt, HitData_GetAttacker),
-            new CodeMatch(OpCodes.Callvirt, Character_GetZDOID),
+        internal static void BindConfig() {
+            Enabled = ValConfig.BindFixToggle(
+                typeof(GetAttackerGetZDOIDPatch),
+                ValConfig.SectionCorrectness,
+                "Fix Rock Hit Crash",
+                true,
+                "Stops a hit on a leviathan, meteorite or other multi-part rock failing halfway and " +
+                "leaving that part unbreakable when the hit comes from a mod, or from a player the " +
+                "rock's owner has not loaded yet. Changing this requires a game restart.");
+        }
+
+        private static readonly MethodInfo GetAttackerMethod = AccessTools.Method(typeof(HitData), nameof(HitData.GetAttacker));
+        private static readonly MethodInfo GetZdoidMethod = AccessTools.Method(typeof(Character), nameof(Character.GetZDOID));
+        private static readonly MethodInfo AttackerIdMethod = AccessTools.Method(typeof(GetAttackerGetZDOIDPatch), nameof(AttackerId));
+
+        // hit.GetAttacker().GetZDOID(), with the HitData already on the stack.
+        private static readonly CodeMatch[] GetAttackerZdoid = {
+            new CodeMatch(OpCodes.Callvirt, GetAttackerMethod),
+            new CodeMatch(OpCodes.Callvirt, GetZdoidMethod),
         };
 
-        private static readonly List<CodeInstruction> GetAttackerZDOIDReplacementInstructions = new List<CodeInstruction>() { 
-            new CodeInstruction(OpCodes.Ldfld, HitData_AttackerZDOID)
+        private static readonly CodeInstruction[] AttackerIdCall = {
+            new CodeInstruction(OpCodes.Call, AttackerIdMethod),
         };
 
-        // In the future target and replace these lines as well
-        //IL_0107: callvirt instance class Character HitData::GetAttacker()
-        //IL_010c: ldnull
-        //IL_010d: call bool[UnityEngine.CoreModule] UnityEngine.Object::op_Inequality(class [UnityEngine.CoreModule] UnityEngine.Object, class [UnityEngine.CoreModule] UnityEngine.Object)
-        //IL_0112: brfalse.s IL_0120
+        // The stored attacker id, or the game's own expression again once the fix is turned off.
+        private static ZDOID AttackerId(HitData hit) =>
+            Enabled.Value ? hit.m_attacker : hit.GetAttacker().GetZDOID();
 
-        //private static readonly CodeMatch[] CheckAttackerIsNullInstructions = new CodeMatch[] {
-        //    new CodeMatch(OpCodes.Callvirt, HitData_GetAttacker),
-        //    new CodeMatch(OpCodes.Ldnull),
-        //    new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(UnityEngine.Object), nameof(UnityEngine.Object)))
-        //};
+        private static IEnumerable<CodeInstruction> Rewrite(IEnumerable<CodeInstruction> instructions, string site) {
+            if (Enabled == null || !Enabled.Value) { return instructions; }
 
+            // Checked here because a pattern built from a null method would match any callvirt.
+            if (GetAttackerMethod == null || GetZdoidMethod == null || AttackerIdMethod == null) {
+                Logger.LogWarning($"{site}: a method this fix needs could not be resolved, so it is inactive here.");
+                return instructions;
+            }
 
+            return PatchHelper.ReplaceAllMatches(instructions, GetAttackerZdoid, AttackerIdCall, site);
+        }
+
+        // Priority.Last on all six: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(MineRock), nameof(MineRock.RPC_Hit))]
-        private static IEnumerable<CodeInstruction> MineRock_RPC_Hit_GetAttackerZDOIDOverride(IEnumerable<CodeInstruction> instructions)
-        {
-            //Logger.LogInfo("Patching MineRock.RPC_Hit");
-            return PatchHelper.ReplaceAllMatches(instructions, GetAttackerGetZDOIDInstructions, GetAttackerZDOIDReplacementInstructions, nameof(MineRock.RPC_Hit));
-        }
+        private static IEnumerable<CodeInstruction> MineRockHitTranspiler(IEnumerable<CodeInstruction> instructions) =>
+            Rewrite(instructions, "MineRock.RPC_Hit");
 
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(MineRock5), nameof(MineRock5.DamageArea))]
-        private static IEnumerable<CodeInstruction> MineRock5_DamageArea_GetAttackerZDOIDOverride(IEnumerable<CodeInstruction> instructions)
-        {
-            return PatchHelper.ReplaceAllMatches(instructions, GetAttackerGetZDOIDInstructions, GetAttackerZDOIDReplacementInstructions, nameof(MineRock5.DamageArea));
-        }
+        private static IEnumerable<CodeInstruction> MineRock5DamageAreaTranspiler(IEnumerable<CodeInstruction> instructions) =>
+            Rewrite(instructions, "MineRock5.DamageArea");
 
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(TreeBase), nameof(TreeBase.RPC_Damage))]
-        private static IEnumerable<CodeInstruction> TreeBase_RPC_Damage_GetAttackerZDOIDOverride(IEnumerable<CodeInstruction> instructions)
-        {
-            return PatchHelper.ReplaceAllMatches(instructions, GetAttackerGetZDOIDInstructions, GetAttackerZDOIDReplacementInstructions, nameof(TreeBase.RPC_Damage));
-        }
+        private static IEnumerable<CodeInstruction> TreeBaseDamageTranspiler(IEnumerable<CodeInstruction> instructions) =>
+            Rewrite(instructions, "TreeBase.RPC_Damage");
 
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(TreeLog), nameof(TreeLog.RPC_Damage))]
-        private static IEnumerable<CodeInstruction> TreeLog_RPC_Damage_GetAttackerZDOIDOverride(IEnumerable<CodeInstruction> instructions)
-        {
-            return PatchHelper.ReplaceAllMatches(instructions, GetAttackerGetZDOIDInstructions, GetAttackerZDOIDReplacementInstructions, nameof(TreeLog.RPC_Damage));
-        }
+        private static IEnumerable<CodeInstruction> TreeLogDamageTranspiler(IEnumerable<CodeInstruction> instructions) =>
+            Rewrite(instructions, "TreeLog.RPC_Damage");
 
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(WearNTear), nameof(WearNTear.RPC_Damage))]
-        private static IEnumerable<CodeInstruction> WearNTear_RPC_Damage_GetAttackerZDOIDOverride(IEnumerable<CodeInstruction> instructions)
-        {
-            return PatchHelper.ReplaceAllMatches(instructions, GetAttackerGetZDOIDInstructions, GetAttackerZDOIDReplacementInstructions, nameof(WearNTear.RPC_Damage));
-        }
+        private static IEnumerable<CodeInstruction> WearNTearDamageTranspiler(IEnumerable<CodeInstruction> instructions) =>
+            Rewrite(instructions, "WearNTear.RPC_Damage");
 
         [HarmonyTranspiler]
+        [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(WearNTear), nameof(WearNTear.Destroy))]
-        private static IEnumerable<CodeInstruction> WearNTear_Destroy_GetAttackerZDOIDOverride(IEnumerable<CodeInstruction> instructions)
-        {
-            return PatchHelper.ReplaceAllMatches(instructions, GetAttackerGetZDOIDInstructions, GetAttackerZDOIDReplacementInstructions, nameof(WearNTear.Destroy));
-        }
+        private static IEnumerable<CodeInstruction> WearNTearDestroyTranspiler(IEnumerable<CodeInstruction> instructions) =>
+            Rewrite(instructions, "WearNTear.Destroy");
     }
 }
