@@ -266,6 +266,7 @@ namespace ValheimCommunityPatch.Patches.Performance
         /// <param name="instructions"></param>
         /// <returns></returns>
         [HarmonyTranspiler]
+        [HarmonyEmitIL(".dumps")]
         [HarmonyPatch(typeof(SEMan), nameof(SEMan.OnDamaged))]
         private static IEnumerable<CodeInstruction> SEMan_OnDamaged_PriorityPatch(IEnumerable<CodeInstruction> instructions)
         {
@@ -279,7 +280,7 @@ namespace ValheimCommunityPatch.Patches.Performance
 
             if (matcher.TryMatchStartForward("Failed to find anchor instructions for SEMan.OnDamaged Transpiler", matches))
             {
-                return matcher.InsertAndAdvance(new[] {
+                return matcher.Advance(1).InsertAndAdvance(new[] {
                     new CodeInstruction(OpCodes.Ldarg_1),  // load HitData onto stack
                     new CodeInstruction(OpCodes.Ldarg_2), // load Character attacker onto stack
                 }).InsertAndAdvance(Transpilers.EmitDelegate(PriorityOnDamaged)) // call delegate with SEMan instance
