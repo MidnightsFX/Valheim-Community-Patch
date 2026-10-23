@@ -30,7 +30,7 @@ namespace ValheimCommunityPatch.Patches.Performance
             IEnumerable<CodeInstruction> codes = PatchHelper.Copy(instructions);
             CodeMatcher matcher = new(codes);
             matcher.End(); // move to end and match backwards
-            if (matcher.TryMatchStartBackwards(new[] { new CodeMatch(OpCodes.Ret) }))
+            if (matcher.TryMatchStartBackwards("SEMan.Constructor Transpiler", new[] { new CodeMatch(OpCodes.Ret) }))
             {
                 matcher.InsertAndAdvance(new CodeInstruction(OpCodes.Ldarg_0)).InsertAndAdvance(
                     Transpilers.EmitDelegate(AddSEManToTracker)
@@ -82,7 +82,7 @@ namespace ValheimCommunityPatch.Patches.Performance
             CodeMatcher matcher = new(codes);
             CodeMatch[] matches = new[] { new CodeMatch(OpCodes.Ldarg_0) }; // targets the first line after the initial guard
 
-            if (matcher.TryMatchStartForward(matches))
+            if (matcher.TryMatchStartForward("SEMan.GetStatusEfect Transpiler", matches))
             {
                 matcher.Advance(1).InsertAndAdvance(
                     new[] { new CodeInstruction(OpCodes.Ldarg_1) } // SEMan already loaded so just load input NameHash
@@ -163,6 +163,7 @@ namespace ValheimCommunityPatch.Patches.Performance
             }
             catch (Exception e)
             {
+                Logger.LogWarning("SEMan.RemoveStatusEffect Transpiler failed. Skipping this patch");
                 Logger.LogWarning($"{e.Message}");
             }
             return instructions;
@@ -220,12 +221,11 @@ namespace ValheimCommunityPatch.Patches.Performance
             };
 
             matcher.End();
-            if (matcher.TryMatchStartBackwards("Failed to find anchor instructions for SEMan.Update Transpiler", matches))
+            if (matcher.TryMatchStartBackwards("SEMan.Update Transpiler", matches))
             {
-                return matcher.InsertAndAdvance(new[] {
-                    new CodeInstruction(OpCodes.Ldarg_0),  // load SEMan onto stack
-                }).InsertAndAdvance(Transpilers.EmitDelegate(RemoveStatusEffectsFromTrackerOnUpdate)) // call delegate with SEMan instance
-                .InstructionEnumeration();
+                return matcher.InsertAndAdvance(new CodeInstruction(OpCodes.Ldarg_0))  // load SEMan onto stack
+                            .InsertAndAdvance(Transpilers.EmitDelegate(RemoveStatusEffectsFromTrackerOnUpdate)) // call delegate with SEMan instance
+                            .InstructionEnumeration();
             }
 
             return instructions;
@@ -266,19 +266,16 @@ namespace ValheimCommunityPatch.Patches.Performance
         /// <param name="instructions"></param>
         /// <returns></returns>
         [HarmonyTranspiler]
-        [HarmonyEmitIL(".dumps")]
+        //[HarmonyEmitIL(".dumps")]
         [HarmonyPatch(typeof(SEMan), nameof(SEMan.OnDamaged))]
         private static IEnumerable<CodeInstruction> SEMan_OnDamaged_PriorityPatch(IEnumerable<CodeInstruction> instructions)
         {
             IEnumerable<CodeInstruction> codes = PatchHelper.Copy(instructions);
             CodeMatcher matcher = new(codes);
 
-            CodeMatch[] matches = new[] {
-                new CodeMatch(OpCodes.Ldarg_0),
-            };
+            CodeMatch[] matches = new[] { new CodeMatch(OpCodes.Ldarg_0) };
 
-
-            if (matcher.TryMatchStartForward("Failed to find anchor instructions for SEMan.OnDamaged Transpiler", matches))
+            if (matcher.TryMatchStartForward("SEMan.OnDamaged Transpiler", matches))
             {
                 return matcher.Advance(1).InsertAndAdvance(new[] {
                     new CodeInstruction(OpCodes.Ldarg_1),  // load HitData onto stack
