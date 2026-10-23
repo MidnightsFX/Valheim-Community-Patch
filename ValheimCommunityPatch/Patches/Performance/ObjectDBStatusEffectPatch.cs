@@ -1,83 +1,110 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using HarmonyLib;
-using System.Reflection.Emit;
 
-namespace ValheimCommunityPatch.Patches.Performance
-{
+namespace ValheimCommunityPatch.Patches.Performance {
+    // Fix Status Effect Lookup Scan: ObjectDB.GetStatusEffect answers from a map keyed by name hash
+    // instead of walking every status effect in the game.
+    //
+    // GetStatusEffect compares the hash with NameHash() of each entry in m_StatusEffects, front to
+    // back. The game asks it each time a character gains an effect it does not already have, and mods
+    // ask it for their own effects; large mod packs register hundreds.
+    //
+    // A prefix returns the same effect, the first in list order with that hash, from a map built on
+    // first use. The map is rebuilt whenever m_StatusEffects is replaced or its contents change, read
+    // from the list's own mutation counter, so effects mods add, remove or swap while playing are
+    // found. A list holding an entry vanilla's loop would throw on is left to vanilla. It runs after
+    // other mods' prefixes and respects one that already replaced the call, and stands down for the
+    // session when another mod transpiles the method.
+    //
+    // Client: the callers are characters' owners. Provenance: contributed by searica (PR #22).
     [PatchSide(Side.Client)]
-    [HarmonyPatch]
-    internal static class ObjectDBStatusEffectPatch
-    {
-        //private static readonly MethodInfo SEManConstructor = AccessTools.Method(typeof(SEMan), ".ctor");
-        private static readonly Dictionary<int, StatusEffect> StatusEffectMap = new Dictionary<int, StatusEffect>();
+    [ModDisableable]
+    [HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.GetStatusEffect))]
+    internal static class ObjectDBStatusEffectPatch {
+        private const string FixName = "Fix Status Effect Lookup Scan";
 
-        /// <summary>
-        ///     Reset and update the map of status effects whenever ObjectDB is updated
-        /// </summary>
-        /// <param name="__instance"></param>
-        [HarmonyPostfix]
-        [HarmonyPriority(Priority.Last)] // want to do this after other mods add new status effects
-        [HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.UpdateRegisters))]
-        internal static void UpdateStatusEffectMap(ObjectDB __instance)
-        {
-            StatusEffectMap.Clear();
-            int nameHash;
-            foreach (StatusEffect statusEffect in __instance.m_StatusEffects)
-            {
-                nameHash = statusEffect.NameHash();
-                if (!StatusEffectMap.ContainsKey(nameHash))
-                {
-                    StatusEffectMap.Add(nameHash, statusEffect);    
+        private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ObjectDBStatusEffectPatch));
+
+        private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(ObjectDBStatusEffectPatch),
+            AccessTools.DeclaredMethod(typeof(ObjectDB), nameof(ObjectDB.GetStatusEffect)),
+            HookKinds.Transpilers,
+            owners => $"Status effect lookup is changed by {owners}, so '{FixName}' stands down and " +
+                      "that mod's version applies.");
+
+        private static readonly AccessTools.FieldRef<List<StatusEffect>, int> ListVersion = ResolveListVersion();
+
+        private static readonly Dictionary<int, StatusEffect> ByHash = new Dictionary<int, StatusEffect>();
+        private static List<StatusEffect> _cachedList;
+        private static int _cachedVersion;
+        private static bool _cacheUsable;
+
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
+        private static bool Prefix(ObjectDB __instance, int nameHash, ref StatusEffect __result, bool __runOriginal) {
+            if (!__runOriginal) { return false; }
+            if (ApiSwitch.Off || ListVersion == null) { return true; }
+
+            // Vanilla throws on a missing list; it still does.
+            List<StatusEffect> effects = __instance.m_StatusEffects;
+            if (effects == null) { return true; }
+            if (Takeover.TakenOver) { return true; }
+
+            int version = ListVersion(effects);
+            if (!ReferenceEquals(effects, _cachedList) || version != _cachedVersion) {
+                _cachedList = effects;
+                _cachedVersion = version;
+                _cacheUsable = Rebuild(effects);
+            }
+
+            if (!_cacheUsable) { return true; }
+
+            // Null when no effect has that hash, as vanilla.
+            ByHash.TryGetValue(nameHash, out __result);
+            return false;
+        }
+
+        // False when an entry would make vanilla's loop throw, so the lookup is left to it.
+        private static bool Rebuild(List<StatusEffect> effects) {
+            ByHash.Clear();
+            for (int i = 0; i < effects.Count; i++) {
+                StatusEffect effect = effects[i];
+                if ((object)effect == null) { return false; }
+
+                int hash;
+                try {
+                    hash = effect.NameHash();
+                } catch (Exception e) {
+                    // A destroyed asset whose hash was never read: its name can no longer be.
+                    Logger.LogDebug($"{FixName}: status effect {i} cannot be read ({e.GetType().Name}).");
+                    return false;
                 }
+
+                // The first in list order wins, as in vanilla's loop.
+                if (!ByHash.ContainsKey(hash)) { ByHash.Add(hash, effect); }
             }
+
+            return true;
         }
 
-        /// <summary>
-        ///     Redirect request for status effect to delegate method and if it returns null then run the original 
-        ///     method in case someone directly modified ObjectDB.m_statusEffects without changing the total
-        ///     number of status effects in the list.
-        /// </summary>
-        /// <param name="instructions"></param>
-        /// <param name="il"></param>
-        /// <returns></returns>
-        [HarmonyTranspiler]
-        [HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.GetStatusEffect))]
-        internal static IEnumerable<CodeInstruction> ObjectDB_GetStatusEffect(IEnumerable<CodeInstruction> instructions, ILGenerator il)
-        {
-            IEnumerable<CodeInstruction> codes = PatchHelper.Copy(instructions);
-            CodeMatcher matcher = new(codes);
-            Label originalMethodStart = il.DefineLabel();
-            matcher.Start();
-            return matcher.InsertAndAdvance(new CodeInstruction(OpCodes.Ldarg_1)) // load the nameHash the original method was called with
-                .InsertAndAdvance(Transpilers.EmitDelegate(GetStatusEffectFromMap)) // call delegate with nameHash and return result
-                .InsertAndAdvance(new[]
-                {
-                    new CodeInstruction(OpCodes.Dup), // duplicate the returned value to use it in the Brfalse statment 
-                    new CodeInstruction(OpCodes.Brfalse, originalMethodStart), // break to original method start if result from status effect was null 
-                    new CodeInstruction(OpCodes.Ret)  // return the result
-                }).AddLabels(new List<Label>() { originalMethodStart })  // add label for Brfalse to jump to just after the return statement
-                .InsertAndAdvance(new CodeInstruction(OpCodes.Pop)) // pop the value returned by GetStatusEffectFromMap before running original method
-                .InstructionEnumeration();
-        }
-
-
-        /// <summary>
-        ///     Check if StatusEffectMap is still current and update the map if it is not
-        ///     because something directly modified the number of items in ObjectDB.m_statusEffects
-        /// </summary>
-        /// <param name="nameHash"></param>
-        /// <returns></returns>
-        internal static StatusEffect GetStatusEffectFromMap(int nameHash) {
-
-            if (ObjectDB.instance.m_StatusEffects.Count != StatusEffectMap.Count)
-            {
-                UpdateStatusEffectMap(ObjectDB.instance);
+        // Probed on a real list rather than trusted: a counter that never moves would keep serving
+        // a list that mods had edited.
+        private static AccessTools.FieldRef<List<StatusEffect>, int> ResolveListVersion() {
+            try {
+                AccessTools.FieldRef<List<StatusEffect>, int> version = AccessTools.FieldRefAccess<List<StatusEffect>, int>("_version");
+                List<StatusEffect> probe = new List<StatusEffect>();
+                int before = version(probe);
+                probe.Add(null);
+                if (version(probe) != before) { return version; }
+            } catch (Exception e) {
+                Logger.LogDebug($"List mutation counter unavailable ({e.GetType().Name}).");
             }
 
-            if (StatusEffectMap.TryGetValue(nameHash, out StatusEffect statusEffect)){
-                return statusEffect;
-            }
-
+            Logger.LogWarning(
+                $"{FixName}: the status effect list's change counter cannot be read, so this fix is " +
+                "inactive and the game's own lookup is used.");
             return null;
         }
     }

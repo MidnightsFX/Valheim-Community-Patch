@@ -235,6 +235,13 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Recipe Lookup Scan** *(client)* — finds an item's recipe from a cache instead of searching
   every recipe in the game, which the crafting screen does for each worn item on every frame it is
   open at a workbench. Recipes that mods add, remove or change while playing are still found.
+- **Fix Status Effect Lookup Scan** *(client)* — finds a status effect by name from a map instead of
+  searching every status effect in the game, which happens each time a character gains an effect it
+  does not already have. Effects that mods add, remove or swap while playing are still found.
+- **Fix Active Status Effect Lookup** *(client)* — finds one of a character's active status effects
+  by name from a map instead of searching its list of effects, which every effect being added starts
+  with and the player's own update does every frame. Stands down to the game's own lookup if any of
+  the hooks that keep the map current could not attach.
 
 ### Terrain
 
@@ -381,6 +388,11 @@ what is recorded, so they run on every side.
   from a player the rock's owner has not loaded yet. Vanilla saves the damage and then throws, so on the
   killing blow that part stays in place, drops nothing and can no longer be mined. Tree, log, building
   and other rock hits also skip a second lookup of the attacker.
+- **Fix Damage Reaction Order** *(both)* — status effects that strike back when you are hit, such as
+  frost orbs, react to each hit before a shield absorbs it. Vanilla passes the hit to effects in the
+  order they were applied, so whether a reaction that needs a minimum hit fired depended on whether it
+  or the shield came first. Vanilla's own frost orbs need no minimum, so the difference shows with
+  mods' reaction effects. Can be turned off.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -502,6 +514,8 @@ The mods involved:
 | Fix Main Menu Popup Subscription | MidnightsFX | — |
 | Fix Inventory Touch Subscription | MidnightsFX | — |
 | Fix Recipe Lookup Scan | ComfyMods — ComfyAutoRepair | The recipe cache; change detection added here |
+| Fix Status Effect Lookup Scan | searica | Contributed the fix ([#22](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/22)) |
+| Fix Active Status Effect Lookup | searica | Contributed the fix ([#22](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/22)) |
 
 ### Terrain
 
@@ -551,6 +565,7 @@ The mods involved:
 | Fix Settings Window Disconnect | MidnightsFX | — |
 | Fix Looping Sound Muting | MidnightsFX | — |
 | Fix Rock Hit Crash | searica | Contributed the fix ([#21](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/21)) |
+| Fix Damage Reaction Order | searica | Contributed the fix ([#22](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/22)) |
 
 ### Server memory
 

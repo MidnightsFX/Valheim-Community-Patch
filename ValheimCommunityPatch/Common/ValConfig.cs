@@ -127,6 +127,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.GraphicsSettingsEventPatch.BindConfig();
             Patches.Correctness.LoopingSoundConcurrencyPatch.BindConfig();
             Patches.Correctness.GetAttackerGetZDOIDPatch.BindConfig();
+            Patches.Correctness.DamageReactionOrderPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
