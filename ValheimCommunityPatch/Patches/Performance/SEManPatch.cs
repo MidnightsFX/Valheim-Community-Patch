@@ -88,7 +88,7 @@ namespace ValheimCommunityPatch.Patches.Performance
                     new[] { new CodeInstruction(OpCodes.Ldarg_1) } // SEMan already loaded so just load input NameHash
                 ).InsertAndAdvance(Transpilers.EmitDelegate(GetStatusEffectFromTracker)) // call method to check for effect from tracker
                 .InsertAndAdvance(new CodeInstruction(OpCodes.Ret)); // return the result from the tracker
-                
+
                 return matcher.InstructionEnumeration();
             }
 
@@ -103,7 +103,7 @@ namespace ValheimCommunityPatch.Patches.Performance
         /// <returns></returns>
         private static StatusEffect GetStatusEffectFromTracker(SEMan seMan, int nameHash)
         {
-            if (SEManTracker.TryGetValue(seMan, out Dictionary<int, StatusEffect> effectMap) && effectMap.ContainsKey(nameHash)) { 
+            if (SEManTracker.TryGetValue(seMan, out Dictionary<int, StatusEffect> effectMap) && effectMap.ContainsKey(nameHash)) {
                 return effectMap[nameHash];
             }
             return null;
@@ -161,9 +161,9 @@ namespace ValheimCommunityPatch.Patches.Performance
                 .InsertAndAdvance(new CodeInstruction(OpCodes.Ret)) // return the result from the tracker
                 .InstructionEnumeration(); // return instructions
             }
-            catch (Exception e) 
+            catch (Exception e)
             {
-                    Logger.LogWarning($"{e.Message}");
+                Logger.LogWarning($"{e.Message}");
             }
             return instructions;
         }
@@ -212,8 +212,8 @@ namespace ValheimCommunityPatch.Patches.Performance
 
             IEnumerable<CodeInstruction> codes = PatchHelper.Copy(instructions);
             CodeMatcher matcher = new(codes);
-            
-            CodeMatch[] matches = new[] { 
+
+            CodeMatch[] matches = new[] {
                 new CodeMatch(OpCodes.Ldarg_0),
                 new CodeMatch(OpCodes.Ldfld, RemoveStatusEffectsListField),
                 new CodeMatch(OpCodes.Callvirt, StatusEffectListClearMethod),
@@ -227,7 +227,7 @@ namespace ValheimCommunityPatch.Patches.Performance
                 }).InsertAndAdvance(Transpilers.EmitDelegate(RemoveStatusEffectsFromTrackerOnUpdate)) // call delegate with SEMan instance
                 .InstructionEnumeration();
             }
-            
+
             return instructions;
         }
 
@@ -249,8 +249,8 @@ namespace ValheimCommunityPatch.Patches.Performance
                 nameHash = removeEffect.NameHash();
                 if (effectMap.ContainsKey(nameHash))
                 {
-                    effectMap.Remove(nameHash); 
-                }   
+                    effectMap.Remove(nameHash);
+                }
             }
             return;
         }
@@ -274,10 +274,9 @@ namespace ValheimCommunityPatch.Patches.Performance
 
             CodeMatch[] matches = new[] {
                 new CodeMatch(OpCodes.Ldarg_0),
-       
             };
 
-      
+
             if (matcher.TryMatchStartForward("Failed to find anchor instructions for SEMan.OnDamaged Transpiler", matches))
             {
                 return matcher.InsertAndAdvance(new[] {
@@ -304,11 +303,11 @@ namespace ValheimCommunityPatch.Patches.Performance
             {
                 return;
             }
-       
+
             StatusEffect statusEffect;
             foreach (int nameHash in PriorityEffectsOnDamaged)
-            { 
-                if (tracker.TryGetValue(nameHash, out statusEffect)) 
+            {
+                if (tracker.TryGetValue(nameHash, out statusEffect))
                 {
                     statusEffect.OnDamaged(hit, attacker);
                 }
@@ -322,8 +321,6 @@ namespace ValheimCommunityPatch.Patches.Performance
                 }
                 tracker[nameHash].OnDamaged(hit, attacker);
             }
-
         }
-        
     }
 }
