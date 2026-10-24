@@ -1,10 +1,11 @@
 # Changelog
 
-**0.37.1**
+**0.38.0**
 ```
 - Leviathans, meteorites and similar rocks no longer get stuck unbreakable after a hit the game cannot trace back to whoever made it (Thanks searica)
 - Status effects are looked up faster, most noticeably in large mod packs (Thanks searica)
 - Effects that strike back when you are hit, like frost orbs, now react before a shield absorbs the hit, whichever was applied first (Thanks searica)
+- Regen from status effects no longer depends on the order they were applied (Thanks searica)
 ```
 
 **0.37.0**

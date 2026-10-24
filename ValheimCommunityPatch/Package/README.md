@@ -393,6 +393,12 @@ what is recorded, so they run on every side.
   order they were applied, so whether a reaction that needs a minimum hit fired depended on whether it
   or the shield came first. Vanilla's own frost orbs need no minimum, so the difference shows with
   mods' reaction effects. Can be turned off.
+- **Fix Status Effect Regen Application Order** *(client)* — health, stamina and eitr regen from status
+  effects add up the same whichever order the effects were applied in. Vanilla hands the regen to each
+  effect in turn, so a penalty such as Wet reduced only the bonuses applied before it, and Freezing or
+  Puke stopped health regen only when they came after every bonus such as Rested. Bonuses now apply
+  first and penalties after them, which is what vanilla already did in the usual case of being Rested
+  before getting wet or cold. Can be turned off.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -566,6 +572,7 @@ The mods involved:
 | Fix Looping Sound Muting | MidnightsFX | — |
 | Fix Rock Hit Crash | searica | Contributed the fix ([#21](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/21)) |
 | Fix Damage Reaction Order | searica | Contributed the fix ([#22](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/22)) |
+| Fix Status Effect Regen Application Order | searica | Contributed the fix ([#25](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/25)) |
 
 ### Server memory
 

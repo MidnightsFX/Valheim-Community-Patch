@@ -1,247 +1,98 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using HarmonyLib;
-using System.Reflection.Emit;
 
-namespace ValheimCommunityPatch.Patches.Correctness
-{
-    [HarmonyPatch]
+namespace ValheimCommunityPatch.Patches.Correctness {
+    // Fix Status Effect Regen Application Order: health, stamina and eitr regen from status effects
+    // add up the same whichever order the effects were applied in.
+    //
+    // SEMan hands the regen multiplier to each active effect in the order the effects were added. A
+    // bonus adds to the multiplier and a penalty scales it, so a penalty scales only the bonuses
+    // applied before it: Rested then Wet regenerates health at 1.125x, Wet then Rested at 1.25x, and
+    // Freezing or Puke, which stop health regen, stop it only when they came after every bonus.
+    //
+    // Prefixes on the three methods hand the multiplier to every bonus first and then to every
+    // penalty, each group in vanilla's list order, so each effect still applies its own arithmetic
+    // and a penalty always scales the bonuses. An effect's group is what it does to a multiplier of
+    // 1 on its own, so mods' effects are grouped by their own overrides. They run after other mods'
+    // prefixes and respect one that already replaced the call, and each stands down for the session
+    // when another mod transpiles its method.
+    //
+    // Client: regen is only worked out for the local player. Provenance: contributed by searica
+    // (PR #25).
+    [PatchSide(Side.Client)]
     [ModDisableable]
-    [PatchSide(Side.Both)]
-    internal static class StatusEffectRegenApplicationOrderPatch
-    {
+    [HarmonyPatch]
+    internal static class StatusEffectRegenApplicationOrderPatch {
         private const string FixName = "Fix Status Effect Regen Application Order";
-
         internal static FixToggle Enabled;
 
-        internal static void BindConfig()
-        {
+        internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
                 typeof(StatusEffectRegenApplicationOrderPatch),
                 ValConfig.SectionCorrectness,
                 FixName,
                 true,
-                "Regen bonuses and penalties from status effects are applied in a stable ordering so that the resulting " +
-                "final regen multiplier no longer depends on the order the status effects were applied in.");
+                "Regen bonuses and penalties from status effects add up the same whichever order they " +
+                "were applied in, so effects like Wet or Freezing always reduce the extra regen from Rested.");
         }
 
-        private static readonly TakeoverCheck HealthRegenTakeover = new TakeoverCheck(
-            typeof(StatusEffectRegenApplicationOrderPatch),
-            AccessTools.DeclaredMethod(typeof(SEMan), nameof(SEMan.ModifyHealthRegen)),
-            HookKinds.Transpilers,
-            owners => $"Modifying health regen is changed by {owners}, so '{FixName}' stands down " +
-                      "and that mod's version applies.");
+        private enum Regen { Health, Stamina, Eitr }
 
-        private static readonly TakeoverCheck StaminaRegenTakeover = new TakeoverCheck(
-            typeof(StatusEffectRegenApplicationOrderPatch),
-            AccessTools.DeclaredMethod(typeof(SEMan), nameof(SEMan.ModifyStaminaRegen)),
-            HookKinds.Transpilers,
-            owners => $"Modifying stamina regen is changed by {owners}, so '{FixName}' stands down " +
-                      "and that mod's version applies.");
+        private static readonly TakeoverCheck HealthTakeover = TakeoverOf(nameof(SEMan.ModifyHealthRegen), "Health");
+        private static readonly TakeoverCheck StaminaTakeover = TakeoverOf(nameof(SEMan.ModifyStaminaRegen), "Stamina");
+        private static readonly TakeoverCheck EitrTakeover = TakeoverOf(nameof(SEMan.ModifyEitrRegen), "Eitr");
 
-        private static readonly TakeoverCheck EitrRegenTakeover = new TakeoverCheck(
+        private static TakeoverCheck TakeoverOf(string method, string stat) => new TakeoverCheck(
             typeof(StatusEffectRegenApplicationOrderPatch),
-            AccessTools.DeclaredMethod(typeof(SEMan), nameof(SEMan.ModifyEitrRegen)),
+            AccessTools.DeclaredMethod(typeof(SEMan), method),
             HookKinds.Transpilers,
-            owners => $"Modifying eitr regen is changed by {owners}, so '{FixName}' stands down " +
-                      "and that mod's version applies.");
+            owners => $"{stat} regen from status effects is changed by {owners}, so '{FixName}' stands " +
+                      "down for it and that mod's version applies.");
 
-        /// <summary>
-        ///     Applies the modifications caused by <see cref="SEMan.ModifyHealthRegen(ref float)"/>  
-        ///     to health regen from all status effects using a stable ordering that does not depend
-        ///     on the insertion order of the status effects.
-        ///     First collects the total regen penalty (stacked multiplicatively) and the total regen 
-        ///     bonus (stacked additively). Then, it applies the total regen penalty followed by the
-        ///     total regen bonus. 
-        /// </summary>
-        /// <remarks>
-        ///     Penatlies stack multiplicatively and bonuses stack additively in order to match the
-        ///     stacking behavior of the base game. While the order of application for the total 
-        ///     regen penalty and total regen bonus was chosen so that if a player has a single 
-        ///     source of regen penalty at -X% and a single source of regen bonus at +X%, the two 
-        ///     effects cancel out entirely. 
-        /// </remarks>
+        // Priority.Last on all three: see ValheimCommunityPatch.ApplyPatches. The argument names
+        // match vanilla's, which differ per method.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(SEMan), nameof(SEMan.ModifyHealthRegen))]
-        private static bool StableModifyHealthRegen(SEMan seman, ref float regenMultiplier, bool __runOriginal)
-        {
-            if (!__runOriginal) { return false; }
+        private static bool HealthRegenPrefix(SEMan __instance, ref float regenMultiplier, bool __runOriginal) =>
+            Apply(__instance, ref regenMultiplier, Regen.Health, HealthTakeover, __runOriginal);
 
-            if (Enabled == null || !Enabled.Value || HealthRegenTakeover.TakenOver) { return true; }
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
+        [HarmonyPatch(typeof(SEMan), nameof(SEMan.ModifyStaminaRegen))]
+        private static bool StaminaRegenPrefix(SEMan __instance, ref float staminaMultiplier, bool __runOriginal) =>
+            Apply(__instance, ref staminaMultiplier, Regen.Stamina, StaminaTakeover, __runOriginal);
 
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
+        [HarmonyPatch(typeof(SEMan), nameof(SEMan.ModifyEitrRegen))]
+        private static bool EitrRegenPrefix(SEMan __instance, ref float eitrMultiplier, bool __runOriginal) =>
+            Apply(__instance, ref eitrMultiplier, Regen.Eitr, EitrTakeover, __runOriginal);
 
-            float testValue;
-            float bonus = 0.0f;
-            float penalty = 1.0f;
+        private static bool Apply(SEMan seman, ref float multiplier, Regen regen, TakeoverCheck takeover, bool runOriginal) {
+            if (!runOriginal) { return false; }
+            if (Enabled == null || !Enabled.Value || takeover.TakenOver) { return true; }
 
-            // account for possible changes made to the regen multiplier by other mods prior
-            // to the call to SEMan.ModifyHealthRegen
-            if (regenMultiplier > 1.0f)
-            {
-                bonus += regenMultiplier - 1.0f;
-            }
-            else if (regenMultiplier < 1.0f)
-            {
-                penalty *= regenMultiplier;
-            }
-
-            // loop over all active status effects to get bonus and penalties to regen
-            foreach (StatusEffect statusEfect in seman.m_statusEffects)
-            {
-                // call the status effect modify method to make sure we capture any 
-                // possible changes by other mods and avoid accessing the raw multiplier 
-                // field since it is possible that a status effect could have the multiplier
-                // field set, but not implement the modify regen method and therefore should
-                // not be included in the net regen bonus or penalty
-                testValue = 1.0f;
-                statusEfect.ModifyHealthRegen(ref testValue);
-                if (testValue > 1.0f)
-                {
-                    bonus += testValue - 1.0f;
-                }
-                else if (testValue < 1.0f)
-                {
-                    penalty *= testValue;
+            // Pass 0 bonuses, pass 1 penalties and effects that leave regen alone. foreach, as
+            // vanilla, so an effect that edits the list mid-call fails the same way.
+            List<StatusEffect> effects = seman.m_statusEffects;
+            for (int pass = 0; pass < 2; pass++) {
+                foreach (StatusEffect effect in effects) {
+                    float alone = 1f;
+                    Modify(effect, regen, ref alone);
+                    if ((alone > 1f) == (pass == 0)) { Modify(effect, regen, ref multiplier); }
                 }
             }
-
-            // update the regenMultiplier that was passed by refrence using the net penalties and bonuses
-            // this ensure the resulting regenMultiplier does not depend on the order of the status effects
-            regenMultiplier = (1.0f * penalty) + bonus;
-
-            return false; // prevent vanilla method from running
-        }
-
-        /// <summary>
-        ///     Applies the modifications caused by <see cref="SEMan.ModifyStaminaRegen(ref float)"/>  
-        ///     to stamina regen from all status effects using a stable ordering that does not depend
-        ///     on the insertion order of the status effects. 
-        ///     First collects the total regen penalty (stacked multiplicatively) and the total regen 
-        ///     bonus (stacked additively). Then, it applies the total regen penalty followed by the
-        ///     total regen bonus. 
-        /// </summary>
-        /// <remarks>
-        ///     Penatlies stack multiplicatively and bonuses stack additively in order to match the
-        ///     stacking behavior of the base game. While the order of application for the total 
-        ///     regen penalty and total regen bonus was chosen so that if a player has a single 
-        ///     source of regen penalty at -X% and a single source of regen bonus at +X%, the two 
-        ///     effects cancel out entirely. 
-        /// </remarks>
-        private static bool StableModifyStaminaRegen(SEMan seman, ref float regenMultiplier, bool __runOriginal)
-        {
-            if (!__runOriginal) { return false; }
-
-            if (Enabled == null || !Enabled.Value || StaminaRegenTakeover.TakenOver) { return true; }
-
-            float testValue;
-            float bonus = 0.0f;
-            float penalty = 1.0f;
-
-            // account for possible changes made to the regen multiplier by other mods prior
-            // to the call to SEMan.ModifyStaminaRegen
-            if (regenMultiplier > 1.0f)
-            {
-                bonus += regenMultiplier - 1.0f;
-            }
-            else if (regenMultiplier < 1.0f)
-            {
-                penalty *= regenMultiplier;
-            }
-
-            // loop over all active status effects to get bonus and penalties to regen
-            foreach (StatusEffect statusEfect in seman.m_statusEffects)
-            {
-                // call the status effect modify method to make sure we capture any 
-                // possible changes by other mods and avoid accessing the raw multiplier 
-                // field since it is possible that a status effect could have the multiplier
-                // field set, but not implement the modify regen method and therefore should
-                // not be included in the net regen bonus or penalty
-                testValue = 1.0f;
-                statusEfect.ModifyStaminaRegen(ref testValue);
-                if (testValue > 1.0f)
-                {
-                    bonus += testValue - 1.0f;
-                }
-                else if (testValue < 1.0f)
-                {
-                    penalty *= testValue;
-                }
-            }
-
-            // update the regenMultiplier that was passed by refrence using the net penalties and bonuses
-            // this ensure the resulting regenMultiplier does not depend on the order of the status effects
-            regenMultiplier = (1.0f * penalty) + bonus;
-            //Logger.LogDebug($"Final stamina regen multiplier: {regenMultiplier}");
 
             return false;
         }
 
-
-        /// <summary>
-        ///     Applies the modifications caused by <see cref="SEMan.ModifyEitrRegen(ref float)"/>  
-        ///     to eitr regen from all status effects using a stable ordering that does not depend
-        ///     on the insertion order of the status effects.
-        ///     First collects the total regen penalty (stacked multiplicatively) and the total regen 
-        ///     bonus (stacked additively). Then, it applies the total regen penalty followed by the
-        ///     total regen bonus. 
-        /// </summary>
-        /// <remarks>
-        ///     Penatlies stack multiplicatively and bonuses stack additively in order to match the
-        ///     stacking behavior of the base game. While the order of application for the total 
-        ///     regen penalty and total regen bonus was chosen so that if a player has a single 
-        ///     source of regen penalty at -X% and a single source of regen bonus at +X%, the two 
-        ///     effects cancel out entirely. 
-        /// </remarks>
-        /// <param name="seman"></param>
-        /// <param name="regenMultiplier"></param>
-        private static bool StableModifyEitrRegen(SEMan seman, ref float regenMultiplier, bool __runOriginal)
-        {
-            if (!__runOriginal) { return false; }
-
-            if (Enabled == null || !Enabled.Value || EitrRegenTakeover.TakenOver) { return true; }
-
-            float testValue;
-            float bonus = 0.0f;
-            float penalty = 1.0f;
-
-            // account for possible changes made to the regen multiplier by other mods prior
-            // to the call to SEMan.ModifyEitrRegen
-            if (regenMultiplier > 1.0f)
-            {
-                bonus += regenMultiplier - 1.0f;
+        private static void Modify(StatusEffect effect, Regen regen, ref float multiplier) {
+            switch (regen) {
+                case Regen.Health: effect.ModifyHealthRegen(ref multiplier); break;
+                case Regen.Stamina: effect.ModifyStaminaRegen(ref multiplier); break;
+                default: effect.ModifyEitrRegen(ref multiplier); break;
             }
-            else if (regenMultiplier < 1.0f)
-            {
-                penalty *= regenMultiplier;
-            }
-
-            // loop over all active status effects to get bonus and penalties to regen
-            foreach (StatusEffect statusEfect in seman.m_statusEffects)
-            {
-                // call the status effect modify method to make sure we capture any 
-                // possible changes by other mods and avoid accessing the raw multiplier 
-                // field since it is possible that a status effect could have the multiplier
-                // field set, but not implement the modify regen method and therefore should
-                // not be included in the net regen bonus or penalty
-                testValue = 1.0f;
-                statusEfect.ModifyEitrRegen(ref testValue);
-                if (testValue > 1.0f)
-                {
-                    bonus += testValue - 1.0f;
-                }
-                else if (testValue < 1.0f)
-                {
-                    penalty *= testValue;
-                }
-            }
-
-            // update the regenMultiplier that was passed by refrence using the net penalties and bonuses
-            // this ensure the resulting regenMultiplier does not depend on the order of the status effects
-            regenMultiplier = (1.0f * penalty) + bonus;
-            //Logger.LogDebug($"Final eitr regen multiplier: {regenMultiplier}");
-
-            return false;
         }
     }
 }
