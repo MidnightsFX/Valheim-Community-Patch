@@ -1,5 +1,17 @@
 # Changelog
 
+**0.39.0**
+```
+- Creatures no longer keep rebuilding their navigation due to unsorted path ordering nodes (Thanks Warp)
+- Grass uses much less memory and takes less time to draw, most noticeably with a raised grass distance.
+- Objects left behind by a removed mod no longer flood the log; they are reported once per prefab with a summary at logout.
+- The HUD's pixel alignment no longer rewrites itself every frame.
+- Mods' config file watchers no longer each re-read the same folders on every poll, which cuts background work and garbage collection pauses.
+- Inventory tabs and buttons no longer play their click sound twice (Thanks Krosshair)
+- Lighting no longer breaks and sweeps back in after portals, dungeon doors, logging in or respawning (Thanks Krosshair)
+- A lightning flash no longer stays baked into the lighting for seconds (Thanks Krosshair)
+```
+
 **0.38.0**
 ```
 - Leviathans, meteorites and similar rocks no longer get stuck unbreakable after a hit the game cannot trace back to whoever made it (Thanks searica)

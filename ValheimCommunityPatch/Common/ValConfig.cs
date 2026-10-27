@@ -95,6 +95,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.CreatureSyncDeadbandPatch.BindConfig();
             Patches.Performance.PortalPrefetchPatch.BindConfig();
             Patches.Performance.HourlyAssetUnloadPatch.BindConfig();
+            Patches.Performance.ConfigWatcherPollingPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();
@@ -107,6 +108,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.ItemIconVariantPatch.BindConfig();
             Patches.Correctness.SendFailureLogSpamPatch.BindConfig();
             Patches.Correctness.ContainerLogSpamPatch.BindConfig();
+            Patches.Correctness.MissingPrefabLogSpamPatch.BindConfig();
             Patches.Correctness.ContainerGridAlignmentPatch.BindConfig();
             Patches.Correctness.NegativeStaminaPatch.BindConfig();
             Patches.Correctness.SectorJumpInvalidatePatch.BindConfig();
@@ -124,11 +126,15 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.LostBedSpawnPointPatch.BindConfig();
             Patches.Correctness.LovePotionSpawnPatch.BindConfig();
             Patches.Correctness.PathfindingLinkLimitPatch.BindConfig();
+            Patches.Correctness.PathfindingGroundOrderPatch.BindConfig();
             Patches.Correctness.GraphicsSettingsEventPatch.BindConfig();
             Patches.Correctness.LoopingSoundConcurrencyPatch.BindConfig();
             Patches.Correctness.GetAttackerGetZDOIDPatch.BindConfig();
             Patches.Correctness.DamageReactionOrderPatch.BindConfig();
             Patches.Correctness.StatusEffectRegenApplicationOrderPatch.BindConfig();
+            Patches.Correctness.DoubleClickSoundPatch.BindConfig();
+            Patches.Correctness.TeleportLightingPatch.BindConfig();
+            Patches.Correctness.LightningFlashLightingPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
@@ -174,6 +180,13 @@ namespace ValheimCommunityPatch {
             return cfg.Bind(category, key, value,
                 new ConfigDescription(description, new AcceptableValueRange<float>(valMin, valMax),
                     new ConfigurationManagerAttributes { IsAdminOnly = true, IsAdvanced = advanced }));
+        }
+
+        // Per-machine tuning, not server-synced: it describes this machine, not the world.
+        public static ConfigEntry<float> BindClientConfig(string key, float value, string description, float valMin, float valMax, bool advanced = true) {
+            return cfg.Bind("Client config", key, value,
+                new ConfigDescription(description, new AcceptableValueRange<float>(valMin, valMax),
+                    new ConfigurationManagerAttributes { IsAdvanced = advanced }));
         }
 
         // BepInEx lists an enum's values itself, so no acceptable-values range is needed.

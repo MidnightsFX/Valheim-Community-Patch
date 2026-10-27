@@ -133,7 +133,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     if (created >= countCap) { break; }
                 } else if (ZNet.instance.IsServer()) {
                     zdo.SetOwner(ZDOMan.GetSessionID());
-                    ZLog.Log("Destroyed invalid predab ZDO:" + zdo.m_uid);
+                    Correctness.MissingPrefabLogSpamPatch.DestroyedSink("Destroyed invalid prefab ZDO:" + zdo.m_uid);
                     ZDOMan.instance.DestroyZDO(zdo);
                 }
             }

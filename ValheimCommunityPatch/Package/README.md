@@ -242,6 +242,20 @@ fix under [Credit and sources](#credit-and-sources).
   by name from a map instead of searching its list of effects, which every effect being added starts
   with and the player's own update does every frame. Stands down to the game's own lookup if any of
   the hooks that keep the map current could not attach.
+- **Fix Grass Camera Lookups** *(client)* — has every grass renderer take the camera, its view and its
+  position from one lookup per frame instead of asking the engine again for each renderer, most of
+  which turn out to be out of view and draw nothing. The grass drawn is exactly the game's.
+- **Fix Grass Instance Memory** *(client)* — starts each grass renderer's blade list small and grows it
+  as grass is placed, instead of reserving room for 1,024 blades in every one. Grass around the player
+  holds a fraction of the memory it did, which matters most with a raised grass distance, and building
+  grass patches leaves far less garbage behind.
+- **Fix GUI Pixel Snap Writes** *(client)* — has the HUD's pixel-snap component rewrite its one-pixel
+  offset only when the window's size parity changes, instead of recomputing and writing it every frame.
+- **Fix Config Watcher Polling** *(both)* — has the file watchers mods use to reload their configs share
+  one directory listing per poll instead of each re-reading the same folders every 750 ms. On this
+  game's Mono every watcher polls, so a dozen watchers over the BepInEx folder are a dozen scans of it
+  per cycle and the largest source of garbage in the process. A per-machine setting can lengthen the
+  poll further.
 
 ### Terrain
 
@@ -297,6 +311,9 @@ what is recorded, so they run on every side.
   debug logging.
 - **Fix Container Log Spam** *(both)* — redirects the four log lines written on every chest open,
   stack-all and take-all to debug logging.
+- **Fix Missing Prefab Log Spam** *(both)* — reports objects whose prefab no longer exists once per
+  prefab, with a summary at logout, instead of a warning per object per spawn pass; a client warns
+  about every such object on every pass for as long as it is in range.
 - **Fix Container Grid Alignment** *(client)* — resets the container grid's alignment and scroll position
   when you open a different chest, so a standard chest opened after a larger one is centered instead of
   keeping the larger one's top-aligned, scrolled layout.
@@ -372,6 +389,13 @@ what is recorded, so they run on every side.
   tiles loaded to use every link; from then on each new link failed with an error in the log, and
   creatures could not find paths from one tile to the next. Tiles in use are never dropped, and below
   the mark nothing changes.
+- **Fix Pathfinding Link Churn** *(both)* — reads the ground under each path-finding tile edge top to
+  bottom, so creatures' navigation links land on the same floor every time. Where floors are stacked
+  closer together than a creature is tall, vanilla took whichever floor the physics engine listed
+  first, and that order changes even when nothing moves, so it replaced every link along the edge each
+  time the tile was rebuilt, every few seconds while creatures moved there. Some modded dungeons hit
+  this constantly. The links now match what vanilla builds when the order happens to be top to bottom.
+  Can be turned off.
 - **Fix Settings Window Disconnect** *(client)* — removes the graphics settings' change handler when the
   settings window is destroyed by a disconnect or kick instead of being closed. Vanilla leaves it
   behind, so every later graphics change throws an error and skips the handlers added after it, such
@@ -399,6 +423,19 @@ what is recorded, so they run on every side.
   Puke stopped health regen only when they came after every bonus such as Rested. Bonuses now apply
   first and penalties after them, which is what vanilla already did in the usual case of being Rested
   before getting wet or cold. Can be turned off.
+- **Fix Double Click Sound** *(client)* — plays one click when an inventory tab or button such as
+  Craft, Upgrade, Skills, Trophies or the PVP toggle is pressed. Vanilla plays the panel-switch click
+  meant for the gamepad's bumpers on top of the button's own identical click and vibration. Can be
+  turned off.
+- **Fix Lighting After Teleport** *(client)* — keeps the lighting right after a portal, a dungeon door,
+  logging in or respawning. Vanilla grows a freshly rendered lighting probe out from the player over
+  three seconds while everything outside it is lit flat and orange by the sky alone, and after a far
+  teleport or a dungeon door the player starts outside both probes. One probe now renders the moment
+  the loading screen lifts and shows at full size at once. Can be turned off.
+- **Fix Lightning Flash Lighting** *(client)* — stops a lightning flash from staying in the lighting
+  for up to three seconds after it is over. A lighting probe render that would start during the
+  flash waits until the flash is gone, and one that was half-way through is redone right after. Can
+  be turned off.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -522,6 +559,10 @@ The mods involved:
 | Fix Recipe Lookup Scan | ComfyMods — ComfyAutoRepair | The recipe cache; change detection added here |
 | Fix Status Effect Lookup Scan | searica | Contributed the fix ([#22](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/22)) |
 | Fix Active Status Effect Lookup | searica | Contributed the fix ([#22](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/22)) |
+| Fix Grass Camera Lookups | MidnightsFX | — |
+| Fix Grass Instance Memory | MidnightsFX | — |
+| Fix GUI Pixel Snap Writes | MidnightsFX | — |
+| Fix Config Watcher Polling | MidnightsFX | — |
 
 ### Terrain
 
@@ -551,6 +592,7 @@ The mods involved:
 | Fix Projectile Rotation Spam | ComfyMods — BetterZeeLog | The same fix |
 | Fix Send Failure Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the call, this one redirects it |
 | Fix Container Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the calls, this one redirects them |
+| Fix Missing Prefab Log Spam | Redseiko | — |
 | Fix Container Grid Alignment | Dreamwraith | Contributed the fix ([#19](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/19)) |
 | Fix Item Icon Crash | ComfyMods — LetMePlay | The defect; a smaller fix here that leaves the shared item data alone |
 | Fix Negative Stamina | MidnightsFX | — |
@@ -568,11 +610,15 @@ The mods involved:
 | Fix Lost Bed Spawn Point | MidnightsFX | — |
 | Fix Love Potion Spawns | MidnightsFX | — |
 | Fix Pathfinding Link Limit | MidnightsFX | — |
+| Fix Pathfinding Link Churn | Warp | The root cause and the approach ([#27](https://github.com/MidnightsFX/Valheim-Community-Patch/issues/27)) |
 | Fix Settings Window Disconnect | MidnightsFX | — |
 | Fix Looping Sound Muting | MidnightsFX | — |
 | Fix Rock Hit Crash | searica | Contributed the fix ([#21](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/21)) |
 | Fix Damage Reaction Order | searica | Contributed the fix ([#22](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/22)) |
 | Fix Status Effect Regen Application Order | searica | Contributed the fix ([#25](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/25)) |
+| Fix Double Click Sound | Krosshair (wire) | The report, the cause and the first version of the fix ([ValheimWirePatches](https://github.com/Krosshair/WireMods/tree/main/ValheimWirePatches)) |
+| Fix Lighting After Teleport | Krosshair (wire) | The report, the cause and the first version of the fix ([ValheimWirePatches](https://github.com/Krosshair/WireMods/tree/main/ValheimWirePatches)) |
+| Fix Lightning Flash Lighting | Krosshair (wire) | The report, the cause and the first version of the fix ([ValheimWirePatches](https://github.com/Krosshair/WireMods/tree/main/ValheimWirePatches)) |
 
 ### Server memory
 
@@ -721,6 +767,11 @@ every half second that each tile still shows the material it animates and picks 
 Seasonality writes a tile's depth and wind to its material again only when it thaws the water, so
 water that froze while loaded was also colored differently from water that loaded frozen. The fix
 now does that setup on the new material itself, as a reload would. Nothing needs configuring.
+
+Known overlap: **ValheimPerformanceOptimizations** replaces the game's reflection probe updater with
+its own in a `ReflectionUpdate.Start` prefix. Fix Lighting After Teleport and Fix Lightning Flash
+Lighting hook the vanilla updater, so with that mod installed they have nothing to act on and do
+nothing. No stand-down line is logged, because neither holds anything.
 
 ## API for other mods
 
