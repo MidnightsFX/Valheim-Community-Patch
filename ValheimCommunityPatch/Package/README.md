@@ -628,6 +628,19 @@ The mods involved:
 | Trim ZDO Data Pool | MidnightsFX | — |
 | Fix ZDO Serialize Allocation | MidnightsFX | — |
 
+## Fixed in the game by Iron Gate
+
+These fixes used to ship in this mod. Iron Gate then made the same fix in Valheim itself, so this
+mod's copy was removed, or cut down to the part the game does not cover yet. Thank you, Iron Gate,
+for adding them: a fix in the game helps every player, with or without mods.
+
+| Former fix | Game update | What the game does now | What is left in this mod |
+| --- | --- | --- | --- |
+| Fix Location Biome Area Rescan | Deep North (September 2026) | Remembers each zone's biome area during location generation instead of working it out again for every placement attempt | Nothing; removed |
+| Fix Auto Pickup Allocation | Deep North (September 2026) | Reuses one collider buffer for the per-frame auto-pickup check instead of allocating a new array every frame | Nothing; removed |
+| Fix Tar Pit Memory Leak | Deep North (September 2026) | Allocates tar pit raycast buffers for the tar pit's whole life, ending the native memory leak and the `JobTempAlloc` log spam | Fix Tar Pit Buffer Disposal, the safe-disposal half |
+| Fix Support Lookup Cost (in part) | 1.0.21 (October 2026) | Remembers the building piece behind each cached support collider, so checking a piece's cached support no longer searches the object hierarchy | The lookup table for the two searches the game still makes when support is recalculated |
+
 ## Installation
 
 Install with a mod manager, or drop `ValheimCommunityPatch.dll` into `BepInEx/plugins`.

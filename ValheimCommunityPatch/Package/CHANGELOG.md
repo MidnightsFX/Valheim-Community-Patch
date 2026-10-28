@@ -1,5 +1,12 @@
 # Changelog
 
+**0.39.1**
+```
+- Updated for Valheim 1.0.21.
+- Food cooked on a shared cooking station is credited to the player who added it
+- Reduce dungeon relight timing from 1-8 frames to 1
+```
+
 **0.39.0**
 ```
 - Creatures no longer keep rebuilding their navigation due to unsorted path ordering nodes (Thanks Warp)

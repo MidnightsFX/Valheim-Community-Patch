@@ -13,7 +13,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // to UpdateVisual which calls GetSlot for the same slots again. A five-slot station with its
     // fire lit therefore produces roughly ninety string allocations a second, forever, purely as
     // garbage. The fourth key is already an int (ZDOVars.s_cheatedQueued + slot) and costs
-    // nothing; it is reproduced here unchanged.
+    // nothing; it is reproduced here unchanged. So is the int key SetSlot gained in 1.0.21,
+    // ZDOVars.s_playerID + slot, written only for a non-zero sender: SpawnItem reads it to credit
+    // the cooked item to the player who added it, so leaving it out would undo the game's fix.
     //
     // Prefixes replace both methods with vanilla's body over two static tables of precomputed
     // stable hashes. This has to be a replacement rather than a transpiler: the allocation
@@ -99,7 +101,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             string itemName,
             float cookedTime,
             CookingStation.Status status,
-            bool cheated) {
+            bool cheated,
+            long sender) {
             if (!TryPrepare(__instance, slot)) { return true; }
             if (!__instance.m_nview.IsValid()) { return false; }
 
@@ -108,6 +111,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             zdo.Set(SlotKeys[slot], cookedTime);
             zdo.Set(StatusKeys[slot], (int)status);
             zdo.Set(ZDOVars.s_cheatedQueued + slot, cheated);
+            if (sender != 0L) { zdo.Set(ZDOVars.s_playerID + slot, sender); }
             return false;
         }
     }

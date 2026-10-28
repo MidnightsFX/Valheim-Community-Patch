@@ -1,10 +1,10 @@
 {
   "name": "ValheimCommunityPatch",
   "description": "Vanilla bug fixes and performance fixes for Valheim. No gameplay changes.",
-  "version_number": "0.39.0",
+  "version_number": "0.39.1",
   "website_url": "https://github.com/MidnightsFX/Valheim-Community-Patch",
   "dependencies": [
-    "denikson-BepInExPack_Valheim-5.4.2351",
+    "denikson-BepInExPack_Valheim-5.4.2360",
     "ValheimModding-Jotunn-2.30.2"
   ]
 }

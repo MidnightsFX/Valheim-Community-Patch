@@ -8,11 +8,12 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     //
     // PlayerClothWindShelter, new in the Deep North update, turns off the wind on a cape, hair or hat's
     // cloth simulation while its wearer is in shelter. Its Awake looks for the cloth component on its
-    // own object; when there is none it logs an error with a stack trace and returns before the line
-    // that disables it, so its Update then runs every frame with nothing to do. The Root Crown's hat
-    // model carries the component without the cloth, while the 59 other vanilla prefabs that carry it
-    // are authored correctly. A crown is created whenever one is dropped, put on a stand, or worn by a
-    // player coming into range.
+    // own object; when there is none it logs an error with a stack trace and skips the line that
+    // disables it, so its Update then runs every frame with nothing to do. 1.0.21 added the root
+    // object's name to that error but still logs it and still leaves the component on. The Root
+    // Crown's hat model carries the component without the cloth, while the 59 other vanilla prefabs
+    // that carry it are authored correctly. A crown is created whenever one is dropped, put on a
+    // stand, or worn by a player coming into range.
     //
     // A prefix on Awake disables the component and skips vanilla's Awake when its object has no cloth
     // component, writing the object's name to the debug log instead. It tests for the component rather

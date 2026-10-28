@@ -5,8 +5,9 @@ namespace ValheimCommunityPatch {
 #pragma warning restore IDE0130
 
     /// <summary>
-    /// Has ReflectionUpdate render a probe on its next Update and shows the capture at full size as
-    /// soon as it finishes, instead of growing it in over the transition. Shared by Fix Lighting
+    /// Has ReflectionUpdate render a probe on its next Update, or takes one it has just rendered, and
+    /// shows the capture at full size as soon as it finishes, instead of growing it in over the
+    /// transition. Shared by Fix Lighting
     /// After Teleport and Fix Lightning Flash Lighting, and driven from the Update hook in
     /// TeleportLightingPatch.
     /// </summary>
@@ -37,6 +38,17 @@ namespace ValheimCommunityPatch {
         internal static void Force(ReflectionUpdate r) {
             r.m_updateTimer = float.PositiveInfinity;
             _pending = true;
+        }
+
+        /// <summary>
+        /// Treats the render just issued outside vanilla's timer as a forced one: the cycle restarts
+        /// from it, and it shows at full size as soon as it finishes.
+        /// </summary>
+        internal static void Adopt(ReflectionUpdate r) {
+            r.m_updateTimer = 0f;
+            _pending = false;
+            _renderId = r.m_renderID;
+            _probe = r.m_current;
         }
 
         /// <summary>

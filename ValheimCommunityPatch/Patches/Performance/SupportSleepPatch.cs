@@ -9,9 +9,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // an event that could change the answer fires.
     //
     // WearNTear.UpdateSupport has a cache fast path but re-validates the cache on every visit:
-    // for each cached support collider it re-resolves the owning piece, reads its position and
-    // re-reads its support value. WearNTearUpdater visits every loaded piece continuously, so in
-    // a large base the validation itself is the cost, spent re-proving that nothing changed.
+    // for each cached support collider it reads the collider's position and the cached piece's
+    // support value (1.0.21 caches the piece; earlier builds re-resolved it every time).
+    // WearNTearUpdater visits every loaded piece continuously, so in a large base the validation
+    // itself is the cost, spent re-proving that nothing changed. A skipped call leaves the four
+    // parallel cache lists untouched, so they stay in step as vanilla requires; nothing here
+    // fills or reads them.
     //
     // Support is a pure function of a piece's neighbourhood, so a piece whose support was
     // computed once skips UpdateSupport until one of these wakes it:
