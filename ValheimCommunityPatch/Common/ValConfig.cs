@@ -135,6 +135,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.DoubleClickSoundPatch.BindConfig();
             Patches.Correctness.TeleportLightingPatch.BindConfig();
             Patches.Correctness.LightningFlashLightingPatch.BindConfig();
+            Patches.Correctness.SwitchFaceButtonGlyphPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
