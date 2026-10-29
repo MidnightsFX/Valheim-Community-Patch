@@ -40,6 +40,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "With Switch button glyphs, the A, B, X and Y hints name the button the action is really on. " +
                 "Vanilla gives the Switch glyphs the Xbox letters, so every face button hint names the " +
                 "opposite button: the X hint for Use is on the button labelled Y.");
+
+            // Localization caches every text it has built, hints with their glyph included, so a hint
+            // already on screen would keep the old letter until the cache drops it.
+            Enabled.SettingChanged += (sender, args) => Localization.instance?.m_cache.EvictAll();
         }
 
         private static string Glyph(string name) => "<sprite=\"switch2\" name=\"" + name + "\">";
