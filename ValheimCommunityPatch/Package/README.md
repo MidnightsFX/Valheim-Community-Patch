@@ -451,6 +451,11 @@ what is recorded, so they run on every side.
   the button the action is really on. Vanilla gives the Switch glyphs the Xbox letters for each
   position, so every face button hint names the opposite button: the X shown for Use is on the button
   labelled Y, and the button labelled X opens the inventory. Can be turned off.
+- **Fix Layout Switch Focus** *(client)* — switching the keyboard layout while typing keeps the text
+  field focused, so the next keys go on into chat, the console, a map pin name, a sign or a search
+  field. Vanilla treats the layout switch like a switch between keyboard and gamepad, and the build
+  menu then clears the selection, so the field stops taking keys mid-word and they run game actions
+  instead. Can be turned off.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -637,6 +642,7 @@ The mods involved:
 | Fix Shield Skill Credit | MidnightsFX | — |
 | Fix Shield Tool Damage | MidnightsFX | — |
 | Fix Switch Button Glyphs | rgeraskin | Contributed the fix |
+| Fix Layout Switch Focus | rgeraskin | Contributed the fix |
 
 ### Server memory
 
