@@ -436,6 +436,17 @@ what is recorded, so they run on every side.
   for up to three seconds after it is over. A lighting probe render that would start during the
   flash waits until the flash is gone, and one that was half-way through is redone right after. Can
   be turned off.
+- **Fix Shield Skill Credit** *(both)* — gives the Blood Magic a Staff of Protection shield earns when
+  it breaks to the player who cast it. Vanilla forgets the caster and levels whoever wore the shield,
+  so shielding a friend raised their Blood Magic instead of yours, and shielding a tamed creature
+  raised nobody's. The caster and the shielded player both need the mod; otherwise the game's own
+  behaviour applies or the credit is lost. Can be turned off.
+- **Fix Shield Tool Damage** *(both)* — stops a shield, such as the Staff of Protection's or a Fuling
+  shaman's, using up its strength on chop and pickaxe damage. Creature attacks carry it to break
+  trees, rocks and buildings, often far more of it than their real damage, and players and creatures
+  are immune to it, but the shield counted it in full: a single Bonemass punch broke even a Blood
+  Magic 100 shield. Axes, battleaxes and pickaxes carry it too, so they no longer break a Fuling
+  shaman's shield faster than their real damage would. Can be turned off.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -619,6 +630,8 @@ The mods involved:
 | Fix Double Click Sound | Krosshair (wire) | The report, the cause and the first version of the fix ([ValheimWirePatches](https://github.com/Krosshair/WireMods/tree/main/ValheimWirePatches)) |
 | Fix Lighting After Teleport | Krosshair (wire) | The report, the cause and the first version of the fix ([ValheimWirePatches](https://github.com/Krosshair/WireMods/tree/main/ValheimWirePatches)) |
 | Fix Lightning Flash Lighting | Krosshair (wire) | The report, the cause and the first version of the fix ([ValheimWirePatches](https://github.com/Krosshair/WireMods/tree/main/ValheimWirePatches)) |
+| Fix Shield Skill Credit | MidnightsFX | — |
+| Fix Shield Tool Damage | MidnightsFX | — |
 
 ### Server memory
 
@@ -640,6 +653,7 @@ for adding them: a fix in the game helps every player, with or without mods.
 | Fix Auto Pickup Allocation | Deep North (September 2026) | Reuses one collider buffer for the per-frame auto-pickup check instead of allocating a new array every frame | Nothing; removed |
 | Fix Tar Pit Memory Leak | Deep North (September 2026) | Allocates tar pit raycast buffers for the tar pit's whole life, ending the native memory leak and the `JobTempAlloc` log spam | Fix Tar Pit Buffer Disposal, the safe-disposal half |
 | Fix Support Lookup Cost (in part) | 1.0.21 (October 2026) | Remembers the building piece behind each cached support collider, so checking a piece's cached support no longer searches the object hierarchy | The lookup table for the two searches the game still makes when support is recalculated |
+| Fix Summons Eating And Breeding | 1.0.21 (October 2026) | The Spirit Caller's wolves no longer carry the real wolf's breeding, so two of them can no longer have a cub that grows into a permanent wolf | Nothing; removed |
 
 ## Installation
 

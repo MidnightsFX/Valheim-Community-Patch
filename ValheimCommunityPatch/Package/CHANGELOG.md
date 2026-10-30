@@ -1,5 +1,11 @@
 # Changelog
 
+**0.40.0**
+```
+- Breaking a Staff of Protection shield now levels the caster's Blood Magic instead of the wearer's.
+- Shields, including the Staff of Protection's and Fuling shamans', are no longer used up by chop and pickaxe damage that cannot hurt whoever wears them.
+```
+
 **0.39.1**
 ```
 - Updated for Valheim 1.0.21.
