@@ -1,5 +1,20 @@
 # Changelog
 
+**0.41.0**
+```
+- The biome fix no longer turns biomes added by other mods into Ocean
+- Entering a dungeon no longer risks an endless black loading screen when another mod keeps throwing errors or part of the dungeon fails to build.
+- Ground where black forest meets plains no longer shines extremely brightly in the sun
+- Hundreds of creatures loaded in one place, such as a huge breeding pen, no longer drop the game to a slideshow.
+- Improves compatibility with Valheim Performance Overhaul
+- The scythe now harvests Magecaps, Jotun Puffs, mushrooms, dandelions, thistles, fiddleheads and smoke puffs.
+- Fix for rare drops not being counted
+    - Every star level of a creature now shares one rare drop countdown, giving you more consistent and better chances are rare drops for every kill.
+    - A rare drop now pays out at its listed chance from the first kill, instead of about half of it.
+    - Browsing characters on the main menu no longer mixes their rare drop progress.
+- Fixes ghost player copies, from portaling
+```
+
 **0.40.0**
 ```
 - Breaking a Staff of Protection shield now levels the caster's Blood Magic instead of the wearer's.

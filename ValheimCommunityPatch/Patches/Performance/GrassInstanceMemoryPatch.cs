@@ -81,7 +81,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(MethodType.Constructor)]
         private static IEnumerable<CodeInstruction> ConstructorTranspiler(IEnumerable<CodeInstruction> instructions) {
             if (InstancesField == null || InitialCapacityMethod == null) {
-                Logger.LogWarning("InstanceRenderer constructor: a member this fix needs could not be resolved, so it is inactive here.");
+                PatchHelper.WarnOnce("InstanceRenderer constructor: a member this fix needs could not be resolved, so it is inactive here.");
                 return instructions;
             }
 
@@ -100,7 +100,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (replaced != 1) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"InstanceRenderer constructor: expected 1 instance array allocation, found {replaced}, so " +
                     "this fix is inactive. Another mod has most likely already rewritten the constructor - if so, " +
                     "nothing is wrong.");

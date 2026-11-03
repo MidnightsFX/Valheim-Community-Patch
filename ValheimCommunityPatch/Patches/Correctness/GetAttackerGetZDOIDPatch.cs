@@ -62,7 +62,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
             // Checked here because a pattern built from a null method would match any callvirt.
             if (GetAttackerMethod == null || GetZdoidMethod == null || AttackerIdMethod == null) {
-                Logger.LogWarning($"{site}: a method this fix needs could not be resolved, so it is inactive here.");
+                PatchHelper.WarnOnce($"{site}: a method this fix needs could not be resolved, so it is inactive here.");
                 return instructions;
             }
 

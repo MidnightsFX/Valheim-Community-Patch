@@ -240,7 +240,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (replaced != 2 || containsReplaced != 2) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"WearNTear.UpdateSupport: expected 2 GetComponentInParent<WearNTear> and 2 " +
                     $"Enumerable.Contains calls, found {replaced} and {containsReplaced}, so " +
                     "this fix is inactive. Another mod has most likely already rewritten the " +

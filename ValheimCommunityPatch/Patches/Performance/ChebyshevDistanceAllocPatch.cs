@@ -84,7 +84,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         private static IEnumerable<CodeInstruction> Unexpected(IEnumerable<CodeInstruction> instructions) {
-            Logger.LogWarning(
+            PatchHelper.WarnOnce(
                 "Utils.ChebyshevDistance: the method does not build the three-value array this fix " +
                 "removes, so this fix is inactive. Another mod has most likely already rewritten the " +
                 "method - if so, nothing is wrong.");

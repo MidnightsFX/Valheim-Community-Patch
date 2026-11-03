@@ -72,7 +72,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             MethodInfo typedEquals = AccessTools.Method(valueType, nameof(object.Equals), new[] { valueType });
             if (typedEquals == null || ObjectEquals == null) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"{valueType.Name} has no Equals({valueType.Name}) overload to route the ZDO write " +
                     "comparison through, so that type keeps vanilla's boxed comparison.");
                 return instructions;
@@ -111,7 +111,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (rewritten != 1) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"BinarySearchDictionary<int, {valueType.Name}>.SetValue: expected 1 boxed equality " +
                     $"check, found {rewritten}, so ZDO writes of that type keep vanilla's allocation. " +
                     "Another mod has most likely already rewritten the method - if so, nothing is wrong.");

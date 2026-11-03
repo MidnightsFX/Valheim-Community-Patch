@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
     // Fix Equipment Visual Refresh: characters stop re-applying unchanged skin and hair colors
-    // every frame, and read their equipment fields with one table lookup instead of thirty.
+    // every frame, and read their equipment fields with one table lookup instead of forty.
     //
     // VisEquipment.UpdateVisuals runs every frame for every character, dropped armour piece and
     // armour stand. Two separable costs:
@@ -25,11 +25,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
     //    without that, a character whose beard MaterialMan captured (attached before any gear,
     //    as on a naked spawn) turns white on the next equip and stays white.
     //
-    // 2. UpdateEquipmentVisuals opens with fifteen ZDO.GetInt calls, and each is two dictionary
+    // 2. UpdateEquipmentVisuals opens with twenty ZDO.GetInt calls, and each is two dictionary
     //    lookups (ZDOHelper.GetValueOrDefault does ContainsKey then indexes) hashing a ZDOID
     //    twice. A prefix fetches the character's int table once, and a transpiler routes the
-    //    fifteen reads inside this method through it. The accessor keys on ZDO reference
-    //    identity, so a nested call for a different ZDO falls back to vanilla's lookup.
+    //    twenty reads inside this method through it. The accessor keys on ZDO reference
+    //    identity, so a nested call for a different ZDO falls back to vanilla's lookup. When
+    //    another mod has already rewritten those reads, as ontrigger's
+    //    ValheimPerformanceOptimizations does the same way, this half leaves them to that mod
+    //    and the prefix skips the lookup nothing would use.
     //
     // Client: this is the equipment rendering pipeline.
     [PatchSide(Side.Client)]
@@ -159,6 +162,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static ZDO _scopeZdo;
         private static BinarySearchDictionary<int, int> _scopeTable;
 
+        // Set by the transpiler, which Harmony re-runs each time any mod patches the method.
+        private static bool _readsRewritten;
+
         private static readonly MethodInfo ZdoGetInt =
             AccessTools.Method(typeof(ZDO), nameof(ZDO.GetInt), new[] { typeof(int), typeof(int) });
         private static readonly MethodInfo ScopedGetIntMethod =
@@ -172,7 +178,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _scopeTable = null;
 
             // Unscoped, the rewritten reads go straight to the ZDO as vanilla's do.
-            if (ApiSwitch.Off) { return; }
+            if (ApiSwitch.Off || !_readsRewritten) { return; }
 
             if (__instance.m_nview == null) { return; }
 
@@ -202,7 +208,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("UpdateEquipmentVisuals")]
-        private static IEnumerable<CodeInstruction> EquipmentVisualsTranspiler(IEnumerable<CodeInstruction> instructions) =>
-            PatchHelper.ReplaceCalls(instructions, ZdoGetInt, ScopedGetIntMethod, "VisEquipment.UpdateEquipmentVisuals");
+        private static IEnumerable<CodeInstruction> EquipmentVisualsTranspiler(IEnumerable<CodeInstruction> instructions, MethodBase original) {
+            IEnumerable<CodeInstruction> codes = PatchHelper.ReplaceCalls(
+                instructions, ZdoGetInt, ScopedGetIntMethod, "VisEquipment.UpdateEquipmentVisuals", patched: original);
+
+            // ReplaceCalls hands back its input when it stands down.
+            _readsRewritten = !ReferenceEquals(codes, instructions);
+            return codes;
+        }
     }
 }

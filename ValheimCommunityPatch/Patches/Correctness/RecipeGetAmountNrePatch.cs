@@ -59,7 +59,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
 
             if (patched == 0) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     "Recipe.GetAmount: found no m_quality load to guard, so this fix is inactive. Another " +
                     "mod has most likely already rewritten the method - if so, nothing is wrong.");
                 return instructions;

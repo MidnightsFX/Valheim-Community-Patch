@@ -125,7 +125,7 @@ fix under [Credit and sources](#credit-and-sources).
   collision objects misbehaves.
 - **Fix Equipment Visual Refresh** *(client)* — re-applies a character's skin and hair color only
   when an input changed or another system overwrote it, and reads its equipment fields with one
-  table lookup instead of thirty.
+  table lookup instead of forty.
 - **Fix Light Settings Subscription** *(client)* — registers lights for graphics-setting changes in a
   lookup table instead of a static event whose unsubscribe scans every other lit light.
 - **Fix Portal Idle Updates** *(client)* — stops a portal re-writing its emission color, light and
@@ -163,7 +163,9 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Dungeon Spawn Hitch** *(client)* — places the rooms of a dungeon or camp loading in near you
   over a few frames within `Dungeon Room Budget` (default 4 ms, 0 is vanilla) instead of all in one
   frame; the zone's contents wait for the last room as they do while the rooms load, and nothing
-  is spread behind a loading screen.
+  is spread behind a loading screen. Rooms keep being placed while another mod's error repeats
+  every frame, and a dungeon that fails to finish still frees its zone, so a door into it never
+  hangs on the loading screen.
 - **Fix Location Spawn Hitch** *(client)* — spawns one location per frame plus as many more as
   `Location Spawn Budget` allows (default 4 ms, 0 is vanilla), through the game's own wait-and-retry,
   instead of every ready location in the same frame; nothing waits behind a loading screen.
@@ -212,6 +214,14 @@ fix under [Credit and sources](#credit-and-sources).
   move more than 2 cm, 0.05 m/s or 1 degree from what was last sent, instead of on any change at
   all. Players, ships, carts and items are untouched. The one performance fix with a toggle, since
   it changes what other players see, by at most those amounts.
+- **Fix Creature Crowd Slowdown** *(both)* — keeps the game playable with hundreds of creatures
+  loaded, such as a huge breeding pen. While creature updates fit `Creature Update Budget` (4 ms per
+  physics step on the machine simulating them) nothing changes. Past that, creatures standing around
+  take turns updating, between five and fifty times a second, their bodies sleep, and one that a crowd
+  is holding in place stops walking until its next wander, so a packed pile stands calmer than it does
+  in vanilla. In game, 1000 tame boars went from 4 to 32 FPS. Anything walking, fighting, falling, hurt
+  or within 10 m of a player updates in full, and collisions are unchanged, so pens hold as before. A
+  crowd that is fighting gains little. It has a toggle, since it changes how a crowd behaves.
 - **Fix Paint-Only Terrain Rebuilds** *(both)* — when something that only paints the ground loads
   or unloads, like the big rocks and copper deposits of the Black Forest, coast and heath, refreshes
   just the terrain paint under it instead of also rebuilding the ground's collision and shape. Each
@@ -259,8 +269,8 @@ fix under [Credit and sources](#credit-and-sources).
 
 ### Terrain
 
-**Fix Terrain Seams**, **Fix Terrain Paint Seams** and **Fix Swamp Plains Shore Seams** change only
-what is drawn, never what is saved, so they are client-only. **Fix Terrain Paint Zone Fanout** and **Fix Terrain Paint Doubling** change
+**Fix Terrain Seams**, **Fix Terrain Paint Seams**, **Fix Swamp Plains Shore Seams** and **Fix Plains
+Border Shine** change only what is drawn, never what is saved, so they are client-only. **Fix Terrain Paint Zone Fanout** and **Fix Terrain Paint Doubling** change
 what is recorded, so they run on every side.
 
 - **Fix Terrain Seams** *(client)* — computes terrain lighting normals across zone boundaries,
@@ -279,6 +289,13 @@ what is recorded, so they run on every side.
   narrow strip where they meet instead: black forest ground by default, or Ashlands ground that
   follows the crossover rather than the zone grid ("Swamp Plains Bridge Ground"; "Swamp Plains
   Blend Sharpness" sets the strip's width).
+- **Fix Plains Border Shine** *(client)* — stops ground where black forest blends into plains from
+  being drawn as glossy as wet Mistlands ground, which made dirt paths near those borders look wet
+  when facing the sun. The game's terrain colors cannot express that blend without also meaning
+  Mistlands, so the two give way to a narrow strip of meadows ground where they meet instead ("Black
+  Forest Plains Blend Sharpness" sets its width). With Fix Swamp Plains Shore Seams on, its black
+  forest strip also gives way to meadows before the plains, which it otherwise makes shine the
+  same way.
 - **Fix Terrain Paint Mask Indexing** *(client)* — corrects the stride and bounds the `optterrain`
   console command uses to walk terrain paint data.
 - **Fix Terrain Compiler Init Race** *(both)* — recovers a zone's terrain compiler that loaded before
@@ -323,6 +340,9 @@ what is recorded, so they run on every side.
   character that loads in broken, and drops a `UseStamina` network message carrying `NaN` or infinity.
 - **Fix Teleport Ghost Players** *(server)* — tells a client to drop a player who teleported out of its
   loaded area, instead of leaving them standing frozen where they left (and still in local chat range).
+- **Fix Teleport Ghost From Client** *(client)* — does the same from your own game on a server without
+  this mod: when you go through a portal, other players stop seeing you frozen where you left. Other
+  travellers need the mod as well, or the fix above on the server.
 - **Fix Unsaved Client Changes** *(server)* — marks an object a connected player placed or changed for
   the next world save; the chunked save format only rewrites chunks the game marked as changed, and it
   never marks one for a change that arrives from another player.
@@ -456,6 +476,23 @@ what is recorded, so they run on every side.
   field. Vanilla treats the layout switch like a switch between keyboard and gamepad, and the build
   menu then clears the selection, so the field stops taking keys mid-word and they run game actions
   instead. Can be turned off.
+- **Fix Scythe Harvest** *(client)* — lets the scythe cut every plant the game marks as harvestable,
+  including Magecaps, Jotun Puffs, mushrooms, dandelions, thistles, fiddleheads and smoke puffs. A
+  swing looks for the plant on the object its collider sits on, and these keep their colliders on
+  child objects, so it missed them. Berry bushes are not marked and stay hand-picked. Can be turned
+  off.
+- **Fix Rare Drop Pity** *(both)* — makes every star level of a creature count toward one rare drop
+  countdown per item. Rare drops such as trophies count kills down to a guaranteed drop, and vanilla
+  keeps a separate countdown for each star level, so kills of one star level did nothing for the others
+  and dry streaks ran well past what one countdown allows. A starred kill now counts as many kills as
+  its chance is higher, so a one star kill counts as two. A star level whose chance is over 30%, which
+  vanilla gives a plain roll, keeps that roll at the same chance: a miss advances the countdown and a
+  hit restarts it. A new countdown also pays out at the listed chance from the first kill, where
+  vanilla's pays about half of that for the first kills. Browsing characters on the main menu no longer
+  mixes their countdowns, and a new character no longer starts with those of the last one shown. Each
+  machine keeps its own countdowns, as in vanilla, so the fix applies to the creatures that machine
+  owns, and it leaves the No Pseudo Drops world modifier alone. Countdowns already in a save carry over.
+  Can be turned off.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -571,6 +608,7 @@ The mods involved:
 | Fix Equipment Modifier Allocation | MidnightsFX | — |
 | Fix Active Area Check Allocation | MidnightsFX | — |
 | Fix Idle Creature Sync | MidnightsFX | — |
+| Fix Creature Crowd Slowdown | MidnightsFX | — |
 | Fix Paint-Only Terrain Rebuilds | MidnightsFX | — |
 | Fix Hourly Server Freeze | MidnightsFX | — |
 | Fix Build Menu Language Subscription | MidnightsFX | — |
@@ -593,6 +631,7 @@ The mods involved:
 | Fix Terrain Paint Zone Fanout | MidnightsFX | — |
 | Fix Terrain Paint Doubling | MidnightsFX | — |
 | Fix Swamp Plains Shore Seams | MidnightsFX | — |
+| Fix Plains Border Shine | MidnightsFX | — |
 | Fix Terrain Paint Mask Indexing | MidnightsFX | — |
 | Fix Terrain Compiler Init Race | MidnightsFX | — |
 
@@ -617,6 +656,7 @@ The mods involved:
 | Fix Item Icon Crash | ComfyMods — LetMePlay | The defect; a smaller fix here that leaves the shared item data alone |
 | Fix Negative Stamina | MidnightsFX | — |
 | Fix Teleport Ghost Players | MidnightsFX | — |
+| Fix Teleport Ghost From Client | MidnightsFX | — |
 | Fix Unsaved Client Changes | MidnightsFX | — |
 | Fix Water Color Seams | MidnightsFX | — |
 | Fix Non-Item ObjectDB Entries | MidnightsFX | — |
@@ -643,6 +683,8 @@ The mods involved:
 | Fix Shield Tool Damage | MidnightsFX | — |
 | Fix Switch Button Glyphs | rgeraskin | Contributed the fix |
 | Fix Layout Switch Focus | rgeraskin | Contributed the fix |
+| Fix Scythe Harvest | MidnightsFX | — |
+| Fix Rare Drop Pity | MidnightsFX | — |
 
 ### Server memory
 
@@ -712,8 +754,8 @@ leaves the method alone if it did not. So where another mod has already fixed th
 mod's version wins and this one stands down rather than fighting it.
 
 When that happens you will see a line like *"found no ZLog.Log calls to redirect, so this fix is
-inactive"* in the log. That is the mechanism working, not a failure. A real failure looks different —
-`fix(es) failed` on the startup line, with the exception above it.
+inactive"* in the log, once a session. That is the mechanism working, not a failure. A real failure
+looks different — `fix(es) failed` on the startup line, with the exception above it.
 
 Object unloading follows the same principle. Fix Unload Discovery Scan and Fix Object Unload Crash
 decide what to unload only after every other mod has had its say, so a mod that keeps an object
@@ -728,6 +770,10 @@ together, and BetterZeeLog's versions of those three take effect.
 
 Known overlap: **Network Performance System** 1.9.1 and later apply the same idle creature fix as Fix
 Idle Creature Sync. When it is installed this mod's version stands down and says so once in the log.
+
+Known overlap: **IdleBeasts** and **Valheim Performance Overhaul** have their own creature throttles.
+When another mod can skip creature updates or replaces the game's update loops, Fix Creature Crowd
+Slowdown stands down and says so once in the log.
 
 Known overlap: **ZenPortal** has its own rules for which portals may pair: portals without a rune
 shard never link, each rune links one pair, and wood and stone portals can be kept apart. Fix Portal
@@ -746,6 +792,12 @@ Known overlap: **Expand World Size** resizes and stretches the game's biome grid
 Fix Biome Sector Lookup reads the grid's size and spacing from the game on every lookup, so it follows
 the resized grid. Before 0.32.3 it assumed the vanilla grid and gave wrong biomes, weather and terrain
 colors on resized worlds.
+
+Known overlap: **Eternal Hall** adds islands past the main world, where the biome grid has only open
+sea or no cells at all, and answers the game's biome lookup for them itself. Fix Biome Sector Lookup
+corrects only answers that come from the grid, so on those islands, and on land any other mod answers
+for the same way, that mod's biome applies. Earlier versions gave a player on an Eternal Hall island
+Ocean as their biome and weather.
 
 Known overlap: **Fast Loading (Portals-Respawn-Login-Dungeons)** installs the zones around you itself
 during loading screens, so Fix Loading Zone Cadence stands down when it is installed and says so once
@@ -770,8 +822,9 @@ colliders, and says so once in the log with *"Terrain collider building is chang
 ValheimOptimized also builds most terrain meshes on its own threads, out of reach of Fix Terrain Seams
 and Fix Swamp Plains Shore Seams, so before 0.32.5 those reached only some of the ground and a fixed
 spot lost the fix when it was rebuilt. Both now stand down whenever another mod takes over building
-terrain meshes, and say so once in the log with *"Terrain mesh building is changed by ..."*. Zone
-borders and swamp shores then look as they do with ValheimOptimized alone. ValheimOptimized also
+terrain meshes, and say so once in the log with *"Terrain mesh building is changed by ..."*, as Fix
+Plains Border Shine does. Zone borders, swamp shores and plains borders then look as they do with
+ValheimOptimized alone. ValheimOptimized also
 replaces the game's object spawning and its distant-terrain rebuild. Fix Spawn Queue Churn now spawns
 nothing on a pass another mod has already handled, where before 0.32.5 it spawned a second batch, and
 Fix Distant Terrain Hitch stands down and says so once with *"Distant terrain rebuilding is changed by
@@ -798,6 +851,22 @@ and says so once in the log with *"Smoke puff updates are replaced by ..."*. Its
 change stays on. With Valheim Performance Overhaul's smoke option off, this mod's version applies as
 before.
 
+Known overlap: **ValheimPerformanceOptimizations** replaces several of the game's methods outright. It
+reads equipment fields the same way Fix Equipment Visual Refresh does, so that half of the fix leaves
+them to it and says so once in the log with *"dev.ontrigger.vpo also rewrites this method"*; the skin
+and hair half stays on. It also replaces the building support check that Fix Idle Support Checks
+watches. Before 0.41.0 that fix never saw a support value change with it installed, so buildings
+settled with the wrong support and took far longer to come down after losing a support. Fix Terrain
+Seams, Fix Zone Collider Stall and Fix Arriving Location Hitch stand down and say so once. Its own
+object streaming, terrain meshes and reflection rendering mean Fix Idle Scene Sweep, Fix Spawn Queue
+Churn, Fix Object Unload Crash, Fix Swamp Plains Shore Seams, Fix Plains Border Shine, Fix Lighting
+After Teleport and Fix Lightning Flash Lighting are simply not reached, with no harm done; those areas
+behave as they do with ValheimPerformanceOptimizations alone.
+
+Known overlap: **Equipment and Quick Slots** adds its extra utility items on top of the game's totals,
+beside Fix Equipment Modifier Allocation, Fix Active Status Effect Lookup and Fix Equipment Visual
+Refresh. The two are safe to run together: the items' modifiers, status effects and visuals all apply.
+
 Known overlap: **Seasonality** freezes and thaws water by giving the water tiles a new material. Fix
 Water Material Lookup kept animating the old one, so before 0.37.0 the water stopped moving after a
 season change while boats and fish still rode the waves, until the area reloaded. The fix now checks
@@ -805,6 +874,10 @@ every half second that each tile still shows the material it animates and picks 
 Seasonality writes a tile's depth and wind to its material again only when it thaws the water, so
 water that froze while loaded was also colored differently from water that loaded frozen. The fix
 now does that setup on the new material itself, as a reload would. Nothing needs configuring.
+
+Known overlap: **SaveYourLuckBruh** rewrites the same rare drop countdowns. While it is installed, Fix
+Rare Drop Pity stands down and says so once in the log with *"SaveYourLuckBruh is loaded"*, and its rules
+apply instead.
 
 Known overlap: **ValheimPerformanceOptimizations** replaces the game's reflection probe updater with
 its own in a `ReflectionUpdate.Start` prefix. Fix Lighting After Teleport and Fix Lightning Flash

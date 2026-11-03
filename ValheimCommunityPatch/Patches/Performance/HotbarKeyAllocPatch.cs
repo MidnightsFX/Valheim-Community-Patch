@@ -71,7 +71,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (replaced != 2) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"Player.Update: expected 2 hotbar key formats, found {replaced}, so this fix is " +
                     "inactive. Another mod has most likely already rewritten the method - if so, " +
                     "nothing is wrong.");

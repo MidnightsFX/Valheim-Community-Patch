@@ -177,7 +177,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             // Checked here because a pattern built from a null member would match any operand.
             if (RemoveListField == null || ListClearMethod == null || ForgetExpiredMethod == null) {
-                Logger.LogWarning($"{FixName}: a member this fix needs could not be resolved, so it is inactive.");
+                PatchHelper.WarnOnce($"{FixName}: a member this fix needs could not be resolved, so it is inactive.");
                 return instructions;
             }
 
@@ -187,7 +187,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 new CodeMatch(OpCodes.Ldfld, RemoveListField),
                 new CodeMatch(OpCodes.Callvirt, ListClearMethod));
             if (matcher.IsInvalid) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"{FixName}: SEMan.Update no longer clears its expired effects where expected, so " +
                     "this fix is inactive. Another mod has most likely already rewritten the method - if " +
                     "so, nothing is wrong.");

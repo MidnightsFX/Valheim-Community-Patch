@@ -200,7 +200,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 }
 
                 if (found != 1 || !codes[site - 1].IsLdloc() || !codes[site + 1].IsLdloc()) {
-                    Logger.LogWarning(
+                    PatchHelper.WarnOnce(
                         $"TerrainComp.PaintCleared spread: expected one neighbour paint write, found {found}, " +
                         "so 'Fix Terrain Paint Doubling' is inactive. Another mod has most likely already " +
                         "rewritten the method - if so, nothing is wrong.");

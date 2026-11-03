@@ -8,26 +8,20 @@ using Jotunn.Utils;
 
 namespace ValheimCommunityPatch
 {
-    // Not EveryoneMustHaveMod: every fix is safe one-sided. The mod adds no prefabs, recipes or
-    // save data, and peers without it ignore its custom RPCs. VersionCheckOnly still
-    // refuses a client and server on different versions of this mod, which is the one case where
-    // the two sides could disagree about behaviour.
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [BepInDependency(Jotunn.Main.ModGuid)]
-    // Load order only: Fix Idle Creature Sync stands down for NPS 1.9.1+, Refund Rejected Station
-    // Items for Eternal Fire before 1.1.6 and AutomaticFuel, and Fix Grass Ground Raycasts and Fix
-    // Static Object Ground Checks for HearthBelow, and each can only see the other mod if it
-    // loaded first.
+    // All dependencies here are required to support automatically disabling fixes that would conflict.
     [BepInDependency(Patches.Performance.CreatureSyncDeadbandPatch.NpsGuid, BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency(Patches.Correctness.StationRefundPatch.EternalFireGuid, BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency(Patches.Correctness.StationRefundPatch.AutomaticFuelGuid, BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency(HearthBelowCompat.Guid, BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency(Patches.Correctness.RareDropPityPatch.SaveYourLuckGuid, BepInDependency.DependencyFlags.SoftDependency)]
     [NetworkCompatibility(CompatibilityLevel.VersionCheckOnly, VersionStrictness.Minor)]
     internal class ValheimCommunityPatch : BaseUnityPlugin
     {
         public const string PluginGUID = "MidnightsFX.ValheimCommunityPatch";
         public const string PluginName = "ValheimCommunityPatch";
-        public const string PluginVersion = "0.40.0";
+        public const string PluginVersion = "0.41.0";
 
         internal static ManualLogSource Log;
 
@@ -36,10 +30,7 @@ namespace ValheimCommunityPatch
 
         private readonly Harmony harmony = new Harmony(PluginGUID);
 
-        // Set when the game quits. Unpatching is for unloading the mod from a running game (a
-        // script-engine reload). On quit it would rebuild every patched method one patch at a
-        // time, re-running every other mod's transpilers against a game that is being torn down,
-        // and those can throw.
+        // No unpatch on exit
         private static bool _quitting;
 
         public void Awake() {
@@ -54,25 +45,18 @@ namespace ValheimCommunityPatch
             ApplyPatches();
         }
 
-        // Each patch class is applied on its own rather than through Harmony.PatchAll, so a game
-        // update that breaks one target logs one error and leaves every other fix working.
+        // Each patch class is applied on its own rather than through Harmony.PatchAllg.
         //
         // Three rules every patch class follows:
         //
         //  - Transpilers run at Priority.Last. Harmony applies transpilers in priority order, so
-        //    ours see IL that other mods have already rewritten. Each of ours counts what it
-        //    changed and stands down when the count is wrong, so where another mod has fixed the
-        //    same defect its version wins instead of both mods breaking the method.
+        //    this ensures others changes take priority and the VCP feature is disabled.
         //
         //  - A prefix that replaces a method other mods steer through its arguments runs at
-        //    Priority.Last and honours __runOriginal, so it acts on what their prefixes changed and
-        //    stands down when one of them already replaced the call. ZNetScene.RemoveObjects is
-        //    the known case: mods keep objects loaded by adding them to its lists.
+        //    Priority.Last and honors __runOriginal, let others control the method instead if they do
         //
-        //  - Client-only fixes (see PatchSide) are not applied on a dedicated server. Whether the
-        //    process is headless is the only environment fact known this early, and it never
-        //    changes, so it is safe to decide at patch time. Server fixes are always applied
-        //    because this process may start hosting a world later.
+        //  - Client-only fixes (see PatchSide) are not applied on a dedicated server. Server fixes
+        //    are applied on a client, due to integrated servers
         private void ApplyPatches() {
             int applied = 0, failed = 0, skipped = 0;
             int client = 0, server = 0, both = 0;

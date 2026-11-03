@@ -428,7 +428,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return threshold > 0 && state.m_quietRuns >= threshold;
         }
 
+        // First, so the value it remembers is the one from before the visit. A mod whose prefix replaces
+        // UpdateSupport (ValheimPerformanceOptimizations) has written its answer by the time a later
+        // prefix runs, so the postfix would see no change and the relaxation wave would stop here.
         [HarmonyPrefix]
+        [HarmonyPriority(Priority.First)]
         [HarmonyPatch("UpdateSupport")]
         private static bool UpdateSupportPrefix(WearNTear __instance, out Snapshot __state) {
             __state = default;

@@ -35,6 +35,15 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // grid's placement back through MapSpaceToWorldSpace and its bounds from the array, so it
     // follows whatever grid the game built rather than vanilla's 2048 samples at 12 m.
     //
+    // Other mods answer GetBiomeSector themselves for land they add. Eternal Hall's boss islands
+    // lie past 10,500 m, where the grid is Ocean by fiat, many of them past the grid's edge, and
+    // appear while the world runs; it prefixes GetBiomeSector with a sector of its own built
+    // without world data. So the corrected lookup asks the game's GetBiomeSector first, prefixes
+    // and all, and corrects only an answer that is one of the grid's own sectors. Anything else
+    // came from a mod that knows the place better than the grid and stands as given. This has to
+    // live here: writing such land into the grid cannot work, because the grid is rebuilt on
+    // every load and has no cell at all past its edge.
+    //
     // Both: servers roll spawn levels through the same lookup.
     [PatchSide(Side.Both)]
     [ModDisableable]
@@ -69,17 +78,24 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             new ConcurrentDictionary<Heightmap.Biome, BiomeSector>();
 
         // Takes the place of the instance call, so the generator arrives as the first argument.
-        // Vanilla answers when the fix is off, or the grid is missing or unfinished (vanilla
-        // returns its placeholder sectors then).
+        // The game's answer stands when the fix is off, when the grid is missing or unfinished
+        // (vanilla returns its placeholder sectors then), and when another mod answered with a
+        // sector of its own.
         private static BiomeSector CorrectedSector(WorldGenerator gen, Vector3 worldPos, bool clamp) {
-            if (Enabled.Value) {
-                AltBiomeWorldData data = gen?.m_world?.m_biomeData;
-                BiomeSector sector = data != null && data.IsReady ? Lookup(gen, data, worldPos.x, worldPos.z) : null;
-                if (sector != null) { return sector; }
-            }
+            BiomeSector answer = gen.GetBiomeSector(worldPos, clamp);
+            if (!Enabled.Value) { return answer; }
 
-            return gen.GetBiomeSector(worldPos, clamp);
+            AltBiomeWorldData data = gen.m_world?.m_biomeData;
+            if (data == null || !data.IsReady || !IsGridSector(data, answer)) { return answer; }
+
+            return Lookup(gen, data, worldPos.x, worldPos.z) ?? answer;
         }
+
+        // The grid builds every sector with its world data, which hands the sector the grid's own
+        // BiomeTypeInfo for its biome. A sector built without world data, as vanilla's placeholders
+        // and other mods' sectors are, carries a BiomeTypeInfo of its own.
+        private static bool IsGridSector(AltBiomeWorldData data, BiomeSector sector) =>
+            sector != null && data.Biomes.TryGetValue(sector.Biome, out BiomeTypeInfo info) && sector.BiomeType == info;
 
         private static BiomeSector Lookup(WorldGenerator gen, AltBiomeWorldData data, float wx, float wz) {
             // The array's own bounds, not data.Size: Expand World Size grows the arrays in place

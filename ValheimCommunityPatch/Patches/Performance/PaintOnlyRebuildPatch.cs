@@ -51,7 +51,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPriority(Priority.Last)]
         private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) {
             if (PokeMethod == null || PokeForMethod == null) {
-                Logger.LogWarning("TerrainModifier.PokeHeightmaps: a method this fix needs could not be resolved, so it is inactive here.");
+                PatchHelper.WarnOnce("TerrainModifier.PokeHeightmaps: a method this fix needs could not be resolved, so it is inactive here.");
                 return instructions;
             }
 
@@ -71,7 +71,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (replaced != 1) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"TerrainModifier.PokeHeightmaps: expected 1 Heightmap.Poke call, found {replaced}, so this " +
                     "fix is inactive. Another mod has most likely already rewritten the method - if so, nothing " +
                     "is wrong.");

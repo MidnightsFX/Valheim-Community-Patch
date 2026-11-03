@@ -157,7 +157,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (replaced != 1) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"ZDOExtraData.{__originalMethod?.Name}: expected 1 ZDO lookup helper call, found " +
                     $"{replaced}, so that accessor keeps vanilla's doubled lookup. Another mod has most " +
                     "likely already rewritten it - if so, nothing is wrong.");

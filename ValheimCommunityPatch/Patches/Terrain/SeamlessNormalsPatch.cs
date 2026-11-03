@@ -107,7 +107,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             }
 
             if (replaced != 1) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"Heightmap.RebuildRenderMesh: expected 1 RecalculateTangents call, found {replaced}, " +
                     "so the tangent half of the terrain seam fix is inactive. Another mod has most " +
                     "likely already rewritten the method - if so, nothing is wrong.");
