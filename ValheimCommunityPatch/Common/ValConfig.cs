@@ -141,6 +141,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.ShieldSkillCreditPatch.BindConfig();
             Patches.Correctness.ShieldToolDamagePatch.BindConfig();
             Patches.Correctness.SwitchFaceButtonGlyphPatch.BindConfig();
+            Patches.Correctness.LayoutSwitchFocusPatch.BindConfig();
             Patches.Correctness.ScytheHarvestPatch.BindConfig();
             Patches.Correctness.RareDropPityPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
