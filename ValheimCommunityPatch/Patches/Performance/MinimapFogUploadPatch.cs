@@ -92,7 +92,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (replaced != 1) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"Minimap.Explore: expected 1 fog texture Apply call, found {replaced}, so this fix is " +
                     "inactive. Another mod has most likely already rewritten the method - if so, " +
                     "nothing is wrong.");

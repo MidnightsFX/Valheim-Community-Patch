@@ -13,6 +13,48 @@ namespace ValheimCommunityPatch {
         /// <summary>Pass as <c>expected</c> to <see cref="ReplaceCalls"/> or <see cref="ReplaceAllMatches"/> to accept any non-zero count.</summary>
         internal const int AnyCount = -1;
 
+        private static readonly HashSet<string> Logged = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>Logs why a transpiler left a method alone, the first time it says so.</summary>
+        /// <remarks>
+        /// Harmony re-runs every transpiler on a method each time any mod patches or unpatches that
+        /// method, including on the way out of the game, so a stand-down is reached again and again in
+        /// a session while only the first time is news.
+        /// </remarks>
+        internal static void WarnOnce(string message) {
+            if (Logged.Add(message)) { Logger.LogWarning(message); }
+        }
+
+        // A method the rewrite found nothing in. With another mod's transpiler on it that is the
+        // expected outcome, so it is named at Info; without one, a game update is the likelier cause.
+        private static void LogStandDown(string site, string finding, MethodBase patched) {
+            string owners = OtherTranspilers(patched);
+            if (owners == null) {
+                WarnOnce($"{site}: {finding}, so this fix is inactive here. Another mod has most likely " +
+                         "already rewritten the method - if so, nothing is wrong.");
+                return;
+            }
+
+            string message = $"{site}: {owners} also rewrites this method ({finding}), so this fix leaves " +
+                             "it to that mod. Nothing is wrong.";
+            if (Logged.Add(message)) { Logger.LogInfo(message); }
+        }
+
+        // Harmony records a patch before it builds the method, so this sees every transpiler that ran
+        // before the one asking, and this mod's transpilers run after everyone else's.
+        private static string OtherTranspilers(MethodBase patched) {
+            // Fully qualified: HarmonyLib.Patches collides with this mod's Patches namespace.
+            HarmonyLib.Patches info = patched == null ? null : Harmony.GetPatchInfo(patched);
+            if (info == null) { return null; }
+
+            SortedSet<string> owners = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (Patch patch in info.Transpilers) {
+                if (patch.owner != ValheimCommunityPatch.PluginGUID) { owners.Add(patch.owner); }
+            }
+
+            return owners.Count == 0 ? null : string.Join(", ", owners);
+        }
+
         /// <summary>A deep copy of a transpiler's input, safe to rewrite in place.</summary>
         /// <remarks>
         /// Harmony hands the same CodeInstruction objects to every transpiler in the chain, so a
@@ -40,11 +82,15 @@ namespace ValheimCommunityPatch {
         /// another mod has already rewritten the method, in which case standing down is the right
         /// outcome; see the Priority.Last note in ValheimCommunityPatch.ApplyPatches.
         /// </remarks>
+        /// <param name="patched">
+        /// The method being rewritten, which Harmony passes a transpiler as a <c>MethodBase original</c>
+        /// parameter. Given where another mod is known to rewrite the same calls, so the log can name it.
+        /// </param>
         internal static IEnumerable<CodeInstruction> ReplaceCalls(
             IEnumerable<CodeInstruction> instructions, MethodInfo original, MethodInfo replacement,
-            string site, int expected = AnyCount) {
+            string site, int expected = AnyCount, MethodBase patched = null) {
             if (original == null || replacement == null) {
-                Logger.LogWarning($"{site}: a method this fix needs could not be resolved, so it is inactive here.");
+                WarnOnce($"{site}: a method this fix needs could not be resolved, so it is inactive here.");
                 return instructions;
             }
 
@@ -63,10 +109,10 @@ namespace ValheimCommunityPatch {
             if (ok) { return codes; }
 
             string wanted = expected == AnyCount ? "at least 1" : expected.ToString();
-            Logger.LogWarning(
-                $"{site}: expected {wanted} call(s) to {original.DeclaringType?.Name}.{original.Name}, " +
-                $"found {found}, so this fix is inactive here. Another mod has most likely already " +
-                "rewritten the method - if so, nothing is wrong.");
+            LogStandDown(
+                site,
+                $"expected {wanted} call(s) to {original.DeclaringType?.Name}.{original.Name}, found {found}",
+                patched);
             return instructions;
         }
 
@@ -95,7 +141,7 @@ namespace ValheimCommunityPatch {
                     CodeInstruction inner = matcher.InstructionAt(i);
                     if (inner.labels.Count == 0 && inner.blocks.Count == 0) { continue; }
 
-                    Logger.LogWarning(
+                    WarnOnce(
                         $"{site}: a jump or exception block lands inside the code this fix rewrites, " +
                         "so it is inactive here. Another mod has most likely already rewritten the " +
                         "method - if so, nothing is wrong.");
@@ -116,7 +162,7 @@ namespace ValheimCommunityPatch {
             if (ok) { return matcher.InstructionEnumeration(); }
 
             string wanted = expected == AnyCount ? "at least 1" : expected.ToString();
-            Logger.LogWarning(
+            WarnOnce(
                 $"{site}: expected {wanted} match(es) of the code this fix rewrites, found {found}, " +
                 "so this fix is inactive here. Another mod has most likely already rewritten the " +
                 "method - if so, nothing is wrong.");
@@ -158,7 +204,7 @@ namespace ValheimCommunityPatch {
             matcher.MatchStartForward(matches);
             if (matcher.IsInvalid)
             {
-                Logger.LogWarning($"{failureMessage} Anchor instruction not found, it was likely consumed by another mod. Skipping this patch.");
+                WarnOnce($"{failureMessage} Anchor instruction not found, it was likely consumed by another mod. Skipping this patch.");
                 return false;
             }
             return true;
@@ -195,7 +241,7 @@ namespace ValheimCommunityPatch {
             matcher.MatchStartBackwards(matches);
             if (matcher.IsInvalid)
             {
-                Logger.LogWarning($"{failureMessage} Anchor instruction not found, it was likely consumed by another mod. Skipping this patch.");
+                WarnOnce($"{failureMessage} Anchor instruction not found, it was likely consumed by another mod. Skipping this patch.");
                 return false;
             }
             return true;
@@ -228,7 +274,7 @@ namespace ValheimCommunityPatch {
             matcher.MatchEndForward(matches);
             if (matcher.IsInvalid)
             {
-                Logger.LogWarning($"{failureMessage} Anchor instruction not found, it was likely consumed by another mod. Skipping this patch.");
+                WarnOnce($"{failureMessage} Anchor instruction not found, it was likely consumed by another mod. Skipping this patch.");
                 return false;
             }
             return true;

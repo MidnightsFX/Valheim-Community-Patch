@@ -59,7 +59,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (patched == 0) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     "LiquidVolume.OnDestroy: found no NativeArray.Dispose calls to guard, so this fix is " +
                     "inactive. Another mod has most likely already rewritten the method - if so, nothing " +
                     "is wrong.");

@@ -129,7 +129,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             IEnumerable<CodeInstruction> instructions, MethodInfo original, FieldInfo key, MethodInfo replacement,
             string site, int expected, bool keyed = true) {
             if (original == null || replacement == null || (keyed && key == null)) {
-                Logger.LogWarning($"{site}: a method or field '{FixName}' needs could not be resolved, so it is inactive here.");
+                PatchHelper.WarnOnce($"{site}: a method or field '{FixName}' needs could not be resolved, so it is inactive here.");
                 return instructions;
             }
 
@@ -147,7 +147,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             if (found != expected) {
                 string what = keyed ? key.Name : original.Name;
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"{site}: expected {expected} {what} write(s), found {found}, so '{FixName}' leaves " +
                     "it to vanilla. Another mod has most likely already rewritten the method - if so, " +
                     "nothing is wrong.");

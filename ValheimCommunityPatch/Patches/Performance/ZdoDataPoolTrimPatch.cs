@@ -217,7 +217,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
 
             if (replaced == 0) {
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"ZDOExtraData.{__originalMethod?.Name}: expected a ZDOHelper release call, found none, " +
                     "so tables released there keep vanilla's pooling. Another mod has most likely " +
                     "already rewritten it - if so, nothing is wrong.");

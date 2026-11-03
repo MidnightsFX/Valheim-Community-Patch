@@ -15,6 +15,7 @@ namespace ValheimCommunityPatch {
         // Correctness and terrain fixes each have an on/off toggle. Performance fixes are always
         // on; the Performance section holds only their tuning values. The exceptions can be turned
         // off: Fix Idle Creature Sync, which changes what other players see, by a bounded amount,
+        // Fix Creature Crowd Slowdown, which changes how a packed crowd of creatures moves,
         // Fix Portal Destination Send Delay, which sends players areas they may not visit, and Fix
         // Hourly Server Freeze, which moves when the game's asset cleanup runs.
         public const string SectionPerformance = "Fixes - Performance";
@@ -93,6 +94,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.ZdoMemoryStats.BindConfig();
             Patches.Performance.WorldGenTimingStats.BindConfig();
             Patches.Performance.CreatureSyncDeadbandPatch.BindConfig();
+            Patches.Performance.CreatureCrowdPatch.BindConfig();
             Patches.Performance.PortalPrefetchPatch.BindConfig();
             Patches.Performance.HourlyAssetUnloadPatch.BindConfig();
             Patches.Performance.ConfigWatcherPollingPatch.BindConfig();
@@ -112,6 +114,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.ContainerGridAlignmentPatch.BindConfig();
             Patches.Correctness.NegativeStaminaPatch.BindConfig();
             Patches.Correctness.SectorJumpInvalidatePatch.BindConfig();
+            Patches.Correctness.TeleportGhostClientPatch.BindConfig();
             Patches.Correctness.ReceivedZdoDirtyPatch.BindConfig();
             Patches.Correctness.WaterColorSeamPatch.BindConfig();
             Patches.Correctness.ObjectDbNonItemPatch.BindConfig();
@@ -138,11 +141,14 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.ShieldSkillCreditPatch.BindConfig();
             Patches.Correctness.ShieldToolDamagePatch.BindConfig();
             Patches.Correctness.SwitchFaceButtonGlyphPatch.BindConfig();
+            Patches.Correctness.ScytheHarvestPatch.BindConfig();
+            Patches.Correctness.RareDropPityPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
             Patches.Terrain.PaintSpreadOncePatch.BindConfig();
             Patches.Terrain.BiomeColorAliasPatch.BindConfig();
+            Patches.Terrain.PlainsBorderShinePatch.BindConfig();
             Patches.Terrain.PaintMaskStridePatch.BindConfig();
             Patches.Terrain.TerrainCompNullHmapPatch.BindConfig();
         }

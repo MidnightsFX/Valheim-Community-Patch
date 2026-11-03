@@ -21,8 +21,9 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // by "Swamp Plains Bridge Ground":
     //  - BlackForest, the only earthy code with neither channel (Meadows reads as bright grass). A fixed
     //    dead zone keeps any triangle from holding one vertex with swamp and another with plains, so no
-    //    pixel decodes as Ashlands. A BlackForest-to-plains blend decodes as part Mistlands, as every
-    //    vanilla BlackForest and plains border already does.
+    //    pixel decodes as Ashlands. A BlackForest-to-plains blend decodes as part Mistlands and shines;
+    //    with Fix Plains Border Shine on, that fix runs this remap together with its own and the strip
+    //    gives way to meadows before the plains (see PlainsBorderShinePatch).
     //  - Ashlands, deliberately, in both channels. Near water the shoreline then fills the strip and ends
     //    where the strip does, following the swamp and plains crossover instead of the zone grid. Its
     //    weight is capped below 0.9, above which the shader draws lava from the base mask's alpha, which
@@ -51,10 +52,10 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
         // Across one triangle the corner lerp moves swamp-minus-plains by at most about 0.094, plus up
         // to about 0.03 of Color32 rounding, so vertices either side of a 2 x 0.1 dead band never meet.
-        private const float DeadZone = 0.1f;
+        internal const float DeadZone = 0.1f;
 
         // The shader starts drawing lava at an Ashlands weight of 0.9.
-        private const float AshlandsCap = 0.85f;
+        internal const float AshlandsCap = 0.85f;
 
         internal static void BindConfig() {
             Enabled = ValConfig.BindFixToggle(
@@ -104,82 +105,102 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         // RebuildRenderMesh asks for every vertex of one tile in a row, so each tile is read once.
         private static Heightmap _cachedMap;
         private static BiomeSector[] _cachedCorners;
-        private static int _swampCorners;
-        private static int _plainsCorners;
-        private static int _protectedCorners;
+
+        // Bit i set when corner i (SW, SE, NW, NE) has that code; shared with PlainsBorderShinePatch.
+        internal static int SwampCorners;
+        internal static int ForestCorners;
+        internal static int PlainsCorners;
+        internal static int ProtectedCorners;
+
+        internal static float SharpnessValue => Sharpness != null ? Mathf.Max(1f, Sharpness.Value) : 1f;
+        internal static BridgeGround BridgeValue => Bridge != null ? Bridge.Value : BridgeGround.BlackForest;
 
         [HarmonyPostfix]
         [HarmonyPatch("GetBiomeColor", typeof(float), typeof(float))]
         private static void GetBiomeColorPostfix(Heightmap __instance, float ix, float iy, ref Color __result) {
             if (Enabled == null || !Enabled.Value) { return; }
 
+            // Fix Plains Border Shine does this remap together with its own.
+            if (PlainsBorderShinePatch.Handles) { return; }
+
             // Neither channel set: the remap would return it unchanged.
             if (__result.r <= 0f && __result.a <= 0f) { return; }
             if (__instance.IsDistantLod || Takeover.TakenOver) { return; }
 
             ReadCorners(__instance);
+            Remap(ref __result, ContributingCorners(ix, iy), SharpnessValue, BridgeValue);
+        }
 
-            // Corners 0-3 are SW, SE, NW, NE; a corner contributes unless its lerp weight is zero.
-            int contributing = (ix < 1f && iy < 1f ? 1 : 0)
-                             | (ix > 0f && iy < 1f ? 2 : 0)
-                             | (ix < 1f && iy > 0f ? 4 : 0)
-                             | (ix > 0f && iy > 0f ? 8 : 0);
+        internal static void Remap(ref Color color, int contributing, float sharpness, BridgeGround ground) {
+            if ((contributing & ProtectedCorners) != 0) { return; }
+            if ((contributing & SwampCorners) == 0 || (contributing & PlainsCorners) == 0) { return; }
 
-            if ((contributing & _protectedCorners) != 0) { return; }
-            if ((contributing & _swampCorners) == 0 || (contributing & _plainsCorners) == 0) { return; }
-
-            float swampPlains = __result.r + __result.a;
-            float d = __result.r - __result.a;
+            float swampPlains = color.r + color.a;
+            float d = color.r - color.a;
 
             // Each side ramps in outside the dead band; what they give up goes to the bridge.
-            float sharpness = Sharpness != null ? Mathf.Max(1f, Sharpness.Value) : 1f;
             float ramp = (1f - DeadZone) / sharpness;
             float swamp = Mathf.Clamp((d - DeadZone) / ramp, 0f, swampPlains);
             float plains = Mathf.Clamp((-d - DeadZone) / ramp, 0f, swampPlains);
             float bridge = swampPlains - swamp - plains;
 
-            if (Bridge != null && Bridge.Value == BridgeGround.Ashlands) {
+            if (ground == BridgeGround.Ashlands) {
                 // Ashlands' code is both channels at once. Past the cap the leftover reads as meadows.
                 float ash = Mathf.Min(bridge, AshlandsCap);
-                __result.r = swamp + ash;
-                __result.a = plains + ash;
+                color.r = swamp + ash;
+                color.a = plains + ash;
                 return;
             }
 
-            __result.r = swamp;
-            __result.a = plains;
-            __result.b += bridge;
+            color.r = swamp;
+            color.a = plains;
+            color.b += bridge;
         }
 
-        private static void ReadCorners(Heightmap hmap) {
+        // Corners 0-3 are SW, SE, NW, NE; a corner contributes unless its lerp weight is zero.
+        internal static int ContributingCorners(float ix, float iy) {
+            return (ix < 1f && iy < 1f ? 1 : 0)
+                 | (ix > 0f && iy < 1f ? 2 : 0)
+                 | (ix < 1f && iy > 0f ? 4 : 0)
+                 | (ix > 0f && iy > 0f ? 8 : 0);
+        }
+
+        internal static void ReadCorners(Heightmap hmap) {
             BiomeSector[] corners = hmap.m_cornerBiomes;
             if (ReferenceEquals(hmap, _cachedMap) && ReferenceEquals(corners, _cachedCorners)) { return; }
 
             _cachedMap = hmap;
             _cachedCorners = corners;
-            _swampCorners = 0;
-            _plainsCorners = 0;
-            _protectedCorners = 0;
+            ClearCorners();
 
             for (int i = 0; i < corners.Length && i < 4; i++) {
-                if (corners[i] == null) { continue; }
-
                 // The same code the vertex color is lerped from, terrain texture overrides included.
-                Color32 code = Heightmap.GetBiomeColor(corners[i]);
-                int bit = 1 << i;
+                if (corners[i] != null) { AddCorner(i, Heightmap.GetBiomeColor(corners[i])); }
+            }
+        }
 
-                if (code.a > 0 && (code.r > 0 || code.b > 0)) {
-                    _protectedCorners |= bit;
-                } else {
-                    if (code.r > 0) { _swampCorners |= bit; }
-                    if (code.a > 0) { _plainsCorners |= bit; }
-                }
+        internal static void ClearCorners() {
+            SwampCorners = 0;
+            ForestCorners = 0;
+            PlainsCorners = 0;
+            ProtectedCorners = 0;
+        }
+
+        internal static void AddCorner(int index, Color32 code) {
+            int bit = 1 << index;
+
+            if (code.a > 0 && (code.r > 0 || code.b > 0)) {
+                ProtectedCorners |= bit;
+            } else {
+                if (code.r > 0) { SwampCorners |= bit; }
+                if (code.b > 0) { ForestCorners |= bit; }
+                if (code.a > 0) { PlainsCorners |= bit; }
             }
         }
 
         // Vertex colors are baked when a tile rebuilds, so a toggle only shows once the loaded tiles
         // are rebuilt; a delayed poke queues each for a full rebuild next LateUpdate.
-        private static void RebuildLoadedTerrain() {
+        internal static void RebuildLoadedTerrain() {
             if (RunMode.IsDedicated) { return; }
 
             _cachedMap = null;

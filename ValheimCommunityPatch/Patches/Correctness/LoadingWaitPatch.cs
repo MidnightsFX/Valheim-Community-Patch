@@ -522,7 +522,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 }
 
                 if (found > 1) {
-                    Logger.LogWarning(
+                    PatchHelper.WarnOnce(
                         $"Player.UpdateTeleport: expected 1 arrival wait constant, found {found}, so 'Fix Loading " +
                         "Screen Wait' leaves portals alone. Another mod has most likely already rewritten the " +
                         "method - if so, nothing is wrong.");
@@ -584,7 +584,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
                 if (found == 2) { return codes; }
 
-                Logger.LogWarning(
+                PatchHelper.WarnOnce(
                     $"Game.FindSpawnPoint: expected 2 reads of m_respawnLoadDuration, found {found}, so 'Fix " +
                     "Loading Screen Wait' leaves respawns alone. Another mod has most likely already rewritten " +
                     "the method - if so, nothing is wrong.");

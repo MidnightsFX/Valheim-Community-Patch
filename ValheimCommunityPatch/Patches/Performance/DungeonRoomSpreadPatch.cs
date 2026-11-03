@@ -19,7 +19,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // A transpiler routes OnRoomLoaded's Spawn and ReleaseHeldReferences calls through this fix.
     // Outside a loading screen the rooms are placed against a per-frame budget shared by every
     // dungeon, the first room of a frame always going, so a small dungeon still finishes at once;
-    // the rest are placed from a MonoUpdaters.LateUpdate postfix in arrival order. Until the last
+    // the rest are placed from a MonoUpdaters.LateUpdate finalizer in arrival order. Until the last
     // room is in, the generator keeps its prefab references and its zone stays flagged as loading,
     // which holds back the objects inside it exactly as during vanilla's asynchronous load. Then
     // vanilla's own ending runs in vanilla's order: SnapToGround.SnappAll, the room list cleared, the
@@ -30,13 +30,20 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // cursor into the generator's own room array, and with no dungeon pending the driver is a
     // count check.
     //
+    // A flagged zone fails ZNetScene.IsAreaReady, and Player.UpdateTeleport waits on that with no
+    // timeout, so a job that never finishes keeps a door, portal or respawn into its zone on the
+    // loading screen for good. Every job therefore ends with its references released. The driver
+    // is a finalizer because a postfix is skipped on every frame some object's late update
+    // throws, and nothing paces without it attached. A room that throws ends the job early, and an
+    // ending that throws still releases, where vanilla would have left the zone stuck; either way
+    // the dungeon is left as far as it got and a warning says so.
+    //
     // A pending generator can go away three ways, and each releases exactly once. Unloaded or
     // destroyed, its own OnDestroy releases, so the job is just dropped. Deleted outright (a
     // location reset), its ZDO goes back to the pool before OnDestroy runs, and vanilla would then
     // clear the loading flag of the wrong zone, so a ZNetScene.OnZDODestroyed postfix releases while
     // the ZDO is still intact and OnDestroy finds nothing left to release. World shutdown clears the
-    // queue without releasing, since shutdown destroys the generators. A room that throws ends the
-    // job early with its references released, where vanilla would have left the zone stuck.
+    // queue without releasing, since shutdown destroys the generators.
     //
     // Client: a server generates its own dungeons through Generate, which this does not touch.
     [PatchSide(Side.Client)]
@@ -101,6 +108,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
             owners => $"Dungeon room placement is changed by {owners}, so '{FixName}' stands down and that " +
                       "mod's pace applies.");
 
+        // Without the driver, the rooms left over from a dungeon's first frame would never be placed.
+        private static readonly HookHealth Hooks = new HookHealth(
+            typeof(DungeonRoomSpreadPatch),
+            FixName,
+            () => PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(MonoUpdaters), "LateUpdate"), typeof(DriverHook)));
+
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches. Both rewrites or neither.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
@@ -137,18 +150,20 @@ namespace ValheimCommunityPatch.Patches.Performance {
             };
             Jobs.Add(job);
 
-            // A throw here propagates as it would from vanilla's Spawn, after cleaning up the job.
+            // Nothing thrown here leaves this call: OnRoomLoaded releases right after it, and finds no
+            // job left to wait for.
             bool done;
             try {
                 done = Place(job, budgeted: true);
-            } catch {
+            } catch (Exception ex) {
                 Jobs.Remove(job);
-                throw;
+                Abandon(job, ex);
+                return;
             }
 
             if (done) {
                 Jobs.Remove(job);
-                Finish(job);
+                FinishOrWarn(job);
             }
         }
 
@@ -166,7 +181,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 && !RunMode.InLoadingScreen()
                 && !ApiSwitch.Off
                 && !LoadedTakeover.TakenOver
-                && !SpawnTakeover.TakenOver;
+                && !SpawnTakeover.TakenOver
+                && Hooks.Healthy;
         }
 
         private static Job FindJob(DungeonGenerator gen) {
@@ -240,17 +256,49 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
+        // Every caller releases next, so a throw is reported here instead of passed on.
+        private static void FinishOrWarn(Job job) {
+            try {
+                Finish(job);
+            } catch (Exception ex) {
+                job.Gen.m_loadedRooms = null;
+                Logger.LogWarning(
+                    $"{FixName}: finishing a dungeon failed, so its zone is released as it is. " +
+                    $"{ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        // A room that threw: the rest of the dungeon is given up and the caller releases its zone.
+        private static void Abandon(Job job, Exception ex) {
+            job.Gen.m_loadedRooms = null;
+            Logger.LogWarning(
+                $"{FixName}: placing a dungeon room failed, so that dungeon is left unfinished and " +
+                $"its zone released. {ex.GetType().Name}: {ex.Message}");
+        }
+
         // Drops a job whose generator is already being taken care of, or releases for it.
         private static void Drop(int index, bool release) {
             Job job = Jobs[index];
             Jobs.RemoveAt(index);
-            if (release) { job.Gen.ReleaseHeldReferences(); }
+            if (release) { Release(job.Gen); }
+        }
+
+        // Vanilla's release. It throws only when the game itself has lost the zone flag, and the
+        // driver must not stop over that with other jobs still queued.
+        private static void Release(DungeonGenerator gen) {
+            try {
+                gen.ReleaseHeldReferences();
+            } catch (Exception ex) {
+                Logger.LogWarning($"{FixName}: releasing a dungeon failed. {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         [HarmonyPatch(typeof(MonoUpdaters), "LateUpdate")]
         internal static class DriverHook {
-            [HarmonyPostfix]
-            private static void Postfix() {
+            // A finalizer, so it runs on frames where an object's late update throws, which skip
+            // postfixes. It leaves that exception as it was.
+            [HarmonyFinalizer]
+            private static void Finalizer() {
                 if (Jobs.Count == 0) { return; }
 
                 // Behind a loading screen the player is waiting for exactly this, and a budget or the
@@ -279,10 +327,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     try {
                         done = Place(job, budgeted);
                     } catch (Exception ex) {
-                        Logger.LogWarning(
-                            $"{FixName}: placing a dungeon room failed, so that dungeon is left unfinished and " +
-                            $"its zone released. {ex.GetType().Name}: {ex.Message}");
-                        gen.m_loadedRooms = null;
+                        Abandon(job, ex);
                         Drop(i, release: true);
                         continue;
                     }
@@ -291,8 +336,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     if (!done) { return; }
 
                     Jobs.RemoveAt(i);
-                    Finish(job);
-                    gen.ReleaseHeldReferences();
+                    FinishOrWarn(job);
+                    Release(gen);
                 }
             }
         }
