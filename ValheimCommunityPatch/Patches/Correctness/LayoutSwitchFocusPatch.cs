@@ -2,6 +2,7 @@ using HarmonyLib;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
     // Fix Layout Switch Focus: switching the keyboard layout no longer takes keyboard focus away from
@@ -16,9 +17,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
     // menu search and other mods' fields stop taking keys in the middle of a word, and the next keys
     // run game actions instead. The event's other listeners only refresh hints and cursors.
     //
-    // A prefix skips the deselect while a text field has keyboard focus and the gamepad is not the
-    // active input, and still closes the favorites dropdown as vanilla does. A switch to the gamepad
-    // deselects as before.
+    // A prefix skips the deselect while a text field, TextMesh Pro or legacy, has keyboard focus and the
+    // gamepad is not the active input, and still closes the favorites dropdown as vanilla does. A switch
+    // to the gamepad deselects as before.
     //
     // Client: the HUD's build menu. Provenance: contributed by rgeraskin.
     [PatchSide(Side.Client)]
@@ -44,12 +45,20 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             if (!__runOriginal || Enabled == null || !Enabled.Value || ZInput.IsGamepadActive()) { return true; }
             EventSystem eventSystem = EventSystem.current;
             GameObject selected = eventSystem != null ? eventSystem.currentSelectedGameObject : null;
-            TMP_InputField field = selected != null ? selected.GetComponent<TMP_InputField>() : null;
-            if (field == null || !field.isFocused) { return true; }
+            if (selected == null || !IsTyping(selected)) { return true; }
 
             // What vanilla does here, minus the deselect.
             if (__instance.m_favoritesDropdown != null) { __instance.m_favoritesDropdown.Close(); }
             return false;
+        }
+
+        // The game's fields are TMP_InputField. Jotunn's GUIManager.CreateInputField builds the legacy kind,
+        // so mods' fields can be either.
+        private static bool IsTyping(GameObject selected) {
+            TMP_InputField field = selected.GetComponent<TMP_InputField>();
+            if (field != null) { return field.isFocused; }
+            InputField legacyField = selected.GetComponent<InputField>();
+            return legacyField != null && legacyField.isFocused;
         }
     }
 }

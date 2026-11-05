@@ -1,5 +1,14 @@
 # Changelog
 
+**0.42.0**
+```
+- The Anti-Sting Concoction now works on Deathsquitos run by another player's game.
+- A Pufferfish on an item stand no longer floods the game log while something touches it.
+- Items dropped in Ashlands ruins now despawn over time like anywhere else outside a player's base.
+- Creatures no longer spawn inside a base on low graphics settings or a slow machine.
+- Burning fires and footsteps in Deep North snow no longer slow the game to a crawl by constantly saving the ground.
+```
+
 **0.41.0**
 ```
 - The biome fix no longer turns biomes added by other mods into Ocean

@@ -96,6 +96,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.CreatureSyncDeadbandPatch.BindConfig();
             Patches.Performance.CreatureCrowdPatch.BindConfig();
             Patches.Performance.PortalPrefetchPatch.BindConfig();
+            Patches.Performance.SnowPaintSavePatch.BindConfig();
             Patches.Performance.HourlyAssetUnloadPatch.BindConfig();
             Patches.Performance.ConfigWatcherPollingPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
@@ -144,6 +145,10 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.LayoutSwitchFocusPatch.BindConfig();
             Patches.Correctness.ScytheHarvestPatch.BindConfig();
             Patches.Correctness.RareDropPityPatch.BindConfig();
+            Patches.Correctness.AntiStingPatch.BindConfig();
+            Patches.Correctness.AoeLogSpamPatch.BindConfig();
+            Patches.Correctness.RuinItemDespawnPatch.BindConfig();
+            Patches.Correctness.SpawnInsideBasePatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();

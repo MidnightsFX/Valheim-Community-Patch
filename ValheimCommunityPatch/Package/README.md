@@ -226,6 +226,16 @@ fix under [Credit and sources](#credit-and-sources).
   or unloads, like the big rocks and copper deposits of the Black Forest, coast and heath, refreshes
   just the terrain paint under it instead of also rebuilding the ground's collision and shape. Each
   such refresh checks the ground's heights came out the same, and does the full rebuild if not.
+- **Fix Snow Paint Saves** *(both)* — limits how often Deep North snow saves the ground. Every burning
+  fire pit, hearth and bonfire melts the snow around it five times a second, and footsteps and shovels
+  paint snow the same way. In vanilla each of those can write the whole zone to the save data, and
+  other players in range rebuild that zone as the saves reach them; a dozen fires in a base can take
+  the game down to a few frames a second, and refilling the snow, as mods that restore it on sleeping
+  do, sets it off again. Snow now only saves and refreshes the ground when the change could be seen, and saves a
+  zone at most once per "Snow Paint Save Interval" (5 seconds by default), so other players can see
+  melting and footprints a few seconds later. Waiting changes are saved when the zone unloads and
+  before a host's world save; a dedicated server's world save holds what clients have sent it, so it
+  can be up to one interval behind.
 - **Fix Hourly Server Freeze** *(server)* — on a dedicated server, holds the game's hourly cleanup of
   unused assets until nobody has been connected for two minutes, instead of running it on the hour.
   On a large world that cleanup freezes the server, and everyone on it, for most of a second. On a
@@ -331,6 +341,9 @@ what is recorded, so they run on every side.
 - **Fix Missing Prefab Log Spam** *(both)* — reports objects whose prefab no longer exists once per
   prefab, with a summary at logout, instead of a warning per object per spawn pass; a client warns
   about every such object on every pass for as long as it is in range.
+- **Fix Area Damage Log Spam** *(both)* — redirects the warning an area damage object without contact
+  damage writes for everything touching it, every physics step, to debug logging. A Pufferfish on an
+  item stand kept this going for as long as a player or dropped items touched it.
 - **Fix Container Grid Alignment** *(client)* — resets the container grid's alignment and scroll position
   when you open a different chest, so a standard chest opened after a larger one is centered instead of
   keeping the larger one's top-aligned, scrolled layout.
@@ -472,10 +485,10 @@ what is recorded, so they run on every side.
   position, so every face button hint names the opposite button: the X shown for Use is on the button
   labelled Y, and the button labelled X opens the inventory. Can be turned off.
 - **Fix Layout Switch Focus** *(client)* — switching the keyboard layout while typing keeps the text
-  field focused, so the next keys go on into chat, the console, a map pin name, a sign or a search
-  field. Vanilla treats the layout switch like a switch between keyboard and gamepad, and the build
-  menu then clears the selection, so the field stops taking keys mid-word and they run game actions
-  instead. Can be turned off.
+  field focused, so the next keys go on into chat, the console, a map pin name, a sign, a search
+  field or another mod's field. Vanilla treats the layout switch like a switch between keyboard and
+  gamepad, and the build menu then clears the selection, so the field stops taking keys mid-word and
+  they run game actions instead. Can be turned off.
 - **Fix Scythe Harvest** *(client)* — lets the scythe cut every plant the game marks as harvestable,
   including Magecaps, Jotun Puffs, mushrooms, dandelions, thistles, fiddleheads and smoke puffs. A
   swing looks for the plant on the object its collider sits on, and these keep their colliders on
@@ -493,6 +506,26 @@ what is recorded, so they run on every side.
   machine keeps its own countdowns, as in vanilla, so the fix applies to the creatures that machine
   owns, and it leaves the No Pseudo Drops world modifier alone. Countdowns already in a save carry over.
   Can be turned off.
+- **Fix Anti-Sting Concoction** *(both)* — makes Deathsquitos flee a player under the Anti-Sting
+  Concoction whichever game runs their AI. Vanilla looks through the player's status effects, which
+  exist only in that player's own game, so a Deathsquito run by another player's game attacks anyway.
+  The player who drank it and the player running the Deathsquito both need the mod. Can be turned off.
+- **Fix Ruin Item Despawn** *(both)* — lets dropped items despawn in Ashlands ruins (Charred Ruins,
+  Charred Tower Ruins and the rooms of Ashland Ruins) as they do anywhere else outside a player's base.
+  These ruins count as a player base themselves, which keeps creatures from spawning inside them and
+  also kept everything dropped there in the world for good. Spawning is unchanged, and items near a
+  base a player built in a ruin still stay. Items already lying in a ruin despawn once the area is
+  next loaded with nobody close by. Can be turned off.
+- **Fix Spawns Inside Bases** *(client)* — stops creatures spawning on ground your base covers while the
+  workbenches and fires that cover it are not loaded. Vanilla only looks for loaded objects, and it picks
+  spawn points 40 to 80 m from the player, which at the lowest Simulation Distance reaches ground whose
+  objects are not loaded yet or were just unloaded. It happens while moving through a base, and more
+  often on a slow machine. A spawn point is now also checked against the base objects the game knows of
+  but has not loaded, modded ones included, and a point outside the loaded zones is turned down, since a
+  creature placed there would be unloaded at once. A client of a server only holds the zones it has been
+  near, so close to a base it also turns down points next to a zone it has not received in full. Spawning
+  away from a base and at higher settings is unchanged, as are spawners allowed inside a base. Can be
+  turned off.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -610,6 +643,7 @@ The mods involved:
 | Fix Idle Creature Sync | MidnightsFX | — |
 | Fix Creature Crowd Slowdown | MidnightsFX | — |
 | Fix Paint-Only Terrain Rebuilds | MidnightsFX | — |
+| Fix Snow Paint Saves | MidnightsFX | — |
 | Fix Hourly Server Freeze | MidnightsFX | — |
 | Fix Build Menu Language Subscription | MidnightsFX | — |
 | Fix Main Menu Popup Subscription | MidnightsFX | — |
@@ -652,6 +686,7 @@ The mods involved:
 | Fix Send Failure Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the call, this one redirects it |
 | Fix Container Log Spam | ComfyMods — BetterZeeLog | The defect; that mod removes the calls, this one redirects them |
 | Fix Missing Prefab Log Spam | Redseiko | — |
+| Fix Area Damage Log Spam | MidnightsFX | — |
 | Fix Container Grid Alignment | Dreamwraith | Contributed the fix ([#19](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/19)) |
 | Fix Item Icon Crash | ComfyMods — LetMePlay | The defect; a smaller fix here that leaves the shared item data alone |
 | Fix Negative Stamina | MidnightsFX | — |
@@ -685,6 +720,9 @@ The mods involved:
 | Fix Layout Switch Focus | rgeraskin | Contributed the fix |
 | Fix Scythe Harvest | MidnightsFX | — |
 | Fix Rare Drop Pity | MidnightsFX | — |
+| Fix Anti-Sting Concoction | MidnightsFX | — |
+| Fix Ruin Item Despawn | MidnightsFX | — |
+| Fix Spawns Inside Bases | MidnightsFX | — |
 
 ### Server memory
 
