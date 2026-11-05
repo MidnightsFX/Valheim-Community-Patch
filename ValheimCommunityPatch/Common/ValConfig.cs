@@ -118,6 +118,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.TeleportGhostClientPatch.BindConfig();
             Patches.Correctness.ReceivedZdoDirtyPatch.BindConfig();
             Patches.Correctness.WaterColorSeamPatch.BindConfig();
+            Patches.Correctness.WaterDepthRefreshPatch.BindConfig();
             Patches.Correctness.ObjectDbNonItemPatch.BindConfig();
             Patches.Correctness.TamedPatrolPointPatch.BindConfig();
             Patches.Correctness.MapAutoClosePatch.BindConfig();

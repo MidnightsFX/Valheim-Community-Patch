@@ -1,5 +1,12 @@
 # Changelog
 
+**0.43.0**
+```
+- Fixes errors after going through a portal when used with Fires Ghetto Networking's Spread Terrain Rebuilds.
+- Water no longer goes flat, with waves stopping at a tile border, after going through a portal with that setting on.
+- Terrain lighting no longer loses its shading on some tiles when another mod delays terrain building.
+```
+
 **0.42.0**
 ```
 - The Anti-Sting Concoction now works on Deathsquitos run by another player's game.
