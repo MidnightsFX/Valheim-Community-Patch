@@ -8,7 +8,8 @@ spam. It deliberately ships no quality-of-life features, no balance changes, and
 can install it on a server without anyone having to agree about how the game should play.
 
 Performance fixes are always on; the config holds only their tuning values and the admin-only Verify
-diagnostics. Correctness and terrain fixes each have their own toggle. Server memory fixes are the
+diagnostics. Correctness and terrain fixes each have their own toggle, on by default apart from
+Repair Saved Rotations. Server memory fixes are the
 exception: they are off by default and opt-in, see [Server memory](#server-memory-opt-in). The
 dedicated-server garbage collector settings moved to a separate plugin, see
 [Server garbage collector](#server-garbage-collector). Config values are admin-only and
@@ -526,6 +527,27 @@ what is recorded, so they run on every side.
   near, so close to a base it also turns down points next to a zone it has not received in full. Spawning
   away from a base and at higher settings is unchanged, as are spawners allowed inside a base. Can be
   turned off.
+- **Fix Saved Rotations** *(server)* — saves every object's rotation exactly, so building pieces load
+  where they were placed. Since 1.0 the world save keeps rotations in half-degree steps and rounds them
+  down. The game hands it some pieces placed at its own rotation steps a hair short of that angle (225
+  degrees, and several more once a piece has been turned round past a full circle), and pieces turned
+  or tilted with a building mod such as MasterBuilderHeeler or Gizmo lose up to half a degree on every
+  axis, with tilts under a degree dropped. Those came back turned the next time the world loaded: walls
+  opened gaps at their ends, and pieces snapped to them carried the error on. While the game runs it
+  sends rotations in full, so the shift only ever showed after a load. Angles are now rounded to the
+  nearest half degree, and where that still loses something, the exact rotation is saved alongside as an
+  extra value of the object, which is taken back out as the world loads. A world saved with the fix
+  loads the same without it, to the nearest half degree. Can be turned off.
+- **Repair Saved Rotations** *(server, off by default)* — turns building pieces that a save without Fix
+  Saved Rotations left half a degree short back to where they were placed, when the world loads. Only
+  an upright building piece exactly half a degree short of one of the game's 22.5 degree rotation steps
+  is turned, which is where that rounding left every such piece; trees, rocks and other objects with
+  random rotations are left alone. A building mod turning in 1 degree steps
+  also places pieces at those angles (22, 67, 112 ... degrees), and an older save cannot tell the two
+  apart, so the repair waits for an admin to turn it on; pieces placed while Fix Saved Rotations was on
+  are never turned. Loading the world logs how many pieces sit at those angles. Pieces later built
+  against a turned piece keep the spot they were snapped to. The repair is written into the save the
+  next time its area is saved.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -723,6 +745,8 @@ The mods involved:
 | Fix Anti-Sting Concoction | MidnightsFX | — |
 | Fix Ruin Item Despawn | MidnightsFX | — |
 | Fix Spawns Inside Bases | MidnightsFX | — |
+| Fix Saved Rotations | MidnightsFX | — |
+| Repair Saved Rotations | MidnightsFX | — |
 
 ### Server memory
 

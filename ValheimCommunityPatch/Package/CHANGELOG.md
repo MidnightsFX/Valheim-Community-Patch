@@ -1,5 +1,11 @@
 # Changelog
 
+**0.43.0**
+```
+- Building pieces no longer come back slightly turned after the world is saved and loaded.
+    - Adds an optional repair, off by default. To use, enable, then load the world and save.
+```
+
 **0.42.0**
 ```
 - The Anti-Sting Concoction now works on Deathsquitos run by another player's game.

@@ -149,6 +149,8 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.AoeLogSpamPatch.BindConfig();
             Patches.Correctness.RuinItemDespawnPatch.BindConfig();
             Patches.Correctness.SpawnInsideBasePatch.BindConfig();
+            Patches.Correctness.SavedRotationPatch.BindConfig();
+            Patches.Correctness.SavedRotationRepairPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
