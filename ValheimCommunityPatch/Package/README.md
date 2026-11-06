@@ -364,6 +364,10 @@ what is recorded, so they run on every side.
   waves already are, instead of by one corner, removing the hard color line along the 64 m grid.
   `Water Color Shore Tint` (0 to 1, default 0.75) moves the sandy shallow-water color towards the deep-sea
   color, so one shallow corner no longer tints a whole tile of open sea; it changes color only, never waves.
+- **Fix Unbuilt Water Depth** *(client)* — a water tile that loaded before its terrain was built reads its
+  depth again once it is, instead of staying flat with the waves stopping at its border until the zone next
+  loads. Does nothing unless another mod delays terrain building, as Fires Ghetto Networking's Spread
+  Terrain Rebuilds does.
 - **Fix Non-Item ObjectDB Entries** *(both)* — drops prefabs that are not items from the game's item
   list on load; the 2026-09-09 update listed three (`PropFeastDeepNorth`, `SnowRoller`,
   `FrozenKing_Summon`) that break mods treating every entry as an item. They can still be spawned.
@@ -716,6 +720,7 @@ The mods involved:
 | Fix Teleport Ghost From Client | MidnightsFX | — |
 | Fix Unsaved Client Changes | MidnightsFX | — |
 | Fix Water Color Seams | MidnightsFX | — |
+| Fix Unbuilt Water Depth | MidnightsFX | — |
 | Fix Non-Item ObjectDB Entries | MidnightsFX | — |
 | Clear Patrol Point On Taming | MidnightsFX | — |
 | Fix Map Auto-Close | MidnightsFX | — |

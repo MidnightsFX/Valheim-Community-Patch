@@ -15,8 +15,20 @@ namespace ValheimCommunityPatch {
     /// sees the last baked collider, while this reads the current data, which is never staler.
     ///
     /// Used by the ground-check and grass-placement fixes, so the triangulation lives in one place.
+    ///
+    /// A map with no height data yet answers false, as a point outside it does. Vanilla builds a map
+    /// inside its OnEnable, but a mod can put that off to a later frame.
     /// </remarks>
     internal static class HeightmapSampling {
+        /// <summary>
+        /// True when the map has its height data. Heightmap.GetHeight checks the grid coordinates
+        /// but not the list behind them, so reading a map without it throws.
+        /// </summary>
+        internal static bool IsBuilt(Heightmap hmap) {
+            int stride = hmap.m_width + 1;
+            return hmap.m_heights.Count == stride * stride;
+        }
+
         /// <summary>Height of the collision surface at (position.x, position.z), world space.</summary>
         internal static bool TryGetHeight(Heightmap hmap, Vector3 position, out float height) {
             return Sample(hmap, hmap.transform.position, position, out height, out _, false);
@@ -45,7 +57,7 @@ namespace ValheimCommunityPatch {
 
             float fx = (position.x - origin.x) / scale + width * 0.5f;
             float fz = (position.z - origin.z) / scale + width * 0.5f;
-            if (fx < 0f || fx > width || fz < 0f || fz > width) {
+            if (fx < 0f || fx > width || fz < 0f || fz > width || !IsBuilt(hmap)) {
                 height = 0f;
                 return false;
             }

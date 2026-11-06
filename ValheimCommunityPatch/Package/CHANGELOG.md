@@ -4,6 +4,9 @@
 ```
 - Building pieces no longer come back slightly turned after the world is saved and loaded.
     - Adds an optional repair, off by default. To use, enable, then load the world and save.
+- Fixes errors after going through a portal when used with Fires Ghetto Networking (FGN) Spread Terrain Rebuilds.
+  - Fixes water seams when used with FGN
+- Terrain lighting no longer loses its shading on some tiles when another mod delays terrain building.
 ```
 
 **0.42.0**

@@ -23,6 +23,12 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // layout, so the tangent is +X projected against the normal, w = -1), and a transpiler skips
     // vanilla's RecalculateTangents whenever this pass will supply them later in the frame.
     //
+    // A neighbour that exists but has no height data yet counts as not loaded. Vanilla builds a map
+    // inside its OnEnable, but a mod can put that off to a later frame (Fires Ghetto Networking's
+    // Spread Terrain Rebuilds does), and reading the empty map threw and ended the pass, leaving the
+    // maps still to come without the tangents they had deferred to it. When the build does run, its
+    // RebuildRenderMesh marks the map dirty, which redoes the maps around it.
+    //
     // Stands down when another mod can skip RebuildRenderMesh with a prefix, because that mod builds
     // the mesh later, where this pass cannot see it, and writes its own normals over these.
     // ValheimOptimized builds all but a zone's first mesh near the player or behind a loading screen
@@ -184,7 +190,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 Dirty.Clear();
 
                 foreach (Heightmap hmap in AffectedScratch) {
-                    if (ApplyNormals(hmap)) { continue; }
+                    if (TryApplyNormals(hmap)) { continue; }
 
                     // A rebuilt map that bailed kept vanilla's normals, but its tangents were
                     // wiped by the rebuild and deferred to us. A neighbour that bailed was not
@@ -215,6 +221,17 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             float tz = -normal.x * normal.z;
             float inv = 1f / Mathf.Sqrt(tx * tx + ty * ty + tz * tz);
             return new Vector4(tx * inv, ty * inv, tz * inv, -1f);
+        }
+
+        // One map that cannot be read must not end the pass: every rebuilt map after it has deferred
+        // its tangents here, and the dirty set they came from is already cleared.
+        private static bool TryApplyNormals(Heightmap hmap) {
+            try {
+                return ApplyNormals(hmap);
+            } catch (System.Exception ex) {
+                PatchHelper.WarnOnce($"'{FixName}' could not read a terrain tile, which keeps the game's shading: {ex.GetType().Name}: {ex.Message}");
+                return false;
+            }
         }
 
         // Returns false when the normals were left untouched, which is right whenever we cannot
@@ -345,6 +362,9 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
             if (neighbour == null || neighbour == hmap || neighbour.IsDistantLod) { return null; }
             if (neighbour.m_width != hmap.m_width || neighbour.m_scale != hmap.m_scale) { return null; }
+
+            // Not built yet: GetHeight checks the grid coordinates but not the list behind them.
+            if (!HeightmapSampling.IsBuilt(neighbour)) { return null; }
 
             return neighbour;
         }
