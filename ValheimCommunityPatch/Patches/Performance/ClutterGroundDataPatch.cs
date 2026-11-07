@@ -18,6 +18,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // HearthBelow is loaded, because ground dug out with it exists only in colliders and the
     // heightmap data still describes the surface before digging.
     //
+    // Also stands down, to the game's raycast, when another mod can skip or rewrite GetGroundInfo,
+    // and keeps the answer of a prefix that ran first. The results are taken by ref so that a call
+    // this fix does not answer leaves them untouched. Valheim AVX's ground sampling writes them
+    // before it checks whether to run, so next to this fix every blade lost its heightmap and no
+    // grass grew.
+    //
     // Client: ClutterSystem needs a camera.
     [PatchSide(Side.Client)]
     [ModDisableable]
@@ -28,6 +34,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ClutterGroundDataPatch));
 
         private static bool _loggedStandDown;
+
+        // A transpiler counts too: this prefix replaces the whole method, which would hide its edit.
+        private static readonly TakeoverCheck Takeover = new TakeoverCheck(
+            typeof(ClutterGroundDataPatch),
+            AccessTools.DeclaredMethod(typeof(ClutterSystem), nameof(ClutterSystem.GetGroundInfo)),
+            transpilers: true,
+            owners => $"Grass ground placement is changed by {owners}, so '{FixName}' stands down and " +
+                      "the game's ground raycast applies.");
 
         [HarmonyPrepare]
         private static bool Prepare() {
@@ -47,15 +61,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ClutterSystem.GetGroundInfo))]
         private static bool GetGroundInfoPrefix(
-            Vector3 p, out Vector3 point, out Vector3 normal, out Heightmap hmap,
-            out Heightmap.Biome biome, ref bool __result) {
-            if (ApiSwitch.Off) {
-                point = default;
-                normal = default;
-                hmap = null;
-                biome = default;
-                return true;
-            }
+            Vector3 p, ref Vector3 point, ref Vector3 normal, ref Heightmap hmap,
+            ref Heightmap.Biome biome, ref bool __result, bool __runOriginal) {
+            // Another mod's prefix already answered this call; its results stand.
+            if (!__runOriginal) { return false; }
+            if (ApiSwitch.Off || Takeover.TakenOver) { return true; }
 
             Heightmap found;
             Vector3 origin;

@@ -27,7 +27,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // hit, status effect, attack, rider or player within RestMinPlayerDistance; a creature stops
     // resting on the first step any of that changes. A prefix on BaseAI.RandomMovement ends a wander
     // that a crowd is holding still. Collision layers and the ZDO format are unchanged, so fences
-    // hold and other players need nothing. Stands down when another mod can skip creature updates.
+    // hold and other players need nothing. Stands down when another mod can skip creature updates
+    // (Valheim AVX's benchmark hooks, which skip only its parked player, do not count).
     //
     // Both: creatures are simulated wherever they are owned, usually on a client.
     [PatchSide(Side.Both)]
@@ -101,6 +102,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 20f);
         }
 
+        // Valheim AVX's benchmark puts bool prefixes on Character/Humanoid.CustomFixedUpdate that skip
+        // only the parked local player while its benchmark runs, so they are not a takeover.
+        // Declared before Takeovers: static initializers run in order.
+        private static readonly string[] PassThroughOwners = { "com.kewb.valheimavx.benchmark" };
+
         private static readonly TakeoverCheck[] Takeovers = {
             SkipCheck(AccessTools.DeclaredMethod(typeof(MonoUpdatersExtra), nameof(MonoUpdatersExtra.CustomFixedUpdate))),
             SkipCheck(AccessTools.DeclaredMethod(typeof(MonoUpdatersExtra), nameof(MonoUpdatersExtra.UpdateAI))),
@@ -114,7 +120,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             typeof(CreatureCrowdPatch),
             target,
             HookKinds.BoolPrefixes,
-            owners => $"Creature updates can be skipped by {owners}, so '{FixName}' stands down and leaves them to that mod.");
+            owners => $"Creature updates can be skipped by {owners}, so '{FixName}' stands down and leaves them to that mod.",
+            PassThroughOwners);
 
         // Read by the wander prefix, which runs for every wandering creature at any load.
         private static bool _engaged;

@@ -1,5 +1,10 @@
 # Changelog
 
+**0.43.1**
+```
+- Terrain is built faster while exploring
+```
+
 **0.43.0**
 ```
 - Building pieces no longer come back slightly turned after the world is saved and loaded.

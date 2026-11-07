@@ -367,6 +367,7 @@ namespace ValheimCommunityPatch {
         private readonly MethodBase _target;
         private readonly HookKinds _kinds;
         private readonly Func<string, string> _message;
+        private readonly string[] _ignoredOwners;
         private bool _checked;
         private bool _takenOver;
 
@@ -377,11 +378,14 @@ namespace ValheimCommunityPatch {
 
         /// <param name="fix">The fix's patch class, whose state the mod API reports.</param>
         /// <param name="message">The log line, given the other mods' GUIDs.</param>
-        internal TakeoverCheck(Type fix, MethodBase target, HookKinds kinds, Func<string, string> message) {
+        /// <param name="ignoredOwners">Harmony ids whose hooks on the target are known not to take it over.</param>
+        internal TakeoverCheck(Type fix, MethodBase target, HookKinds kinds, Func<string, string> message,
+            string[] ignoredOwners = null) {
             _fix = fix;
             _target = target;
             _kinds = kinds;
             _message = message;
+            _ignoredOwners = ignoredOwners ?? new string[0];
         }
 
         internal bool TakenOver {
@@ -418,12 +422,15 @@ namespace ValheimCommunityPatch {
             }
         }
 
-        private static void AddForeign(SortedSet<string> owners, IReadOnlyList<Patch> patches) {
+        private void AddForeign(SortedSet<string> owners, IReadOnlyList<Patch> patches) {
             foreach (Patch patch in patches) { AddForeign(owners, patch); }
         }
 
-        private static void AddForeign(SortedSet<string> owners, Patch patch) {
-            if (patch.owner != ValheimCommunityPatch.PluginGUID) { owners.Add(patch.owner); }
+        private void AddForeign(SortedSet<string> owners, Patch patch) {
+            if (patch.owner == ValheimCommunityPatch.PluginGUID) { return; }
+            if (Array.IndexOf(_ignoredOwners, patch.owner) >= 0) { return; }
+
+            owners.Add(patch.owner);
         }
     }
 }

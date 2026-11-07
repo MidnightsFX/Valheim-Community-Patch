@@ -14,13 +14,14 @@ namespace ValheimCommunityPatch.Patches.Terrain {
     // middle of every border tile shines and the shine ends on the 64 m zone grid. Grass covers it except
     // on dirt paths, whose paint leaves the gloss of the ground under it alone unless it rains.
     //
-    // A postfix on GetBiomeColor(ix, iy) splits each vertex between plains and the black forest side
-    // across the same dead zone Fix Swamp Plains Shore Seams uses, so no triangle holds both a vertex
-    // with black forest and one with plains; what the two give up is meadows, the only ground with
-    // neither channel ("Black Forest Plains Blend Sharpness" sets how narrow that is). With the swamp
-    // fix on, swamp joins the black forest side and that fix's bridge keeps clear of the plains, so this
-    // postfix runs both remaps and BiomeColorAliasPatch's own stands aside. Distant terrain is left
-    // alone, as the swamp fix leaves it.
+    // Each vertex of near terrain is split between plains and the black forest side across the same
+    // dead zone Fix Swamp Plains Shore Seams uses, so no triangle holds both a vertex with black forest
+    // and one with plains; what the two give up is meadows, the only ground with neither channel
+    // ("Black Forest Plains Blend Sharpness" sets how narrow that is). With the swamp fix on, swamp joins
+    // the black forest side and that fix's bridge keeps clear of the plains, so this remap runs both and
+    // the swamp fix's own stands aside. Tile rebuilds run it in the swamp fix's per-tile color pass
+    // (see BiomeColorAliasPatch); a postfix on GetBiomeColor(ix, iy) runs it for other callers. Distant
+    // terrain is left alone, as the swamp fix leaves it.
     //
     // Client: vertex colors are rendering state.
     [PatchSide(Side.Client)]
@@ -75,7 +76,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         // True while this fix colors near terrain, Fix Swamp Plains Shore Seams' part included.
         internal static bool Handles => Enabled != null && Enabled.Value && !Takeover.TakenOver;
 
-        private static float SharpnessValue => Sharpness != null ? Mathf.Max(1f, Sharpness.Value) : 1f;
+        internal static float SharpnessValue =>Sharpness != null ? Mathf.Max(1f, Sharpness.Value) : 1f;
 
         [HarmonyPostfix]
         [HarmonyPatch("GetBiomeColor", typeof(float), typeof(float))]

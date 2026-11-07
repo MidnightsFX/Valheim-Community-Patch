@@ -951,6 +951,22 @@ its own in a `ReflectionUpdate.Start` prefix. Fix Lighting After Teleport and Fi
 Lighting hook the vanilla updater, so with that mod installed they have nothing to act on and do
 nothing. No stand-down line is logged, because neither holds anything.
 
+Known overlap: **Valheim AVX** has its own versions of several terrain, grass, dungeon and location
+fixes, and turns each of them off when another mod changes the same game methods.
+- **Grass.** Before 0.43.1 the two together left the world without grass, because Valheim AVX's grass
+  ground check overwrote this mod's answer. Fix Grass Ground Raycasts now stands down when another mod
+  can answer that check, and says so once in the log with *"Grass ground placement is changed by ..."*.
+  The game's own check then applies.
+- **Creature crowds.** Valheim AVX's benchmark no longer switches Fix Creature Crowd Slowdown off.
+- **Dungeons, locations and terrain colliders.** Valheim AVX's dungeon and location streaming and its
+  terrain collider building still make Fix Dungeon Spawn Hitch, Fix Background Dungeon Generation, Fix
+  Location Model Placeholders and Fix Zone Collider Stall stand down. Its own dungeon and location
+  versions are off because this mod is installed, so dungeons and locations load as in the unmodded
+  game; its terrain collider version applies.
+- To keep this mod's dungeon and location fixes, set `DungeonStreaming.Enabled`,
+  `DungeonStreaming.CacheRoomComponents` and `LocationStreaming.Enabled` to false in Valheim AVX's
+  config.
+
 ## API for other mods
 
 Where another mod would change the same game code as one of these fixes, it can usually work through
