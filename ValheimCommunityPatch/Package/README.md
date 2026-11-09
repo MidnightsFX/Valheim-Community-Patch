@@ -311,6 +311,11 @@ what is recorded, so they run on every side.
   console command uses to walk terrain paint data.
 - **Fix Terrain Compiler Init Race** *(both)* — recovers a zone's terrain compiler that loaded before
   its heightmap existed, instead of throwing every frame and ignoring edits.
+- **Fix Terrain Compiler Duplicates** *(both)* — when a zone briefly gets a second terrain compiler
+  (an edit arriving before the zone's saved one loads, as after a portal trip), removes the spare from
+  that zone only. Vanilla keeps the single most edited compiler of every zone that doubled at the
+  same time and deletes the rest, wiping a neighbouring zone's raised ground and paint so a gap opens
+  along its border.
 
 ### Correctness
 
@@ -552,6 +557,13 @@ what is recorded, so they run on every side.
   are never turned. Loading the world logs how many pieces sit at those angles. Pieces later built
   against a turned piece keep the spot they were snapped to. The repair is written into the save the
   next time its area is saved.
+- **Fix Fence Gate Rain Damage** *(both)* — stops the wood fence gate taking damage in the rain, as the
+  wood fence it is built into does not. The wood fence and the stave gate are made to stand in the open,
+  but the wood fence gate added in the Deep North update was left wearing down to half its health in
+  every rainfall, or while under water, like a piece that needs a roof. Its other wear settings already
+  match the fence's. Rain damage is worked out by the game that owns the gate, usually the closest
+  player's, so every player should have the mod. Damage a gate already took stays until it is repaired.
+  Can be turned off.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -694,6 +706,7 @@ The mods involved:
 | Fix Plains Border Shine | MidnightsFX | — |
 | Fix Terrain Paint Mask Indexing | MidnightsFX | — |
 | Fix Terrain Compiler Init Race | MidnightsFX | — |
+| Fix Terrain Compiler Duplicates | MidnightsFX | — |
 
 ### Correctness
 
@@ -752,6 +765,7 @@ The mods involved:
 | Fix Spawns Inside Bases | MidnightsFX | — |
 | Fix Saved Rotations | MidnightsFX | — |
 | Repair Saved Rotations | MidnightsFX | — |
+| Fix Fence Gate Rain Damage | MidnightsFX | — |
 
 ### Server memory
 

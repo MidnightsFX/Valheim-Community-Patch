@@ -19,8 +19,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // m_supportWearNTear, a list of the pieces filled beside the cached colliders (from the main
     // loop's lookup, so from ResolveSupport while this fix is active).
     //
-    // A transpiler swaps the two walks for ResolveSupport and the two Contains calls for
-    // IsOwnCollider. ResolveSupport reads a collider-to-piece dictionary that is filled when a
+    // A transpiler swaps the walks (two, or three on a build without m_supportWearNTear) for
+    // ResolveSupport and the two Contains calls for IsOwnCollider. ResolveSupport reads a collider-to-piece dictionary that is filled when a
     // piece builds its collider list (SetupColliders, which is lazy) and learned on a miss, so a
     // cold table costs exactly vanilla, and is cleaned through a reverse map in the shared
     // OnDestroy postfix. Every call site Unity-null-checks the result, so a stale entry for a
@@ -83,6 +83,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 .MakeGenericMethod(typeof(Collider));
         private static readonly MethodInfo IsOwnColliderMethod =
             AccessTools.Method(typeof(WearSupportLookupPatch), nameof(IsOwnCollider));
+
+        // 1.0.21 replaced the walk over cached support colliders with this list, so a build
+        // without it still has three walks.
+        private static readonly int ExpectedWalks =
+            AccessTools.DeclaredField(typeof(WearNTear), "m_supportWearNTear") != null ? 2 : 3;
 
         // ---- map maintenance (unconditional) -------------------------------------------------
 
@@ -217,7 +222,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // Both replacements are required, so this backs out unless it can make all four swaps.
+        // Both replacements are required, so this backs out unless it can make every swap.
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
@@ -239,9 +244,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 }
             }
 
-            if (replaced != 2 || containsReplaced != 2) {
+            if (replaced != ExpectedWalks || containsReplaced != 2) {
                 PatchHelper.WarnOnce(
-                    $"WearNTear.UpdateSupport: expected 2 GetComponentInParent<WearNTear> and 2 " +
+                    $"WearNTear.UpdateSupport: expected {ExpectedWalks} GetComponentInParent<WearNTear> and 2 " +
                     $"Enumerable.Contains calls, found {replaced} and {containsReplaced}, so " +
                     "this fix is inactive. Another mod has most likely already rewritten the " +
                     "method - if so, nothing is wrong.");

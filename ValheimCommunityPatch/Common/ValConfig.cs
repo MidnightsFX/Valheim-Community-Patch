@@ -152,6 +152,7 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.SpawnInsideBasePatch.BindConfig();
             Patches.Correctness.SavedRotationPatch.BindConfig();
             Patches.Correctness.SavedRotationRepairPatch.BindConfig();
+            Patches.Correctness.FenceGateRainWearPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
@@ -160,6 +161,7 @@ namespace ValheimCommunityPatch {
             Patches.Terrain.PlainsBorderShinePatch.BindConfig();
             Patches.Terrain.PaintMaskStridePatch.BindConfig();
             Patches.Terrain.TerrainCompNullHmapPatch.BindConfig();
+            Patches.Terrain.TerrainCompDuplicatePatch.BindConfig();
         }
 
         /// <summary>

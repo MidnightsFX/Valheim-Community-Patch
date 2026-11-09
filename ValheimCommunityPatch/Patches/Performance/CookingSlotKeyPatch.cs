@@ -1,3 +1,6 @@
+using System;
+using System.Linq;
+using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 
@@ -27,7 +30,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
     // problem on the same API. A negative slot index would need a key the tables cannot hold and
     // falls through to vanilla. IsEmpty and GetFreeSlot build the same keys inline and are left
     // alone deliberately: both are interaction-rate, reached from OnUseItem and the hover menu
-    // rather than from a repeater.
+    // rather than from a repeater. SetSlot has one hook class per signature (with sender from
+    // 1.0.21, without before), and Prepare applies only the one the running game matches:
+    // Harmony cannot build a prefix naming a parameter the method lacks, and a failed build stays
+    // on the method and breaks every later patch on it, by any mod.
     //
     // Both: UpdateVisual runs wherever the station is loaded, UpdateCooking's owner branch runs
     // on whichever peer owns the ZDO, and a listen host runs both.
@@ -93,26 +99,92 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        [HarmonyPrefix]
-        [HarmonyPatch("SetSlot")]
-        private static bool SetSlotPrefix(
-            CookingStation __instance,
-            int slot,
-            string itemName,
-            float cookedTime,
-            CookingStation.Status status,
-            bool cheated,
-            long sender) {
-            if (!TryPrepare(__instance, slot)) { return true; }
-            if (!__instance.m_nview.IsValid()) { return false; }
+        // SetSlot's parameters as of 1.0.21; builds before it stop after cheated.
+        private static readonly string[] SetSlotNames = { "slot", "itemName", "cookedTime", "status", "cheated", "sender" };
+        private static readonly Type[] SetSlotTypes = {
+            typeof(int), typeof(string), typeof(float), typeof(CookingStation.Status), typeof(bool), typeof(long)
+        };
 
-            ZDO zdo = __instance.m_nview.GetZDO();
+        private static int _setSlotArity = -1;
+
+        // 6 from 1.0.21, 5 before it, 0 for any other parameter list. Prepare can run more than once
+        // per class, so the answer, and the warning, come once.
+        private static int SetSlotArity() {
+            if (_setSlotArity >= 0) { return _setSlotArity; }
+
+            MethodInfo[] candidates = AccessTools.GetDeclaredMethods(typeof(CookingStation))
+                .Where(m => m.Name == "SetSlot")
+                .ToArray();
+            ParameterInfo[] parameters = candidates.Length == 1 ? candidates[0].GetParameters() : null;
+
+            _setSlotArity = 0;
+            if (parameters != null && parameters.Length >= 5 && parameters.Length <= SetSlotNames.Length) {
+                _setSlotArity = parameters.Length;
+                for (int i = 0; i < parameters.Length; i++) {
+                    if (parameters[i].Name != SetSlotNames[i] || parameters[i].ParameterType != SetSlotTypes[i]) {
+                        _setSlotArity = 0;
+                        break;
+                    }
+                }
+            }
+
+            if (_setSlotArity == 0) {
+                Logger.LogWarning(
+                    "CookingStation.SetSlot no longer has the parameters 'Fix Cooking Slot Keys' expects, so " +
+                    "cooking stations write their slots the vanilla way. A Valheim update has most likely " +
+                    "changed the method.");
+            }
+
+            return _setSlotArity;
+        }
+
+        private static bool WriteSlot(
+            CookingStation station, int slot, string itemName, float cookedTime,
+            CookingStation.Status status, bool cheated, long sender) {
+            if (!TryPrepare(station, slot)) { return true; }
+            if (!station.m_nview.IsValid()) { return false; }
+
+            ZDO zdo = station.m_nview.GetZDO();
             zdo.Set(SlotKeys[slot], itemName);
             zdo.Set(SlotKeys[slot], cookedTime);
             zdo.Set(StatusKeys[slot], (int)status);
             zdo.Set(ZDOVars.s_cheatedQueued + slot, cheated);
             if (sender != 0L) { zdo.Set(ZDOVars.s_playerID + slot, sender); }
             return false;
+        }
+
+        [HarmonyPatch(typeof(CookingStation), "SetSlot")]
+        internal static class SetSlotHook {
+            [HarmonyPrepare]
+            private static bool Prepare() => SetSlotArity() == 6;
+
+            [HarmonyPrefix]
+            private static bool Prefix(
+                CookingStation __instance,
+                int slot,
+                string itemName,
+                float cookedTime,
+                CookingStation.Status status,
+                bool cheated,
+                long sender) =>
+                WriteSlot(__instance, slot, itemName, cookedTime, status, cheated, sender);
+        }
+
+        // Up to 1.0.20, when nothing recorded who added an item.
+        [HarmonyPatch(typeof(CookingStation), "SetSlot")]
+        internal static class SetSlotBefore1021Hook {
+            [HarmonyPrepare]
+            private static bool Prepare() => SetSlotArity() == 5;
+
+            [HarmonyPrefix]
+            private static bool Prefix(
+                CookingStation __instance,
+                int slot,
+                string itemName,
+                float cookedTime,
+                CookingStation.Status status,
+                bool cheated) =>
+                WriteSlot(__instance, slot, itemName, cookedTime, status, cheated, 0L);
         }
     }
 }
