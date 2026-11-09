@@ -1,5 +1,11 @@
 # Changelog
 
+**0.45.0**
+```
+- Grass around the player is now built in the same order, significantly increasing grass build speed.
+- Improves compatibility with FarLands and SteadyFrame
+```
+
 **0.44.0**
 ```
 - Wood fence gate no longer takes rain damage, matching the wood fence.

@@ -49,38 +49,69 @@ namespace ValheimCommunityPatch {
             return Sample(hmap, origin, position, out height, out normal, true);
         }
 
-        private static bool Sample(Heightmap hmap, Vector3 origin, Vector3 position, out float height, out Vector3 normal, bool wantNormal) {
+        /// <summary>
+        /// Height and triangle normal from a copy of a map's height grid, so a worker thread can ask:
+        /// <paramref name="heights"/> is m_heights as an array, (width + 1) squared, row by row.
+        /// </summary>
+        internal static bool TryGetSurface(float[] heights, int width, float scale, Vector3 origin, Vector3 position,
+            out float height, out Vector3 normal) {
             normal = Vector3.up;
-
-            int width = hmap.m_width;
-            float scale = hmap.m_scale;
-
-            float fx = (position.x - origin.x) / scale + width * 0.5f;
-            float fz = (position.z - origin.z) / scale + width * 0.5f;
-            if (fx < 0f || fx > width || fz < 0f || fz > width || !IsBuilt(hmap)) {
+            if (!Locate(width, scale, origin, position, out int x0, out int z0, out float rx, out float rz)) {
                 height = 0f;
                 return false;
             }
 
-            int x0 = Mathf.Min((int)fx, width - 1);
-            int z0 = Mathf.Min((int)fz, width - 1);
-            float rx = fx - x0;
-            float rz = fz - z0;
+            int stride = width + 1;
+            Surface(
+                heights[z0 * stride + x0], heights[z0 * stride + x0 + 1],
+                heights[(z0 + 1) * stride + x0], heights[(z0 + 1) * stride + x0 + 1],
+                rx, rz, scale, origin.y, true, out height, ref normal);
+            return true;
+        }
 
-            float h00 = hmap.GetHeight(x0, z0);
-            float h10 = hmap.GetHeight(x0 + 1, z0);
-            float h01 = hmap.GetHeight(x0, z0 + 1);
-            float h11 = hmap.GetHeight(x0 + 1, z0 + 1);
+        private static bool Sample(Heightmap hmap, Vector3 origin, Vector3 position, out float height, out Vector3 normal, bool wantNormal) {
+            normal = Vector3.up;
 
-            if (rx + rz <= 1f) {
-                height = h00 + (h10 - h00) * rx + (h01 - h00) * rz + origin.y;
-                if (wantNormal) { normal = new Vector3(h00 - h10, scale, h00 - h01).normalized; }
-            } else {
-                height = h11 + (h01 - h11) * (1f - rx) + (h10 - h11) * (1f - rz) + origin.y;
-                if (wantNormal) { normal = new Vector3(h01 - h11, scale, h10 - h11).normalized; }
+            if (!Locate(hmap.m_width, hmap.m_scale, origin, position, out int x0, out int z0, out float rx, out float rz)
+                || !IsBuilt(hmap)) {
+                height = 0f;
+                return false;
             }
 
+            Surface(
+                hmap.GetHeight(x0, z0), hmap.GetHeight(x0 + 1, z0),
+                hmap.GetHeight(x0, z0 + 1), hmap.GetHeight(x0 + 1, z0 + 1),
+                rx, rz, hmap.m_scale, origin.y, wantNormal, out height, ref normal);
             return true;
+        }
+
+        // The grid cell under the point and the point's place within it; false outside the map.
+        private static bool Locate(int width, float scale, Vector3 origin, Vector3 position,
+            out int x0, out int z0, out float rx, out float rz) {
+            float fx = (position.x - origin.x) / scale + width * 0.5f;
+            float fz = (position.z - origin.z) / scale + width * 0.5f;
+            if (fx < 0f || fx > width || fz < 0f || fz > width) {
+                x0 = z0 = 0;
+                rx = rz = 0f;
+                return false;
+            }
+
+            x0 = Mathf.Min((int)fx, width - 1);
+            z0 = Mathf.Min((int)fz, width - 1);
+            rx = fx - x0;
+            rz = fz - z0;
+            return true;
+        }
+
+        private static void Surface(float h00, float h10, float h01, float h11, float rx, float rz, float scale,
+            float originY, bool wantNormal, out float height, ref Vector3 normal) {
+            if (rx + rz <= 1f) {
+                height = h00 + (h10 - h00) * rx + (h01 - h00) * rz + originY;
+                if (wantNormal) { normal = new Vector3(h00 - h10, scale, h00 - h01).normalized; }
+            } else {
+                height = h11 + (h01 - h11) * (1f - rx) + (h10 - h11) * (1f - rz) + originY;
+                if (wantNormal) { normal = new Vector3(h01 - h11, scale, h10 - h11).normalized; }
+            }
         }
     }
 }

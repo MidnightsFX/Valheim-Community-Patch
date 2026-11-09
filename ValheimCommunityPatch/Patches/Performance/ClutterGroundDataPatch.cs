@@ -43,6 +43,24 @@ namespace ValheimCommunityPatch.Patches.Performance {
             owners => $"Grass ground placement is changed by {owners}, so '{FixName}' stands down and " +
                       "the game's ground raycast applies.");
 
+        private static bool? _attached;
+
+        /// <summary>
+        /// True while this fix answers ground queries: patched, not turned off and not taken over.
+        /// Fix Grass Build Stall reproduces its answer off the main thread, so it asks. Main thread only.
+        /// </summary>
+        internal static bool Answering {
+            get {
+                if (_attached == null) {
+                    _attached = PatchHelper.HasHook(
+                        AccessTools.DeclaredMethod(typeof(ClutterSystem), nameof(ClutterSystem.GetGroundInfo)),
+                        typeof(ClutterGroundDataPatch));
+                }
+
+                return _attached.Value && !ApiSwitch.Off && !Takeover.TakenOver;
+            }
+        }
+
         [HarmonyPrepare]
         private static bool Prepare() {
             if (!HearthBelowCompat.Loaded) { return true; }

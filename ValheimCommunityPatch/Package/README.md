@@ -277,6 +277,12 @@ fix under [Credit and sources](#credit-and-sources).
   game's Mono every watcher polls, so a dozen watchers over the BepInEx folder are a dozen scans of it
   per cycle and the largest source of garbage in the process. A per-machine setting can lengthen the
   poll further.
+- **Fix Grass Build Stall** *(client)* — places the blades of each new grass patch on a background
+  thread instead of the main thread, and fills the patch in once they are ready. The grass is the
+  game's, blade for blade: the same seeds, the same checks, in the same order. A patch being rebuilt
+  keeps its old grass until the new one is ready. Most of the work of a grass rebuild after a world
+  load, teleport or terrain edit leaves the main thread, which matters most with a raised grass
+  distance. A debug setting builds every patch both ways and compares them.
 
 ### Terrain
 
@@ -693,6 +699,7 @@ The mods involved:
 | Fix Grass Instance Memory | MidnightsFX | — |
 | Fix GUI Pixel Snap Writes | MidnightsFX | — |
 | Fix Config Watcher Polling | MidnightsFX | — |
+| Fix Grass Build Stall | MidnightsFX | — |
 
 ### Terrain
 
@@ -964,6 +971,13 @@ Known overlap: **ValheimPerformanceOptimizations** replaces the game's reflectio
 its own in a `ReflectionUpdate.Start` prefix. Fix Lighting After Teleport and Fix Lightning Flash
 Lighting hook the vanilla updater, so with that mod installed they have nothing to act on and do
 nothing. No stand-down line is logged, because neither holds anything.
+
+Known overlap: **FarLands** and **SteadyFrame** place the game's grass on a worker thread and draw it
+on the graphics card themselves, and hand grass building back to the game as soon as another mod hooks
+it. Before 0.45.0 Fix Grass Instance Memory's hook made them do that, so their faster grass building
+never ran next to this mod. While either is installed and the graphics card supports compute shaders,
+Fix Grass Build Stall and Fix Grass Instance Memory stand down so theirs runs, and say so once in the
+log with *"FarLands builds the grass itself, so '...' stands down"*.
 
 Known overlap: **Valheim AVX** has its own versions of several terrain, grass, dungeon and location
 fixes, and turns each of them off when another mod changes the same game methods.
