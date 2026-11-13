@@ -8,9 +8,10 @@ spam. It deliberately ships no quality-of-life features, no balance changes, and
 can install it on a server without anyone having to agree about how the game should play.
 
 Performance fixes are always on; the config holds only their tuning values and the admin-only Verify
-diagnostics. Correctness and terrain fixes each have their own toggle, on by default apart from
-Repair Saved Rotations. Server memory fixes are the
-exception: they are off by default and opt-in, see [Server memory](#server-memory-opt-in). The
+diagnostics. The one exception is Fix Building Renderer Overhead, which changes how buildings are drawn,
+so each player can switch it off (Client config, Building Render Batching; on by default). Correctness
+and terrain fixes each have their own toggle, on by default apart from Repair Saved Rotations. Server
+memory fixes are off by default and opt-in, see [Server memory](#server-memory-opt-in). The
 dedicated-server garbage collector settings moved to a separate plugin, see
 [Server garbage collector](#server-garbage-collector). Config values are admin-only and
 server-synced.
@@ -283,17 +284,33 @@ fix under [Credit and sources](#credit-and-sources).
   keeps its old grass until the new one is ready. Most of the work of a grass rebuild after a world
   load, teleport or terrain edit leaves the main thread, which matters most with a raised grass
   distance. A debug setting builds every patch both ways and compares them.
+- **Fix Building Renderer Overhead** *(client)* — draws the plain building pieces of each 16 m area as
+  a few merged meshes instead of one object each. In a big base the game spends most of a frame culling
+  and setting up shadows for tens of thousands of piece objects; around a 27,000-piece castle this
+  about doubled the frame rate, and raised it by a third inside it. Pieces stay real pieces: you can
+  still damage, repair, remove and build onto them. A highlighted, damaged, glowing or destroyed piece
+  is drawn the game's way at once, and doors, chests, fires, stands and anything else with moving parts
+  are never merged. Stone materials that tint each piece differently are left as they are, so the
+  picture matches the game's. The merged meshes draw more triangles than the game would, mostly in the
+  shadow maps; on a fast graphics card that cost well under a millisecond a frame. On by default; Client
+  config, Building Render Batching switches it off, also while playing.
 
 ### Terrain
 
 **Fix Terrain Seams**, **Fix Terrain Paint Seams**, **Fix Swamp Plains Shore Seams** and **Fix Plains
 Border Shine** change only what is drawn, never what is saved, so they are client-only. **Fix Terrain Paint Zone Fanout** and **Fix Terrain Paint Doubling** change
-what is recorded, so they run on every side.
+what is recorded, so they run on every side. **Fix Terrain Height Seams** saves nothing either, but the ground's height
+is also what everything stands on, so it runs on every side too.
 
 - **Fix Terrain Seams** *(client)* — computes terrain lighting normals across zone boundaries,
   removing the hard crease along the 64 m grid.
 - **Fix Terrain Paint Seams** *(client)* — merges the two copies of the paint on a zone boundary so
   dirt continues across the line instead of stopping dead; a lone stripe on the border is dropped.
+- **Fix Terrain Height Seams** *(both)* — makes the ground on both sides of a zone border meet at one
+  height. Each zone keeps its own copy of the border, and once one side has missed some edits the two
+  copies differ: the ground cracks along the 64 m line and the sky or water shows through. The border is
+  drawn and collides at the average of the two copies. The saved terrain is unchanged, and edits read and
+  save exactly what they would without the fix, so turning it off shows the ground as recorded.
 - **Fix Terrain Paint Zone Fanout** *(both)* — records terrain paint into every zone it actually
   covers, including the neighbour about a metre west or south that vanilla left out; affects edits
   made from now on.
@@ -317,11 +334,14 @@ what is recorded, so they run on every side.
   console command uses to walk terrain paint data.
 - **Fix Terrain Compiler Init Race** *(both)* — recovers a zone's terrain compiler that loaded before
   its heightmap existed, instead of throwing every frame and ignoring edits.
-- **Fix Terrain Compiler Duplicates** *(both)* — when a zone briefly gets a second terrain compiler
-  (an edit arriving before the zone's saved one loads, as after a portal trip), removes the spare from
-  that zone only. Vanilla keeps the single most edited compiler of every zone that doubled at the
-  same time and deletes the rest, wiping a neighbouring zone's raised ground and paint so a gap opens
-  along its border.
+- **Fix Terrain Compiler Duplicates** *(both)* — an edit that reaches a zone before its saved terrain
+  compiler has loaded (in the first seconds after arriving, for zones a little way off) goes into the
+  saved one, loaded on the spot. Vanilla starts a second, empty compiler for it and later deletes it, so
+  that zone loses the edit while the zone across the border keeps it, and the ground cracks along the
+  line. A second compiler that still appears (a client that has not received the zone's saved one yet)
+  is removed from that zone only. Vanilla keeps the single most edited compiler of every zone that
+  doubled at the same time and deletes the rest, wiping a neighbouring zone's raised ground and paint
+  so a gap opens along its border.
 
 ### Correctness
 
@@ -570,6 +590,36 @@ what is recorded, so they run on every side.
   match the fence's. Rain damage is worked out by the game that owns the gate, usually the closest
   player's, so every player should have the mod. Damage a gate already took stays until it is repaired.
   Can be turned off.
+- **Fix Recipe Discovery** *(client)* — learns a recipe as soon as you know its crafting ingredients,
+  even while you stand at a crafting station. Since the Deep North update most weapon and armor recipes
+  also list an upgrade item that is only used at an upgrade station. Vanilla leaves that item out when
+  you are away from every station but asks for it at any station, so making Bronze at the forge, or the
+  orb for the FrostFire weapons at the black forge, did not unlock the recipes that use it; they showed
+  up only after a later pickup away from the station. Recipes whose crafting ingredients you do not all
+  know stay locked. Can be turned off.
+- **Fix Treasure Chest Discovery** *(both)* — counts each treasure chest once in your stats, and only
+  the chests meant to count. The game counts a treasure chest the first time you open it and asks the
+  machine that owns the chest to mark it as counted, but sends that request under a different name from
+  the one it listens for. The mark is never made, every later open of the same chest counts again, and
+  each open logs `Failed to find rpc method 327122920`. Separately, the chests meant to count nothing
+  (the plain meadows and heath chests, shipwreck chests, and the Grausten chest, wardrobe and sled you
+  build, among others) still carry an old "none" value that now reads as another stat, mostly felled
+  birch trees, so every open of them counted one and logged the same warning. The fix counts only the
+  treasure stats and sends the request under the name the game listens for, which works whoever owns
+  the chest. A machine with the mod also accepts the old name, so players without the mod are covered
+  on the chests it owns. Counts already made stay. Can be turned off.
+- **Fix Armor Stand Cape Crash** *(both)* — stops the game crashing when an armor stand shows a cape.
+  The Deep North update moved capes to a new cloth system, but both armor stands still point their
+  capes at the body shapes of the old one, and building a cape on a stand crashed the game outright:
+  when you hung a cape on a stand, and when you came near a stand that wore one in a world from before
+  the update. The fix gives each stand matching body shapes for the new system as it is created, so its
+  cape rests on the stand as before. Can be turned off.
+- **Fix Old Armor Stand Slots** *(both)* — gives back the shield, cape and utility item on armor stands
+  from worlds made before the Deep North update. Upgrading such a world brings only the first six slots
+  of each stand into the new format, so the stand treats those three as empty: a cape still shows but
+  cannot be taken back, and the items are lost when the stand is destroyed. The fix brings the rest over
+  on each stand as it loads, on the machine of the player who owns it, so worlds upgraded before the fix
+  are repaired too. Can be turned off.
 
 The log fixes, Fix Biome Sector Lookup's warning, Fix Equipment Texture Errors and Fix Cloth Wind
 Shelter Errors redirect rather than delete: turn on `EnableDebugMode` and the messages come back.
@@ -700,6 +750,7 @@ The mods involved:
 | Fix GUI Pixel Snap Writes | MidnightsFX | — |
 | Fix Config Watcher Polling | MidnightsFX | — |
 | Fix Grass Build Stall | MidnightsFX | — |
+| Fix Building Renderer Overhead | MidnightsFX | — |
 
 ### Terrain
 
@@ -707,6 +758,7 @@ The mods involved:
 | --- | --- | --- |
 | Fix Terrain Seams | MidnightsFX | — |
 | Fix Terrain Paint Seams | MidnightsFX | — |
+| Fix Terrain Height Seams | MidnightsFX | — |
 | Fix Terrain Paint Zone Fanout | MidnightsFX | — |
 | Fix Terrain Paint Doubling | MidnightsFX | — |
 | Fix Swamp Plains Shore Seams | MidnightsFX | — |
@@ -773,6 +825,10 @@ The mods involved:
 | Fix Saved Rotations | MidnightsFX | — |
 | Repair Saved Rotations | MidnightsFX | — |
 | Fix Fence Gate Rain Damage | MidnightsFX | — |
+| Fix Recipe Discovery | MidnightsFX | — |
+| Fix Treasure Chest Discovery | MidnightsFX | — |
+| Fix Armor Stand Cape Crash | MidnightsFX | — |
+| Fix Old Armor Stand Slots | MidnightsFX | — |
 
 ### Server memory
 
@@ -994,6 +1050,11 @@ fixes, and turns each of them off when another mod changes the same game methods
 - To keep this mod's dungeon and location fixes, set `DungeonStreaming.Enabled`,
   `DungeonStreaming.CacheRoomComponents` and `LocationStreaming.Enabled` to false in Valheim AVX's
   config.
+
+Known overlap: **Valheim Enhanced Edition** (with merged buildings on), **PUP FPS**, **Valheim
+Performance Overhaul**, **Valheim Build Optimization** (with renderer batching on) and **FarLands**
+(with its distant buildings on) all draw or hide building pieces their own way. While one of them is
+installed, Fix Building Renderer Overhead stays off even when switched on, and says so once in the log.
 
 ## API for other mods
 

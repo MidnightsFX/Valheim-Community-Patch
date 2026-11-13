@@ -48,11 +48,16 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             if (Enabled == null || !Enabled.Value) { return true; }
             if (__instance.m_hmap != null && __instance.m_initialized) { return true; }
 
-            if (RecoveryFailed.Count > 0 && RecoveryFailed.Contains(__instance)) { return false; }
-
             // A successful recovery already ran CheckLoad, so vanilla's Update is skipped either way.
-            TryRecover(__instance);
+            Recover(__instance);
             return false;
+        }
+
+        // Also called by Fix Terrain Compiler Duplicates, which finds such a compiler when an edit needs it.
+        internal static bool Recover(TerrainComp comp) {
+            if (Enabled == null || !Enabled.Value) { return false; }
+            if (RecoveryFailed.Count > 0 && RecoveryFailed.Contains(comp)) { return false; }
+            return TryRecover(comp);
         }
 
         private static bool TryRecover(TerrainComp comp) {

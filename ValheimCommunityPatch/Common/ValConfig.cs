@@ -84,6 +84,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.WearSupportLookupPatch.BindConfig();
             Patches.Performance.SceneIdleSkipPatch.BindConfig();
             Patches.Performance.LightCostPatch.BindConfig();
+            Patches.Performance.PieceRenderBatchPatch.BindConfig();
             Patches.Performance.RemoveSweepPacingPatch.BindConfig();
             Patches.Performance.SpawnQueueCachePatch.BindConfig();
             Patches.Performance.SectorInstanceIndexPatch.BindConfig();
@@ -154,8 +155,13 @@ namespace ValheimCommunityPatch {
             Patches.Correctness.SavedRotationPatch.BindConfig();
             Patches.Correctness.SavedRotationRepairPatch.BindConfig();
             Patches.Correctness.FenceGateRainWearPatch.BindConfig();
+            Patches.Correctness.RecipeDiscoveryPatch.BindConfig();
+            Patches.Correctness.TreasureChestDiscoveryPatch.BindConfig();
+            Patches.Correctness.ArmorStandCapeCrashPatch.BindConfig();
+            Patches.Correctness.OldArmorStandSlotPatch.BindConfig();
             Patches.Terrain.SeamlessNormalsPatch.BindConfig();
             Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
+            Patches.Terrain.HeightSeamReconcilePatch.BindConfig();
             Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
             Patches.Terrain.PaintSpreadOncePatch.BindConfig();
             Patches.Terrain.BiomeColorAliasPatch.BindConfig();

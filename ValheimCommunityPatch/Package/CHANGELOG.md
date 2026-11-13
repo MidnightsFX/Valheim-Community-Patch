@@ -1,5 +1,17 @@
 # Changelog
 
+**0.46.0**
+```
+- Crashfix: Itemstands placed before 1.0 with a cape no longer crash the game
+    - Armor stands from worlds made before the Deep North update no longer lose their shield, cape and utility items.
+- Bugfix: Fixes recipes not being learned once all of their ingredients are known
+- Bugfix: Closes cracks in the ground along zone borders, where the sky or water showed through.
+    - Terrain edits made just after arriving somewhere are no longer lost on one side of a zone border.
+- Bugfix: Treasure chests now count once in your stats instead of on every open, and opening them no longer logs a warning.
+    - Opening a meadows chest, wardrobe or other chest that should count nothing no longer adds felled birch trees to your stats.
+- Significantly improves performance of large building areas
+```
+
 **0.45.0**
 ```
 - Grass around the player is now built in the same order, significantly increasing grass build speed.

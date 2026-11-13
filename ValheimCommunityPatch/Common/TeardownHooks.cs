@@ -79,6 +79,7 @@ namespace ValheimCommunityPatch {
                 SupportSleepPatch.OnPieceDestroyed(__instance, id);
                 WearSupportLookupPatch.OnPieceDestroyed(id);
                 WearCacheEventPatch.OnPieceDestroyed(__instance, id);
+                PieceRenderBatchPatch.OnPieceDestroyed(id);
             }
         }
 
