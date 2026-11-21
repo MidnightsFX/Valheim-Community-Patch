@@ -952,9 +952,14 @@ before your buildings arrive or from losing your bed spawn point.
 Known overlap: **SteadyFrame** replaces the game's fixed portal arrival wait with its own timing.
 Before 0.34.0 that switched Fix Loading Screen Wait off for portals; now SteadyFrame's timing applies
 and the arrival still waits for the server to send the destination, and the log says so once with
-*"another mod has replaced the fixed portal arrival wait ..."*. Its building support lookup is the
-same as Fix Support Lookup Cost's, so that fix stands down with a warning in the log and SteadyFrame's
-version applies. SteadyFrame turns its own object streaming, terrain and housekeeping changes off when this
+*"another mod has replaced the fixed portal arrival wait ..."*. SteadyFrame 1.3.1 no longer changes
+the building support lookup, so Fix Support Lookup Cost runs beside it; an older SteadyFrame with the
+same lookup makes that fix stand down with a warning in the log, and SteadyFrame's version applies.
+SteadyFrame 1.3.1 keeps its object streaming on and, for each part of it that is switched on, turns
+off this mod's fix for the same job through this mod's API: Fix Spawn Queue Churn, Fix Idle Scene
+Sweep, Fix Unload Discovery Scan, Fix Unload Sweep Cost and Fix Dungeon Spawn Hitch. The log names
+each one with *"... was turned off for the rest of this session by SteadyFrame ..."*.
+SteadyFrame turns its own terrain and housekeeping changes off when this
 mod is installed. From 0.35.0 it can instead keep its terrain priority, terrain cache and loading-screen
 ghost zone pause through this mod's API (see below), once a SteadyFrame version that uses the API is
 installed.
@@ -1033,7 +1038,7 @@ on the graphics card themselves, and hand grass building back to the game as soo
 it. Before 0.45.0 Fix Grass Instance Memory's hook made them do that, so their faster grass building
 never ran next to this mod. While either is installed and the graphics card supports compute shaders,
 Fix Grass Build Stall and Fix Grass Instance Memory stand down so theirs runs, and say so once in the
-log with *"FarLands builds the grass itself, so '...' stands down"*.
+log with *"... builds the grass itself, so '...' stands down"*.
 
 Known overlap: **Valheim AVX** has its own versions of several terrain, grass, dungeon and location
 fixes, and turns each of them off when another mod changes the same game methods.

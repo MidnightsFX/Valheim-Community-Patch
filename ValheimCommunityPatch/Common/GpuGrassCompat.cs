@@ -42,9 +42,9 @@ namespace ValheimCommunityPatch {
             }
         }
 
-        /// <summary>The loaded mod's name, for log lines.</summary>
+        /// <summary>The name of the mod <see cref="BuildsGrass"/> is true for, for log lines.</summary>
         internal static string Name =>
-            Chainloader.PluginInfos.ContainsKey(FarLandsGuid) ? "FarLands" : "SteadyFrame";
+            Chainloader.PluginInfos.ContainsKey(SteadyFrameGuid) ? "SteadyFrame" : "FarLands";
 
         /// <summary>
         /// Removes this mod's hooks declared in <paramref name="hookClass"/> from <paramref name="original"/>.
