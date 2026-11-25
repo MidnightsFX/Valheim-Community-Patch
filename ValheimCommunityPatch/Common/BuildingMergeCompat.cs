@@ -31,7 +31,8 @@ namespace ValheimCommunityPatch {
                 } else if (id == "valheim.buildpieceprofiler") {
                     if (Setting(p.Value, "Renderer Batching", "EnableRendererBatching", false)) { return "Valheim Build Optimization (renderer batching)"; }
                 } else if (id == "ru.ivest.farlands") {
-                    if (Setting(p.Value, "Buildings", "Enabled", true)) { return "FarLands (distant buildings)"; }
+                    // FarLands draws no buildings while its General.Enabled is off, whatever Buildings.Enabled says.
+                    if (Setting(p.Value, "General", "Enabled", true) && Setting(p.Value, "Buildings", "Enabled", true)) { return "FarLands (distant buildings)"; }
                 }
             }
             return null;

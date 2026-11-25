@@ -1,5 +1,12 @@
 # Changelog
 
+**Unreleased**
+```
+- FarLands and SteadyFrame compatibility fixes:
+    - Building render batching no longer turns itself off beside FarLands when FarLands is switched off in its own settings.
+    - The log now names SteadyFrame instead of FarLands when SteadyFrame is the mod that builds the grass.
+```
+
 **0.46.0**
 ```
 - Crashfix: Itemstands placed before 1.0 with a cape no longer crash the game
