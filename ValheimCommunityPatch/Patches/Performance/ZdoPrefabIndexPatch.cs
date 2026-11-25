@@ -4,23 +4,9 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Prefab Query Scan: "every ZDO of this prefab" is answered from an index instead of a
-    // scan of the whole world.
-    //
-    // ZDOMan.GetAllZDOsWithPrefabIterative walks every sector list plus the portal map,
-    // dereferencing every ZDO to compare its prefab hash. Vanilla only calls it from a console
-    // command, but it is the API mods use, and several popular ones call it every ZoneSystem tick.
-    //
-    // ZDOs are bucketed by prefab hash as the prefab is assigned (ZDO.SetPrefab and ZDO.Deserialize
-    // postfixes, a HandleDestroyedZDO postfix for removal, a full rebuild after either world-load
-    // path, and a clear on ShutDown), so the query returns O(matches). The replaced method's
-    // contract is kept: an iteration already in flight (index != 0) is finished by vanilla, a fresh
-    // one completes in one call, the final RemoveAll over the caller's list runs as vanilla's, and the
-    // cursor is left where a finished vanilla iteration leaves it. Result order changes from
-    // sector-grouped to bucket order; callers treat the list as a set. Maintenance is
-    // unconditional; the read stands down to vanilla if any hook failed to attach.
-    //
-    // Both: the callers that matter run on every side.
+    // Fix Prefab Query Scan: GetAllZDOsWithPrefabIterative scans every ZDO in the world, and mods call it every tick.
+    // ZDO hooks keep an index by prefab hash, and a prefix on the query answers a fresh iteration from it in one call.
+    // Prefab queries cost the number of matches instead of the size of the world.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
@@ -32,9 +18,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Prefab Index",
                 false,
-                "Diagnostic. Runs both the indexed lookup and vanilla's whole-world scan on every " +
-                "prefab query, acts on vanilla's result, and logs any disagreement. Costs the scan " +
-                "this fix exists to avoid, so leave it off unless you are validating the index.",
+                "Diagnostic. Runs vanilla's whole-world scan beside the index on every prefab query, uses " +
+                "vanilla's result and logs any disagreement; costs the scan 'Fix Prefab Query Scan' avoids.",
                 advanced: true);
         }
 
@@ -177,6 +162,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- the query ---------------------------------------------------------------------
 
+        // Results come in bucket order rather than vanilla's sector order; callers treat the list
+        // as a set.
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ZDOMan.GetAllZDOsWithPrefabIterative))]
         private static bool GetAllZDOsWithPrefabIterativePrefix(
@@ -209,6 +196,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             // Vanilla's completion filters the caller's entire accumulated list.
             zdos.RemoveAll(InvalidZdo);
 
+            // Where a finished vanilla iteration leaves the cursor.
             index = __instance.m_objectsBySector.Length;
 
             IndexScratch.Clear();
@@ -288,7 +276,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 $"Prefab index verify ('{prefab}'): DIVERGED. The full scan found {missed} " +
                 $"object(s) the index missed (first {firstMissed}), and the index claimed {extra} " +
                 $"the full scan did not (first {firstExtra}). Vanilla's result was used. Please " +
-                "report this - leave 'Fix Prefab Query Scan' off until it is understood.");
+                "report this - leave 'Verify Prefab Index' on until it is understood, so every " +
+                "query uses the game's own scan.");
         }
     }
 }

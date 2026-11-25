@@ -2,26 +2,9 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Distant Terrain Hitch: the far-terrain ring rebuilds a few tiles per frame instead of
-    // all nine at once.
-    //
-    // Every 256 m of travel TerrainLod.RebuildAllHeightmaps regenerates its nine 81x81 distant
-    // heightmaps in one frame, each with a per-vertex biome lookup on the main thread. That is a
-    // reliable hitch on a fixed travel cadence, most noticeable while sailing.
-    //
-    // A prefix rebuilds at most Budget tiles per call and leaves the global state at NeedsRebuild
-    // until the ring is complete, so UpdateHeightmaps re-enters next frame. A companion prefix on
-    // IsTerrainReady reports a tile already rebuilt this cycle as ready; without it vanilla would
-    // re-enqueue that tile on the build thread and rebuild it again. During the spread the ring is
-    // briefly torn between the old and new centre, which under distance fog is far less visible
-    // than the hitch. A budget of 9 is exactly vanilla.
-    //
-    // Both prefixes stand down together when another mod can skip or rewrites
-    // RebuildAllHeightmaps (ValheimOptimized spreads the ring itself); two spreads of one ring would
-    // each rebuild tiles the other just did. IsTerrainReady runs before RebuildAllHeightmaps in
-    // UpdateHeightmaps, so the check is settled before this fix has marked any tile.
-    //
-    // Client: the system needs a camera.
+    // Fix Distant Terrain Hitch: TerrainLod rebuilds all nine distant heightmaps in one frame every 256 m of travel.
+    // A RebuildAllHeightmaps prefix rebuilds a few tiles per frame; an IsTerrainReady prefix keeps rebuilt ones ready.
+    // Travel, sailing most of all, no longer hitches each time the far-terrain ring moves.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(TerrainLod))]
@@ -32,6 +15,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(TerrainLodSpreadPatch));
 
+        // Both prefixes stand down together when another mod rewrites RebuildAllHeightmaps (ValheimOptimized
+        // spreads the ring itself): two spreads of one ring would each rebuild tiles the other just did.
+        // IsTerrainReady runs first in UpdateHeightmaps, so the check settles before any tile is marked.
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
             typeof(TerrainLodSpreadPatch),
             AccessTools.DeclaredMethod(typeof(TerrainLod), "RebuildAllHeightmaps"),
@@ -51,7 +37,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 valMax: 9);
         }
 
-        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches. While it spreads, the ring is briefly
+        // torn between the old and new centre, far less visible under distance fog than the hitch.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("RebuildAllHeightmaps")]
@@ -77,11 +64,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 rebuilt++;
             }
 
+            // Left at NeedsRebuild until the ring is complete, so UpdateHeightmaps comes back next frame.
             if (!remaining) { __instance.m_heightmapState = TerrainLod.HeightmapState.Done; }
 
             return false;
         }
 
+        // A tile already rebuilt this cycle is ready; vanilla would queue it on the build thread again.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("IsTerrainReady", typeof(TerrainLod.HeightmapWithOffset))]

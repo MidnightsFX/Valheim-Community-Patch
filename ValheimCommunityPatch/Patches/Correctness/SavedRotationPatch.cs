@@ -4,30 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Saved Rotations: saves every object's rotation exactly, so building pieces load where they
-    // were placed.
-    //
-    // The chunked world save that came with 1.0 stores rotations as Euler angles in half-degree
-    // steps (ZPackage.WriteSmallRotation), and gets there by casting to an unsigned integer, which
-    // rounds down. Unity hands back some of the game's 22.5 degree placement steps a hair short
-    // (225 as 224.99998, and 22.5, 90, 112.5, 135 and 247.5 once the never-wrapped rotation counter
-    // has gone past a full turn), so those are saved half a degree off. Rotations from mods that tilt
-    // or turn pieces in finer steps lose up to half a degree on every axis, and a tilt under a degree
-    // is dropped. A 4 m wall half a degree off opens a gap of almost 2 cm at each end, and every piece
-    // later snapped to it takes on the error. While the game runs the network carries rotations in
-    // full, so the shift only shows after a load.
-    //
-    // A prefix on WriteSmallRotation rounds each angle to the nearest half degree, which keeps the
-    // game's own steps exact. Where that still loses something, or a piece was placed at an angle
-    // Repair Saved Rotations would turn, the exact angles go into the save as one extra Vec3 value of
-    // the object, appended to the scratch list ZDOExtraData.GetSaveData hands ZDO.Save. ZDO.Load takes
-    // it back out before the object is used, so it never reaches the network, and puts the exact
-    // rotation back when the half-degree one still matches it. Vanilla keeps that value as unknown
-    // extra data, so a world saved with the fix loads without it to the nearest half degree; if a game
-    // without the fix then turns the piece, the stale value no longer matches and is dropped. Pieces
-    // at the game's own steps carry no extra value.
-    //
-    // Server: only the machine that writes and reads the world file runs it.
+    // The chunked save rounds rotations down to half degrees, so pieces load slightly turned and walls open gaps.
+    // Prefixes WriteSmallRotation to round to nearest; GetSaveData and ZDO.Load hooks save and restore exact angles.
+    // Building pieces load exactly where they were placed, and saves stay readable without the mod.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch]
@@ -40,13 +19,12 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Saved Rotations",
                 true,
-                "Saves every object's rotation exactly. The game rounds rotations down to half a degree when " +
-                "it saves, so building pieces, and above all those turned or tilted with a building mod, came " +
-                "back slightly turned after the world was loaded again, opening gaps between walls. Saves stay " +
-                "readable without the mod.");
+                "Saves every object's rotation exactly, so building pieces no longer come back slightly turned " +
+                "after a load; saves stay readable without the mod.");
         }
 
-        // The extra value's key. Disk only: taken out again as the object loads.
+        // The extra value's key. Disk only: taken out again as the object loads. Vanilla keeps it as unknown extra
+        // data, so a world saved with the fix loads without it to the nearest half degree.
         internal static readonly int ExactRotationKey = "VCP_ExactRotation".GetStableHashCode();
 
         // Far below anything visible: a 4 m wall's end moves by 0.03 mm.
@@ -87,6 +65,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             Math.Abs(Mathf.DeltaAngle(a.y, b.y)) <= Tolerance &&
             Math.Abs(Mathf.DeltaAngle(a.z, b.z)) <= Tolerance;
 
+        // Nearest rather than vanilla's cast down: Unity hands back some of the game's 22.5 degree steps a hair short
+        // (225 as 224.99998), which the cast saves half a degree off.
         [HarmonyPrefix]
         [HarmonyPatch(typeof(ZPackage), nameof(ZPackage.WriteSmallRotation))]
         private static void WriteSmallRotationPrefix(ref Vector3 v3) {
@@ -129,7 +109,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             vec3s.Add(new KeyValuePair<int, Vector3>(ExactRotationKey, rotation));
         }
 
-        // Only the chunked format saves half degrees; the older ones kept rotations whole.
+        // Only the chunked format saves half degrees; the older ones kept rotations whole. The exact value is taken out
+        // before the object is used, so it never reaches the network, and is used only while the saved rotation still
+        // matches it: a piece a game without the fix turned since keeps that turn.
         [HarmonyPostfix]
         [HarmonyPatch(typeof(ZDO), nameof(ZDO.Load))]
         private static void LoadPostfix(ZDO __instance, Version.World version) {

@@ -1,22 +1,9 @@
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Collision Callback Allocation: turns on Physics.reuseCollisionCallbacks so Unity stops
-    // allocating a Collision object for every collision callback.
-    //
-    // Valheim ships with reuse off, so Unity allocates a fresh Collision per callback, copies its
-    // contact points into a new array, and drops both when the callback returns. The allocation
-    // happens before the handler body runs, so it is paid even by handlers that return
-    // immediately on !IsOwner(). New Unity projects have shipped with reuse on since 2018.3.
-    //
-    // One write at startup. The rule it imposes is that no handler may keep a Collision past its
-    // own callback. Every vanilla handler (Aoe, Character, Fish, FloatingTerrain,
-    // FloatingTerrainDummy, ImpactEffect) was checked and none does. A mod that stashes a
-    // Collision for later would read a later collision's data through it, so this is the first
-    // suspect if a physics-touching mod misbehaves; a contacts array read inside the callback stays
-    // valid. A build that already has it on is left alone.
-    //
-    // Both: the physics engine dispatches callbacks wherever it runs.
+    // Fix Collision Callback Allocation: Valheim ships with collision reuse off, so each callback allocates a Collision.
+    // Sets Physics.reuseCollisionCallbacks once at startup, with no Harmony hook, and clears it if turned off by API.
+    // Collision callbacks stop producing garbage on every contact.
     [PatchSide(Side.Both)]
     [ModDisableable]
     internal static class CollisionCallbackReusePatch {
@@ -28,6 +15,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return;
             }
 
+            // No handler may now keep a Collision past its own callback: none of the vanilla ones do,
+            // but a mod that stashes one reads a later collision's data through it, so this is the
+            // first suspect if a physics mod misbehaves. A contacts array read inside the callback is fine.
             Physics.reuseCollisionCallbacks = true;
 
             // Turned off through the mod API, for a mod that keeps a Collision past its callback.

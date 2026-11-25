@@ -4,26 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Object Unload Crash: one orphaned scene instance no longer aborts every unload pass.
-    //
-    // ZNetScene.RemoveObjects walks every live instance and dereferences its ZDO with no validity
-    // check. A ZNetView destroyed by something other than this method (a mod, an exception
-    // mid-spawn, a scene teardown) leaves an entry whose view or ZDO is gone, the resulting
-    // NullReferenceException aborts the whole pass, and because the orphan stays in m_instances it
-    // throws again every frame: nothing despawns and memory climbs.
-    //
-    // A prefix replaces the method with a copy of vanilla's loops inside a try/catch. The fast
-    // path has no per-entry guards (a native alive-check per instance at 30 Hz was measured in
-    // whole percents of frame time), and only a throw drops into GuardedSweep, which checks every
-    // entry, destroys and drops the orphans, and finishes the pass. Restarting from scratch is
-    // safe: the earmarks recompute identically within the frame, and Object.Destroy is deferred,
-    // so the entry that threw is still visible to the guarded pass.
-    //
-    // Composition: SceneIdleSkipPatch and RemoveSweepPacingPatch decide above this whether a pass
-    // runs at all; the __runOriginal check honours the pacing prefix and any other mod that
-    // replaced the pass. Priority.Last so other mods' prefixes have already added what they keep
-    // loaded to the lists this stamps. ZoneDiffRemovalPatch replaces this prefix entirely while
-    // engaged and borrows GuardedSweep as its own fallback. Both: every peer runs this pass.
+    // ZNetScene.RemoveObjects has no validity checks, so one orphaned instance throws every frame and nothing despawns.
+    // Prefixes RemoveObjects with vanilla's loops in a try/catch, falling back to a guarded sweep that drops orphans.
+    // Objects keep unloading after an orphan appears, so the log stays clean and memory stops climbing.
     // Provenance: ComfyMods/Scenic (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
     [ModDisableable]
@@ -37,13 +20,13 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Object Unload Crash",
                 true,
-                "Recovers from orphaned entries during object unloading instead of throwing. In vanilla " +
-                "a single orphan aborts the whole unload pass every frame, so nothing despawns and the " +
-                "log fills with NullReferenceExceptions.");
+                "Keeps objects unloading when an orphaned scene entry is left behind, where vanilla throws " +
+                "every frame and nothing despawns again.");
         }
 
         private static readonly List<ZDO> OrphanedKeys = new List<ZDO>();
 
+        // Priority.Last, so other mods' prefixes have already added what they keep loaded to the lists this stamps.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("RemoveObjects")]
@@ -63,6 +46,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             for (int i = 0; i < currentNearObjects.Count; i++) { currentNearObjects[i].m_tempRemoveEarmark = earmark; }
             for (int i = 0; i < currentDistantObjects.Count; i++) { currentDistantObjects[i].m_tempRemoveEarmark = earmark; }
 
+            // Restarting from scratch is safe: the earmarks recompute identically within the frame, and Object.Destroy
+            // is deferred, so the entry that threw is still visible to the guarded pass.
             try {
                 FastPass(__instance, earmark);
             } catch (Exception e) {
@@ -75,6 +60,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
         // Vanilla's loops (ZNetScene.RemoveObjects), with GetZDO()/TempRemoveEarmark read as the
         // fields they wrap. Anything a broken entry makes this throw is the signal to fall back.
+        // No per-entry guards: a native alive-check per instance at 30 Hz cost whole percents of frame time.
         private static void FastPass(ZNetScene scene, byte earmark) {
             scene.m_tempRemoved.Clear();
 

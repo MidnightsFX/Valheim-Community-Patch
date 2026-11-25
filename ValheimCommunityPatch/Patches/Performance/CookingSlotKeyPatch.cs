@@ -5,38 +5,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Cooking Slot Keys: a cooking station reads and writes its slot data through precomputed
-    // key hashes instead of rebuilding the key strings on every access.
-    //
-    // CookingStation.GetSlot and SetSlot build three of their four ZDO keys inline, as
-    // "slot" + slot (twice each - once for the item name, once for the cooked time) and
-    // "slotstatus" + slot. Each of those is a slot.ToString() plus a concatenation, so six string
-    // allocations per call, every one immediately hashed and thrown away. UpdateCooking, on a
-    // 1 Hz InvokeRepeating, calls GetSlot once per slot and SetSlot once per slot, then hands off
-    // to UpdateVisual which calls GetSlot for the same slots again. A five-slot station with its
-    // fire lit therefore produces roughly ninety string allocations a second, forever, purely as
-    // garbage. The fourth key is already an int (ZDOVars.s_cheatedQueued + slot) and costs
-    // nothing; it is reproduced here unchanged. So is the int key SetSlot gained in 1.0.21,
-    // ZDOVars.s_playerID + slot, written only for a non-zero sender: SpawnItem reads it to credit
-    // the cooked item to the player who added it, so leaving it out would undo the game's fix.
-    //
-    // Prefixes replace both methods with vanilla's body over two static tables of precomputed
-    // stable hashes. This has to be a replacement rather than a transpiler: the allocation
-    // happens building the argument, before the call, and GetString(string) and GetString(int,
-    // string) do not share a stack shape for ReplaceCalls to rewrite. Equivalence is by
-    // construction - every string overload in ZDO is defined as a call to its hash overload with
-    // name.GetStableHashCode(), with the same defaults, so this is the same int reaching the same
-    // method. Vanilla does exactly this already in ArmorStand.InitKeys/SetKeyHashes, for the same
-    // problem on the same API. A negative slot index would need a key the tables cannot hold and
-    // falls through to vanilla. IsEmpty and GetFreeSlot build the same keys inline and are left
-    // alone deliberately: both are interaction-rate, reached from OnUseItem and the hover menu
-    // rather than from a repeater. SetSlot has one hook class per signature (with sender from
-    // 1.0.21, without before), and Prepare applies only the one the running game matches:
-    // Harmony cannot build a prefix naming a parameter the method lacks, and a failed build stays
-    // on the method and breaks every later patch on it, by any mod.
-    //
-    // Both: UpdateVisual runs wherever the station is loaded, UpdateCooking's owner branch runs
-    // on whichever peer owns the ZDO, and a listen host runs both.
+    // Fix Cooking Slot Keys: GetSlot and SetSlot build key strings on every call, dozens a second per lit station.
+    // Prefixes replace both methods with vanilla's body over tables of precomputed key hashes.
+    // Cooking stations stop producing string garbage every second they cook.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(CookingStation))]
@@ -44,7 +15,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(CookingSlotKeyPatch));
 
         // ("slot" + i) and ("slotstatus" + i) stable hashes. Grown by publishing a whole new
-        // array, never resized in place, so a reader mid-call keeps a consistent table.
+        // array, never resized in place, so a reader mid-call keeps a consistent table. Equivalent
+        // by construction: every ZDO string-key overload calls its int overload with
+        // GetStableHashCode() and the same defaults, as ArmorStand.InitKeys already relies on.
         private static int[] SlotKeys = new int[0];
         private static int[] StatusKeys = new int[0];
 
@@ -72,6 +45,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return true;
         }
 
+        // A replacement, not a transpiler: the string is built as the argument, before the call, and
+        // the string and int overloads do not share a stack shape. IsEmpty and GetFreeSlot build the
+        // same keys but are left alone: they run on interaction, not every second.
         [HarmonyPrefix]
         [HarmonyPatch("GetSlot")]
         private static bool GetSlotPrefix(
@@ -99,7 +75,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // SetSlot's parameters as of 1.0.21; builds before it stop after cheated.
+        // SetSlot's parameters as of 1.0.21; builds before it stop after cheated. One hook class per
+        // signature, applied only to the one the game has: Harmony cannot build a prefix naming a
+        // missing parameter, and a failed build breaks every later patch on the method, by any mod.
         private static readonly string[] SetSlotNames = { "slot", "itemName", "cookedTime", "status", "cheated", "sender" };
         private static readonly Type[] SetSlotTypes = {
             typeof(int), typeof(string), typeof(float), typeof(CookingStation.Status), typeof(bool), typeof(long)
@@ -149,6 +127,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             zdo.Set(SlotKeys[slot], cookedTime);
             zdo.Set(StatusKeys[slot], (int)status);
             zdo.Set(ZDOVars.s_cheatedQueued + slot, cheated);
+            // SpawnItem reads this to credit the cooked item to whoever added it (1.0.21).
             if (sender != 0L) { zdo.Set(ZDOVars.s_playerID + slot, sender); }
             return false;
         }

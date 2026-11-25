@@ -4,24 +4,10 @@ using System.Reflection.Emit;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Rock Hit Crash: stops a hit on a leviathan, meteorite or other multi-part rock failing
-    // halfway through, and leaving that part unbreakable, when the hit has no attacker this
-    // machine can find.
-    //
-    // MineRock.RPC_Hit passes hit.GetAttacker().GetZDOID() to its hit and destroyed effects with no
-    // null check. GetAttacker is null for a hit that carries no attacker and for an attacker the
-    // rock's owner has not loaded, so a damaging hit throws after the new health is saved: on the
-    // killing blow the part is never hidden and drops nothing, and every later hit stops at
-    // "Already destroyed". MineRock5.DamageArea, TreeBase.RPC_Damage, TreeLog.RPC_Damage,
-    // WearNTear.RPC_Damage and WearNTear.Destroy guard the same expression, but look the attacker
-    // up a second time for it.
-    //
-    // Transpilers replace each GetAttacker().GetZDOID() pair with a call that returns
-    // hit.m_attacker, the id GetZDOID returns whenever GetAttacker finds the attacker, so the
-    // guarded sites skip the second lookup and MineRock no longer throws. The id only tells the
-    // effect whose gamepad to rumble, so passing it for an attacker that is not loaded is harmless.
-    //
-    // Both: the handlers run on the hit object's owner. Provenance: contributed by searica (PR #21).
+    // MineRock.RPC_Hit throws after saving damage when it cannot find the attacker, leaving that rock part unbreakable.
+    // Transpilers on six hit and damage handlers replace GetAttacker().GetZDOID() with the stored hit.m_attacker.
+    // Multi-part rocks always break, and the tree, log and building handlers skip a second attacker lookup.
+    // Provenance: contributed by searica (PR #21).
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch]
@@ -34,9 +20,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Rock Hit Crash",
                 true,
-                "Stops a hit on a leviathan, meteorite or other multi-part rock failing halfway and " +
-                "leaving that part unbreakable when the hit comes from a mod, or from a player the " +
-                "rock's owner has not loaded yet. Changing this requires a game restart.");
+                "Stops hits from mods, or from players the rock's owner has not loaded, leaving part of a " +
+                "leviathan, meteorite or other multi-part rock unbreakable; turning it on needs a game restart.");
         }
 
         private static readonly MethodInfo GetAttackerMethod = AccessTools.Method(typeof(HitData), nameof(HitData.GetAttacker));
@@ -53,7 +38,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             new CodeInstruction(OpCodes.Call, AttackerIdMethod),
         };
 
-        // The stored attacker id, or the game's own expression again once the fix is turned off.
+        // The stored attacker id, which GetZDOID returns whenever GetAttacker finds the attacker. It only
+        // picks whose gamepad the effect rumbles, so an unloaded attacker's id is harmless. Turned off,
+        // the game's own expression again.
         private static ZDOID AttackerId(HitData hit) =>
             Enabled.Value ? hit.m_attacker : hit.GetAttacker().GetZDOID();
 

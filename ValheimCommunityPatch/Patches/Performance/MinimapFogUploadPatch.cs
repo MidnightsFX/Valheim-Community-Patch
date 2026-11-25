@@ -10,28 +10,9 @@ using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Minimap Fog Upload: revealing new ground uploads only the patch of map fog around the
-    // player instead of the whole fog texture.
-    //
-    // Every two seconds Minimap.Explore clears the fog in a small circle around the player and, if
-    // any pixel was newly revealed, calls Texture2D.Apply on the fog texture: 2048 x 2048 two-byte
-    // pixels, 8 MiB sent to the graphics card for a circle a couple of dozen pixels across. While
-    // exploring that is a periodic hitch on the main and render threads.
-    //
-    // A transpiler replaces that one Apply call. The replacement copies the square vanilla just
-    // scanned from the texture's CPU data into a small staging texture of the same format, uploads
-    // the stage, and copies it into place on the graphics card. The CPU data stays the source of
-    // truth: Explore wrote it with SetPixel as before, and every other full Apply (map load, map
-    // table, console commands) sends all of it again, so the two never disagree. Only this explore
-    // path is changed, and like vanilla it uploads nothing when nothing new was revealed; a mod that
-    // writes fog pixels without calling Apply itself was never shown promptly by vanilla either.
-    //
-    // A square too large for the stage gets vanilla's full Apply. A texture the copy cannot serve
-    // (no texture copy support, mipmaps, unreadable, unexpected size or format) gets vanilla for
-    // the session, and any failure falls back to a full Apply and stands the fix down, each said
-    // once in the log.
-    //
-    // Client: the minimap exists only where there is a local player.
+    // Fix Minimap Fog Upload: Minimap.Explore uploads the whole 8 MiB fog texture each time exploring reveals ground.
+    // Transpiles Explore's Texture2D.Apply call to upload only the scanned square, via a staging texture and GPU copy.
+    // Exploring no longer causes a periodic hitch on the main and render threads.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Minimap), "Explore", typeof(Vector3), typeof(float))]
@@ -45,9 +26,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Minimap Fog Upload",
                 false,
-                "Diagnostic. Reads each partial map fog upload back from the graphics card, compares " +
-                "it with what was sent, and logs any difference. Leave it off unless the map fog " +
-                "looks wrong.",
+                "Diagnostic. Reads each partial map fog upload back from the graphics card and logs any " +
+                "difference from what was sent; leave it off unless the map fog looks wrong.",
                 advanced: true);
         }
 
@@ -102,6 +82,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return codes;
         }
 
+        // The texture's CPU data stays the source of truth: Explore writes it with SetPixel as before, and every
+        // other full Apply (map load, map table, console commands) sends all of it, so the two never disagree.
+        // A mod writing fog pixels without its own Apply was never shown promptly by vanilla either.
         private static void UploadExplored(Texture2D fog, Minimap map, Vector3 p, float radius) {
             if (_failed || ApiSwitch.Off || !Usable(fog, map)) {
                 fog.Apply();

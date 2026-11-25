@@ -7,32 +7,8 @@ using ValheimCommunityPatch.Patches.Performance;
 namespace ValheimCommunityPatch {
 #pragma warning restore IDE0130
 
-    /// <summary>
-    /// One OnDestroy postfix per destroyed ZNetView and WearNTear, fanning out to every registry
-    /// in this mod that tracks them and to Fix Loading Screen Hang, plus the "Log Destroy Storm
-    /// Stats" diagnostic.
-    /// </summary>
-    /// <remarks>
-    /// Object teardown is the most zone-boundary-correlated cost in the game, and before this
-    /// file about half of it was this mod's own bookkeeping: four separate postfixes each
-    /// re-deriving the same identity, and registries keyed on UnityEngine.Object, whose Equals is
-    /// a native call paid on every dictionary probe. So there is one postfix per method here,
-    /// resolving GetInstanceID() once and handing it to each registry, and every registry on
-    /// this path is keyed on that int.
-    ///
-    /// The int key costs one invariant, stated once here for all of them: an entry must be
-    /// removed while its object is alive, because Unity may reuse an instance id after the
-    /// object is gone. Every registry removes in the OnDestroy postfix below and clears on
-    /// ZNetScene.Shutdown. GetInstanceID() is itself a native call, so the int key only pays
-    /// where one id serves many probes, as it does on teardown; do not extend it to a
-    /// single-probe read path without measuring.
-    ///
-    /// Ghost views (ZoneSystem pre-generation) never enter ZNetScene.m_instances and so never
-    /// enter the index. They are skipped here and refused by
-    /// SectorInstanceIndexPatch.AddInstancePostfix.
-    ///
-    /// Both: a dedicated server tears down its own active-area objects through the same methods.
-    /// </remarks>
+    // One OnDestroy postfix each for ZNetView and WearNTear, handing the destroyed object to every registry
+    // that tracks it, plus the "Log Destroy Storm Stats" diagnostic.
     [PatchSide(Side.Both)]
     internal static class TeardownHooks {
         internal static ConfigEntry<bool> LogStormStats;
@@ -42,16 +18,18 @@ namespace ValheimCommunityPatch {
                 ValConfig.SectionDebug,
                 "Log Destroy Storm Stats",
                 false,
-                "Diagnostic. Buckets every frame by how many networked objects were torn down in " +
-                "it and reports the frame time each bucket ran at, so a teardown burst can be " +
-                "told apart from a steady drain. Also reports the unload pass's own object count " +
-                "and wall-clock. Costs a counter increment per destroyed object; leave it off " +
-                "unless you are measuring.",
+                "Diagnostic. Logs every 30 s how long frames took, grouped by how many networked objects " +
+                "each one tore down, plus the unload pass's own object count and time.",
                 advanced: true);
         }
 
         // ---- the consolidated visit ----------------------------------------------------------
 
+        // Registries on this path key on GetInstanceID(), resolved once here, not on the object, whose
+        // Equals is a native call on every probe. Unity may reuse an id once its object is gone, so each
+        // registry removes its entry in these postfixes and clears on ZNetScene.Shutdown. GetInstanceID()
+        // is native too, so the int key only pays where one id serves many probes; measure before using
+        // it on a single-probe read path.
         [HarmonyPatch(typeof(ZNetView))]
         internal static class ViewHook {
             [HarmonyPostfix]
@@ -59,6 +37,7 @@ namespace ValheimCommunityPatch {
             private static void OnDestroyPostfix(ZNetView __instance) {
                 if (_statsOn) { _viewDestroys++; }
 
+                // Ghost views (ZoneSystem pre-generation) never enter ZNetScene.m_instances or any registry.
                 if (__instance.m_ghost) {
                     if (_statsOn) { _ghostDestroys++; }
                     return;

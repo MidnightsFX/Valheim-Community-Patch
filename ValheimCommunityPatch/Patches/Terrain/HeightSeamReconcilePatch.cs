@@ -4,35 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Fix Terrain Height Seams: the ground on both sides of a zone border meets at one height, closing
-    // cracks along the 64 m grid through which the sky or water below shows.
-    //
-    // Adjacent zones each keep their own copy of the vertices on their shared border, in separate
-    // TerrainComp data, and each zone's heightmap builds its border from its own copy. The copies stay
-    // equal only while every edit reaches both compilers. Once one side has missed edits (its compiler
-    // was destroyed and started over, as Fix Terrain Compiler Duplicates describes, or an edit reached
-    // one side only), the border is drawn and collides at two heights and the ground cracks along the
-    // line. Later edits do not close it: each side moves its own copy, and the cultivator's smoothing
-    // stops at its 1 m limit.
-    //
-    // A postfix on Heightmap.ApplyModifiers, where a rebuild has just computed the zone's heights,
-    // records its border as built and sets every border vertex to the mean of the recorded borders of
-    // the loaded zones that share it (two along an edge, up to four at a corner). Vertices whose copies
-    // already agree keep their built value bit for bit. The mean is summed in one world order and
-    // counts every loaded neighbour, queued to rebuild or not, so every zone sharing a vertex arrives at
-    // the same bits: a mean that depended on which neighbours were queued at the moment differed from
-    // zone to zone, each poked the other, and in heavily edited towns the zones rebuilt each other
-    // hundreds of times a minute. A neighbour that draws another value is poked to rebuild unless it is
-    // already queued for a full one. When this zone's own border changed on an edge (an edit, or its
-    // compiler loading) and the neighbour across it is queued, that neighbour is rebuilt at once, so its
-    // record is current before the mean is taken and the edit does not flash the seam for a frame. A zone
-    // whose saved compiler has not spawned yet is built from the unedited ground and is left out until the
-    // compiler lands and rebuilds it; counting that first build rebuilt every neighbour twice per zone load.
-    // TerrainComp.InternalDoOperation runs with the zone's built border put back, so every edit reads
-    // and saves exactly what vanilla would: the saved terrain is never changed by this fix, and turning
-    // it off shows the ground as recorded.
-    //
-    // Both: the heights are also the collider, on every peer that builds the zone.
+    // Each zone keeps its own copy of a shared border, and once one side misses edits the ground cracks along the seam.
+    // A Heightmap.ApplyModifiers postfix sets border vertices to the mean of the loaded neighbours' built borders.
+    // Zone borders meet at one height with no crack, while edits and the saved terrain stay exactly vanilla's.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch]
@@ -45,10 +19,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 "Fix Terrain Height Seams",
                 true,
-                "Makes the ground on both sides of a zone border meet at the same height. Each zone keeps " +
-                "its own copy of the border, and once one side has missed some edits the two copies differ: " +
-                "the ground cracks along the 64m zone line and the sky or water shows through. The border is " +
-                "drawn and collides at the average of the two; the saved terrain is not changed.");
+                "Makes the ground on both sides of a zone border meet at the same height, closing cracks along " +
+                "the 64 m zone line; the saved terrain is not changed.");
 
             // Rebuild what is loaded so the change shows at once; each rebuild records or drops the mean.
             Enabled.SettingChanged += (sender, args) => {
@@ -101,7 +73,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             int slots = s_vertexOfSlot.Length;
 
             int id = __instance.GetInstanceID();
-            // Unedited ground until its saved compiler spawns.
+            // Unedited ground until its saved compiler spawns and rebuilds it; counting this build rebuilt every
+            // neighbour twice per zone load.
             if (TerrainComp.FindTerrainCompiler(__instance.transform.position) == null &&
                 TerrainCompDuplicatePatch.FindSavedCompilers(__instance, null)) {
                 Built.Remove(id);
@@ -153,6 +126,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         }
 
         // Sets this zone's shared border vertices to the mean, and pokes each neighbour that draws another value.
+        // The mean counts every loaded neighbour, queued to rebuild or not: one that depended on which were queued
+        // differed from zone to zone, and in edited towns the zones rebuilt each other hundreds of times a minute.
         private static void Reconcile(Heightmap hmap, float[] built, Heightmap[] neighbours, float[][] borders, List<Heightmap> toRebuild) {
             List<float> heights = hmap.m_heights;
             int width = hmap.m_width;
@@ -244,7 +219,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             }
         }
 
-        // An edit reads the zone's heights as built, so what it saves is vanilla's.
+        // An edit reads the zone's heights as built, so what it saves is vanilla's and the saved terrain is never
+        // changed by this fix.
         [HarmonyPrefix]
         [HarmonyPatch(typeof(TerrainComp), "InternalDoOperation")]
         private static void InternalDoOperationPrefix(TerrainComp __instance, out Swap __state) {

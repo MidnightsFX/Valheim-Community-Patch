@@ -2,22 +2,10 @@ using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Damage Reaction Order: status effects that strike back when their wearer is hit, such as
-    // frost orbs, see each hit before other effects, such as a shield, change it.
-    //
-    // SEMan.OnDamaged hands the hit to each active effect in the order the effects were added. A
-    // shield (SE_Shield) absorbs the hit by scaling its damage to zero, and a reaction (SE_React)
-    // fires only when the hit's damage reaches its minimum, so whether a reaction with a minimum
-    // fires depends on whether it or the shield was applied first. Vanilla's own frost orbs have no
-    // minimum, so the difference shows with mods' reaction effects.
-    //
-    // A prefix passes the hit to every SE_React first and then to every other effect, each group in
-    // vanilla's list order; with no reaction active the call is left to vanilla. It runs after other
-    // mods' prefixes and respects one that already replaced the call, and stands down for the
-    // session when another mod transpiles the method.
-    //
-    // Both: OnDamaged runs on whichever side owns the character. Provenance: contributed by
-    // searica (PR #22).
+    // SEMan.OnDamaged hands a hit to effects in the order applied, so an earlier shield can stop a reaction firing.
+    // Prefixes OnDamaged to pass the hit to every SE_React first, then to the rest, each group in vanilla's order.
+    // Reactions such as frost orbs see each hit before a shield absorbs it, whichever was applied first.
+    // Provenance: contributed by searica (PR #22).
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(SEMan), nameof(SEMan.OnDamaged))]
@@ -42,6 +30,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             owners => $"Status effect hit handling is changed by {owners}, so '{FixName}' stands down " +
                       "and that mod's version applies.");
 
+        // A shield scales the hit's damage to zero, and a reaction fires only when the damage reaches its minimum.
+        // Vanilla's frost orbs have no minimum, so the order shows with mods' reaction effects.
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
@@ -49,7 +39,6 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             if (!__runOriginal) { return false; }
             if (Enabled == null || !Enabled.Value || Takeover.TakenOver) { return true; }
 
-            // prepare to loop over and find any reaction status effects
             List<StatusEffect> effects = __instance.m_statusEffects;
             bool hasReaction = false;
 
@@ -57,24 +46,15 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             foreach (StatusEffect statusEffect in effects) {
                 if (statusEffect is SE_React) {
                     statusEffect.OnDamaged(hit, attacker);
-                    hasReaction |= true;
+                    hasReaction = true;
                 }
             }
 
-            if (!hasReaction) { return true; } // return control to vanilla method
+            if (!hasReaction) { return true; }
 
-            // update all other status effects
             // foreach, as vanilla, so an effect that edits the list mid-hit fails the same way.
             foreach (StatusEffect effect in effects) {
                 if (!(effect is SE_React)) { effect.OnDamaged(hit, attacker); }
-            }
-
-            return false;
-        }
-
-        private static bool HasReaction(List<StatusEffect> effects) {
-            for (int i = 0; i < effects.Count; i++) {
-                if (effects[i] is SE_React) { return true; }
             }
 
             return false;

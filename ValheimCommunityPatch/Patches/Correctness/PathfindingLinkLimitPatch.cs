@@ -3,24 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Pathfinding Link Limit: while the engine's navigation links are nearly used up,
-    // path-finding tiles nobody has used for 10 s are dropped instead of after the game's 60 s.
-    //
-    // Pathfinding keeps a navigation tile per 32 m area and creature size and joins neighbouring
-    // tiles with NavMesh links, about 90 per tile. A tile goes once no path request has touched it
-    // for m_tileTimeout (60 s on the game's object), and TimeoutTiles drops at most one expired tile
-    // per pass. Unity allows 65,535 links. Fast travel past areas full of creatures (sailing along a
-    // coast, portals) can keep enough tiles loaded to use them all; from then on every new link
-    // fails, Unity logs an error for each, and creatures cannot path from one tile to the next.
-    //
-    // A prefix on TimeoutTiles counts the links once a second, including those queued for removal,
-    // which the engine has not freed yet. From 45,000 until back under 40,000 it replaces the pass:
-    // every tile unused for 10 s goes through the game's per-tile clean-up, except the one being
-    // built, whose finished build would otherwise add links for a tile no longer tracked. The engine
-    // removals stay spread over frames as in vanilla. Below the mark the game's pass runs unchanged,
-    // and tiles in use are never dropped. Stands down if another mod can skip or rewrite the pass.
-    //
-    // Both: path-finding runs wherever a creature's owner is, a dedicated server included.
+    // Nav tiles live 60 s and expire one per pass, so fast travel can exhaust the 65,535 NavMesh links and break paths.
+    // Prefixes Pathfinding.TimeoutTiles to drop every tile unused for 10 s from 45,000 links until back under 40,000.
+    // Creatures keep pathing between tiles, and Unity stops logging a failed link for each new one.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(Pathfinding))]
@@ -53,11 +38,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 FixName,
                 true,
-                "While the engine's 65,535 path-finding links are nearly used up, drops path-finding " +
-                "tiles nobody has used for 10 s instead of 60 s. Fast travel past coasts full of " +
-                "creatures could use every link, after which each new one failed with a logged error and " +
-                "creatures could not path between tiles. Tiles in use are never dropped; below the mark " +
-                "nothing changes.");
+                "While the engine's 65,535 path-finding links are nearly used up, drops path-finding tiles " +
+                "nobody has used for 10 s instead of 60 s, so creatures can still path between tiles.");
         }
 
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
@@ -108,11 +90,13 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 (pressure ? "on." : "off."));
         }
 
-        // TimeoutTiles' per-tile clean-up, for every expired tile instead of the first one found.
+        // TimeoutTiles' per-tile clean-up, for every expired tile instead of the first one found. The
+        // engine removals stay queued, spread over frames as in vanilla.
         private static void DropUnusedTiles(Pathfinding pathfinding, float time) {
             float timeout = Mathf.Min(pathfinding.m_tileTimeout, PressureTimeout);
             Dictionary<Vector3Int, Pathfinding.NavMeshTile> tiles = pathfinding.m_tiles;
 
+            // Never the tile being built: its finished build would add links for a tile no longer tracked.
             foreach (KeyValuePair<Vector3Int, Pathfinding.NavMeshTile> entry in tiles) {
                 if (time - entry.Value.m_pokeTime > timeout && entry.Value != pathfinding.m_buildTile) {
                     Expired.Add(entry.Key);

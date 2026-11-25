@@ -10,39 +10,9 @@ using UnityEngine;
 using Object = UnityEngine.Object;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Location Model Placeholders: a location's or dungeon room's model is built from a copy of
-    // its prefab without the networked objects it never uses, instead of from the whole prefab.
-    //
-    // A location or room model is the prefab's non-networked part: walls, rocks, decoration. Its
-    // networked objects (chests, trees, creatures, ore) are created from the world's saved data,
-    // so before cloning the model the game switches them off in the prefab and they are cloned
-    // switched off, staying in the model as dead copies for as long as it is loaded. In the Deep
-    // North they are most of the model: The Hole's is 33,587 objects of which 197 are its model,
-    // the north village houses 99% dead copies, the halls two thirds. Cloning them, and destroying
-    // them again on unload, is most of the frame a model arrives in.
-    //
-    // A transpiler on ZoneSystem.SpawnLocation, and Fix Background Dungeon Generation's room model
-    // call in DungeonGenerator.PlaceRoom, build models through this fix. Once a prefab has been
-    // used twice and has enough dead copies to be worth it, a template is cloned from it,
-    // switched off under a hidden holder between frames, and its networked objects destroyed a
-    // few at a time. A networked object something in the kept part refers to (a random-object
-    // choice, a level-of-detail renderer, the location's dungeon generator) stays as a switched-
-    // off placeholder with nothing under it, so every reference survives as in the game's model.
-    // Each model is then cloned from the template, after copying onto it the parts of the prefab
-    // the game changes just before cloning: what the random-spawn and random-object components
-    // switched on or off, a custom interior's position, and the location's cached biome.
-    //
-    // A template holds a reference to its prefab, so a dungeon's room templates survive between
-    // visits instead of being rebuilt each time its rooms unload, and is dropped after five
-    // minutes unused and on logout. A reference is released only during play, or, for one still
-    // held at logout, once the next world starts loading; never while the game shuts down, where
-    // releasing starts an asynchronous asset bundle unload during the game's own quit, which
-    // crashed it. Until a template is ready, and when another mod hooks either method, the game's
-    // own clone is used. 'Verify Location Model Templates' builds both, uses the game's, and logs any
-    // difference, plus, once a template is ready, any reference left pointing at a destroyed object.
-    //
-    // Client: models are built where a player sees them. A dedicated server, which reaches the
-    // room models through Fix Background Dungeon Generation, always uses the game's clone.
+    // Fix Location Model Placeholders: location and room models also clone their networked objects, as dead copies.
+    // Transpiles ZoneSystem.SpawnLocation, and serves PlaceRoom's room models, to clone a template stripped of them.
+    // Location and dungeon room models build far faster and hold far fewer objects while loaded.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZoneSystem), "SpawnLocation")]
@@ -56,10 +26,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Location Model Templates",
                 false,
-                "Diagnostic. Builds every location and dungeon room model both the game's way and from " +
-                "this fix's template, uses the game's, and logs any difference, plus, when a template is " +
-                "built, any reference to the networked objects it leaves out. Costs the clone this fix " +
-                "exists to avoid, so leave it off unless you are validating the templates.",
+                "Diagnostic. Builds each location and dungeon room model both ways, uses the game's, and logs " +
+                "any difference or reference to a left-out object; costs the clone this fix saves.",
                 advanced: true);
         }
 
@@ -200,7 +168,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return model;
         }
 
-        // The template is switched off under the holder, so none of this wakes anything.
+        // Copies what the game changes on the prefab just before cloning it: random-spawn and random-object
+        // toggles, a custom interior's placement and the cached biome. The template is switched off under
+        // the holder, so none of this wakes anything.
         private static void Mirror(Template template) {
             for (int i = 0; i < template.ToggleSources.Length; i++) {
                 bool active = template.ToggleSources[i].activeSelf;
@@ -298,6 +268,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 Object.DontDestroyOnLoad(_holder);
             }
 
+            // Keeps the prefab loaded, so a dungeon's room templates survive between visits.
             template.Prefab.HoldReference();
             template.Held = true;
 
@@ -474,7 +445,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // References held at logout, released once the next world starts loading. Never released
-        // on the way out of the game.
+        // on the way out of the game: that starts an asynchronous asset bundle unload during the
+        // game's own quit, which crashed it.
         private static readonly List<SoftReference<GameObject>> ReleaseLater = new List<SoftReference<GameObject>>();
 
         private static void Drop(Template template, bool release = true) {

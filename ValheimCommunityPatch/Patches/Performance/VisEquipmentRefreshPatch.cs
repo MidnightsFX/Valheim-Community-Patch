@@ -4,37 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Equipment Visual Refresh: characters stop re-applying unchanged skin and hair colors
-    // every frame, and read their equipment fields with one table lookup instead of forty.
-    //
-    // VisEquipment.UpdateVisuals runs every frame for every character, dropped armour piece and
-    // armour stand. Two separable costs:
-    //
-    // 1. UpdateColors re-applies skin and hair color every frame. Renderer.materials allocates a
-    //    Material[] on each of its two reads, and the beard and hair GetComponentsInChildren calls
-    //    allocate and walk a hierarchy, all to write a color that has not changed since the
-    //    character was created. A prefix computes what vanilla would compute (the two colors,
-    //    the beard, hair and body renderers, the model index), compares it with what was last
-    //    applied, and only lets vanilla run on a difference. The snapshot is recorded in a
-    //    postfix so a vanilla method that threw is retried rather than marked applied.
-    //
-    //    The hair tint lives only in the beard and hair renderers' property blocks, and vanilla
-    //    MaterialMan replaces every property block it holds for a character whenever an item is
-    //    attached (RefreshSnowLevel), which vanilla's per-frame re-write silently covered. So the
-    //    prefix also lets vanilla run when the tint it last wrote is no longer in those blocks;
-    //    without that, a character whose beard MaterialMan captured (attached before any gear,
-    //    as on a naked spawn) turns white on the next equip and stays white.
-    //
-    // 2. UpdateEquipmentVisuals opens with twenty ZDO.GetInt calls, and each is two dictionary
-    //    lookups (ZDOHelper.GetValueOrDefault does ContainsKey then indexes) hashing a ZDOID
-    //    twice. A prefix fetches the character's int table once, and a transpiler routes the
-    //    twenty reads inside this method through it. The accessor keys on ZDO reference
-    //    identity, so a nested call for a different ZDO falls back to vanilla's lookup. When
-    //    another mod has already rewritten those reads, as ontrigger's
-    //    ValheimPerformanceOptimizations does the same way, this half leaves them to that mod
-    //    and the prefix skips the lookup nothing would use.
-    //
-    // Client: this is the equipment rendering pipeline.
+    // Fix Equipment Visual Refresh: every character re-applies unchanged colors and makes forty ZDO lookups each frame.
+    // Prefixes UpdateColors to skip unchanged writes; transpiles UpdateEquipmentVisuals to read one fetched int table.
+    // Characters, dropped armor and armor stands stop allocating and rehashing every frame for unchanged values.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(VisEquipment))]
@@ -104,8 +76,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             if (!Applied.TryGetValue(__instance, out ColorState last) || !last.Matches(__state)) { return true; }
 
-            // Nothing vanilla reads has changed, but something else may have replaced the blocks
-            // the tint was written into. Utils.Vec3ToColor: the three channels, alpha one.
+            // Nothing vanilla reads has changed, but MaterialMan replaces a character's property blocks whenever an
+            // item is attached (RefreshSnowLevel), which vanilla's per-frame rewrite covered; skipping then would leave
+            // a beard white from the next equip on. Utils.Vec3ToColor: the three channels, alpha one.
             Color tint = new Color(last.Hair.x, last.Hair.y, last.Hair.z);
             if (StillApplied(last.BeardRenderers, tint) && StillApplied(last.HairRenderers, tint)) { return false; }
 
@@ -134,6 +107,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return true;
         }
 
+        // Recorded here rather than in the prefix, so a vanilla call that threw is retried rather than marked applied.
         [HarmonyPostfix]
         [HarmonyPatch("UpdateColors")]
         private static void UpdateColorsPostfix(VisEquipment __instance, ColorState __state) {
@@ -162,7 +136,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static ZDO _scopeZdo;
         private static BinarySearchDictionary<int, int> _scopeTable;
 
-        // Set by the transpiler, which Harmony re-runs each time any mod patches the method.
+        // Set by the transpiler, which Harmony re-runs each time any mod patches the method. False when another mod
+        // already rewrote these reads (ontrigger's ValheimPerformanceOptimizations does the same), so the prefix skips
+        // the lookup.
         private static bool _readsRewritten;
 
         private static readonly MethodInfo ZdoGetInt =

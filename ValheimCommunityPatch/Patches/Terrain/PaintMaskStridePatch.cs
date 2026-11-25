@@ -2,20 +2,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Fix Terrain Paint Mask Indexing: corrects the stride and bounds three methods use to walk
-    // the terrain paint data.
-    //
-    // A heightmap of m_width cells has m_width + 1 vertices per axis, and every paint array is
-    // sized to match. TerrainComp.UpdatePaintMask and Heightmap.UpdateTerrainAlpha index that
-    // array with a stride of m_width and stop one short, so the paint is read along a diagonal
-    // skew and the last row and column are never processed. Heightmap.SetPaintMask rejects index
-    // m_width, which is the row and column a zone shares with its neighbour, so paint can never
-    // be written to a seam.
-    //
-    // Prefixes replace all three with the same logic at the correct stride and bounds. All three
-    // are only reachable from the optterrain console command.
-    //
-    // Client: UpdateTerrainAlpha returns immediately without a local player.
+    // Three paint methods walk the 33-wide paint array with a stride of 32, skewing paint and skipping the shared edge.
+    // Prefixes Heightmap.SetPaintMask, TerrainComp.UpdatePaintMask and Heightmap.UpdateTerrainAlpha at the right stride.
+    // The optterrain console command, their only caller, reads and writes terrain paint where it is, seams included.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch]
@@ -28,9 +17,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 "Fix Terrain Paint Mask Indexing",
                 true,
-                "Corrects the array stride and bounds used when reading and writing terrain paint. " +
-                "Vanilla indexes a 33-wide paint array with a stride of 32, which skews the paint " +
-                "diagonally, and refuses to write the row and column each zone shares with its neighbour.");
+                "Makes the optterrain console command read and write terrain paint where it is, instead of skewed " +
+                "diagonally and short of each zone's shared edge.");
         }
 
         [HarmonyPrefix]

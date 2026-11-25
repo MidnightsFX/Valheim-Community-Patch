@@ -3,20 +3,10 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Item Icon Crash: an item whose stored icon variant is out of range draws its first icon
-    // instead of throwing from every UI panel.
-    //
-    // ItemDrop.ItemData.GetIcon indexes m_shared.m_icons with m_variant and no bounds check.
-    // m_variant is saved per stack and can outlive the array (a removed item mod, a content update
-    // that shortened the icon list, an item whose prefab never got icons), so every inventory,
-    // tooltip and crafting panel that draws the item throws IndexOutOfRangeException.
-    //
-    // A prefix on GetIcon falls back to the first icon, or null when there are none, when the
-    // variant is out of range, and logs each offending item once so the broken stack can be found.
-    //
-    // Client: every caller is UI. Provenance: same defect as ComfyMods/LetMePlay (GPL-3.0,
-    // redseiko), which repairs the shared item data instead; this deliberately changes nothing
-    // global.
+    // ItemData.GetIcon indexes the icons with the saved variant unchecked, so a stale stack throws from every UI panel.
+    // Prefixes GetIcon to return the first icon (or null) for an out-of-range variant, logging each item once.
+    // Inventory, tooltip and crafting panels keep working after an item mod is removed or an update shortens icons.
+    // Provenance: same defect as ComfyMods/LetMePlay (GPL-3.0, redseiko), which repairs the shared item data instead.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ItemDrop.ItemData))]
@@ -29,13 +19,13 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Item Icon Crash",
                 true,
-                "Guards the unchecked array index in ItemDrop.ItemData.GetIcon that throws when an " +
-                "item's stored variant no longer matches its icon list - after a game update or a " +
-                "removed item mod. Without it the inventory and crafting panels break.");
+                "Draws the first icon for an item whose saved icon variant no longer exists, so inventory " +
+                "and crafting panels keep working after a game update or a removed item mod.");
         }
 
         private static readonly HashSet<string> Reported = new HashSet<string>();
 
+        // Answers per call rather than repairing the shared item data, so nothing global changes.
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ItemDrop.ItemData.GetIcon))]
         private static bool GetIconPrefix(ItemDrop.ItemData __instance, ref Sprite __result) {

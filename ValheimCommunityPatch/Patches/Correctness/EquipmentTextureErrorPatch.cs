@@ -4,24 +4,10 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Equipment Texture Errors: stops the "doesn't have a texture property" errors the Deep North
-    // Shadow logs each time one is created.
-    //
-    // VisEquipment copies the body and armour textures (_SkinBumpMap, _ChestTex, _LegsTex and their
-    // bump and metal maps) from a model's base material and from each armour item's material with
-    // unguarded Material.GetTexture calls. The Shadow (ShadowPerson) uses the player rig, but its base
-    // material and all of its armour materials are one translucent Standard-shader material with none
-    // of those properties. Unity logs an error with a stack trace for each read, about eleven per
-    // Shadow, and a village creates several at once.
-    //
-    // Transpilers swap every GetTexture call in UpdateBaseModel, SetChestEquipped and SetLegEquipped
-    // for one that returns null when the material lacks the property, which is what GetTexture
-    // returns after logging. The HasProperty test is the guard vanilla already puts on some of these
-    // same reads. The Shadow keeps its vanilla look, and each skipped read is written to the debug
-    // log instead.
-    //
-    // Client: Shadows are created and dressed on the client that loads them. Provenance: the defect
-    // was reported by nezuma's ShadowPersonMaterialFix, which swaps the Shadow's shader instead.
+    // VisEquipment reads body and armor textures the Deep North Shadow's material lacks, logging ~11 errors per Shadow.
+    // Transpiles UpdateBaseModel, SetChestEquipped and SetLegEquipped so GetTexture reads a missing property as null.
+    // Shadows load without error spam and look the same; each skipped read goes to the debug log.
+    // Provenance: the defect was reported by nezuma's ShadowPersonMaterialFix, which swaps the Shadow's shader instead.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(VisEquipment))]
@@ -34,10 +20,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Equipment Texture Errors",
                 true,
-                "Stops the 'doesn't have a texture property' errors logged for each Deep North Shadow when " +
-                "it is created, about eleven per Shadow. Its body and armour textures are read from a " +
-                "material that has none of them. The reads are still visible with EnableDebugMode on. " +
-                "Changing this requires a game restart.");
+                "Stops the 'doesn't have a texture property' errors each Deep North Shadow logs when it is " +
+                "created; they still show with EnableDebugMode on; turning it on needs a game restart.");
         }
 
         private static readonly MethodInfo GetTextureMethod =
@@ -45,6 +29,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly MethodInfo GetTextureIfPresentMethod =
             AccessTools.Method(typeof(EquipmentTextureErrorPatch), nameof(GetTextureIfPresent));
 
+        // Null is what GetTexture returns after logging, so the look is unchanged. Vanilla already guards some of these
+        // same reads with HasProperty.
         private static Texture GetTextureIfPresent(Material material, int nameID) {
             if (material.HasProperty(nameID) || !Enabled.Value) { return material.GetTexture(nameID); }
 

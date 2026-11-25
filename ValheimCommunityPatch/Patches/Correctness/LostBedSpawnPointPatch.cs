@@ -5,24 +5,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Lost Bed Spawn Point: a respawn keeps the bed spawn point while the server has not yet
-    // sent the area around the bed, for up to 30 seconds.
-    //
-    // Game.FindSpawnPoint clears the custom spawn point when IsAreaReady passes at the bed but no
-    // current Bed instance exists. On a client of a dedicated server, IsAreaReady passes for a zone
-    // whose objects have not arrived yet, because it only checks the objects the client knows
-    // about, and the bed's terrain is generated locally. Vanilla's fixed 8 s wait usually hides
-    // this; a server that needs longer to stream the bed area, or a mod that shortens the wait,
-    // sends the player to the world start instead of their bed.
-    //
-    // A transpiler swaps the one ClearCustomSpawnPoint call in FindSpawnPoint for a guard that
-    // skips the clear while the client holds no object at all in the bed's zone, or while Fix
-    // Loading Screen Wait is still waiting for the server to confirm it. Vanilla's own reset of
-    // m_respawnWait right after the call then re-arms its wait and retries. After 30 s the clear
-    // goes through as in vanilla. Vanilla's "Failed to find bed" line is written once per window
-    // rather than on every retry.
-    //
-    // Client: the decision is the respawning player's, and a host holds every object itself.
+    // Game.FindSpawnPoint clears the bed spawn point once the bed's ground loads, before the server has sent the bed.
+    // A transpiler replaces its ClearCustomSpawnPoint call with a guard that waits up to 30 s for the bed's zone.
+    // Respawning players return to their bed instead of the world start when the server is slow to send it.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Game))]
@@ -36,8 +21,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "Fix Lost Bed Spawn Point",
                 true,
                 "Keeps your bed as the respawn point while the server has not yet sent the area around " +
-                "it, instead of sending you to the world start. Vanilla decides the bed is gone as soon " +
-                "as the ground there is loaded, even when the buildings have not arrived yet.");
+                "it, instead of sending you to the world start.");
         }
 
         private const float MaxDeferral = 30f;
@@ -93,6 +77,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         [HarmonyPatch("_RequestRespawn")]
         private static void RequestRespawnPostfix() => _deferSince = -1f;
 
+        // Skipping the clear is enough: vanilla resets m_respawnWait right after the call, so it
+        // waits and retries.
         private static void GuardedClear(PlayerProfile profile) {
             if (ShouldDefer(profile)) { return; }
 
@@ -104,6 +90,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             if (Enabled == null || !Enabled.Value) { return false; }
 
             ZNet net = ZNet.instance;
+            // A host holds every object itself.
             if (net == null || net.IsServer() || profile == null || !profile.HaveCustomSpawnPoint()) { return false; }
 
             if (!ReferenceEquals(Game.instance, _deferFor)) {
@@ -130,8 +117,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             return false;
         }
 
-        // A generated zone always holds objects of its own (its zone controller, vegetation, the
-        // bed itself), so none at all means the server has not sent it yet.
+        // IsAreaReady passes before the server's objects arrive: it checks only objects the client
+        // knows, and the terrain is generated locally. A generated zone always holds objects of its
+        // own (its zone controller, vegetation, the bed itself), so none at all means the server has
+        // not sent it yet.
         private static bool KnowsAnyObject(Vector2s zone) {
             ZDOMan zdoMan = ZDOMan.instance;
             if (zdoMan == null) { return true; }

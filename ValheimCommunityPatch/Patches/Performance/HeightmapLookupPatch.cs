@@ -4,24 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Heightmap Lookup Scan: "which terrain tile is this point on" is a zone-keyed lookup
-    // instead of a scan of every loaded tile with a native position read per candidate.
-    //
-    // Heightmap.FindHeightmap(point) loops over s_heightmaps calling IsPointInside, which reads
-    // transform.position each time, and HaveQueuedRebuild(point, radius) has the same shape.
-    // With the 50-100 heightmaps of a busy area that is thousands of native reads a second for
-    // answers that never change: a zone heightmap is instantiated at its zone centre and never
-    // moves.
-    //
-    // A registry mirrors s_heightmaps with cached centres, filed by zone. FindHeightmap becomes
-    // one ZoneSystem.GetZone plus a dictionary hit, with a scan over cached floats as the fallback
-    // for mod-created maps that are not zone-aligned, in s_heightmaps order so the first match is
-    // vanilla's. HaveQueuedRebuild becomes pure math. The radius overload of FindHeightmap is
-    // left vanilla because terrain-op fan-out writes terrain data through it. For a point exactly
-    // on a shared edge vanilla returns whichever map registered first and this returns the zone's
-    // own map; both contain the point and share identical edge vertices.
-    //
-    // Both: FindHeightmap runs on a dedicated server through ground queries and StaticPhysics.
+    // Fix Heightmap Lookup Scan: Heightmap.FindHeightmap scans every loaded tile with a native position read per tile.
+    // Prefixes FindHeightmap(point) and HaveQueuedRebuild with a registry of cached tile centres filed by zone.
+    // Terrain tile lookups cost one dictionary hit instead of thousands of native reads a second.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
@@ -33,9 +18,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Heightmap Registry",
                 false,
-                "Diagnostic. Runs both the zone-keyed lookup and vanilla's scan on every terrain tile " +
-                "lookup, acts on vanilla's result, and logs any real disagreement. Costs the scan this " +
-                "fix exists to avoid, so leave it off unless you are validating the registry.",
+                "Diagnostic. Runs vanilla's tile scan beside the registry on every terrain tile lookup, uses " +
+                "vanilla's answer and logs any real disagreement; costs the scan this fix saves.",
                 advanced: true);
         }
 
@@ -186,6 +170,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 && point.z >= entry.m_cz - entry.m_half && point.z <= entry.m_cz + entry.m_half;
         }
 
+        // The scan, in s_heightmaps order so the first match is vanilla's, covers mod-created maps that are not
+        // zone-aligned. On a shared edge this returns the zone's own map where vanilla returns the first registered;
+        // both contain the point and share identical edge vertices.
         private static Heightmap FastFind(Vector3 point) {
             if (ByZone.TryGetValue(ZoneSystem.GetZone(point), out Entry entry) && Contains(entry, point)) {
                 return entry.m_hmap;
@@ -198,6 +185,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return null;
         }
 
+        // Only the point overload: terrain-op fan-out writes terrain data through the radius overload,
+        // so that one stays vanilla.
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Heightmap.FindHeightmap), typeof(Vector3))]
         private static bool FindHeightmapPrefix(Vector3 point, ref Heightmap __result) {

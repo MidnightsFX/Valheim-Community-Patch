@@ -5,24 +5,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Teleport Ghost From Client: a player who teleports far away on a server without this mod
-    // is removed from other players' games instead of standing frozen where they left.
-    //
-    // The server drops a player from another client's game only when their ZDO changes sector and
-    // the position it held at that moment lies outside that client's area. A single jump is tested
-    // against the old spot, so it tells nobody, and the ghost stays until the traveller next crosses
-    // a zone line, when the spot tested is at the destination. Fix Teleport Ghost Players corrects
-    // this on the server; this fix gets the same result from the traveller's game.
-    //
-    // A postfix on Player.UpdateTeleport notices the body has moved two or more zones from its ZDO
-    // and waits for LateUpdate to bring the ZDO and the reference position along. On a later physics
-    // step it sends the ZDO once from just across its nearest zone line, then again from the real
-    // position, in the same call. The server sees a sector change tested at the destination and
-    // sends its own notification. With no room on the connection it tries again on each step until
-    // the teleport ends. Do not move the ZDO ahead of the reference position: the scene destroys any
-    // object filed outside the reference's area, the local player included.
-    //
-    // Client: only the traveller needs this mod. A host runs Fix Teleport Ghost Players instead.
+    // The server tests a long teleport's sector change at the old spot, so other players keep a frozen ghost there.
+    // Postfixes Player.UpdateTeleport to send the ZDO once from just across a zone line, then from the real position.
+    // A traveller with this mod leaves no ghost behind, even on a server without it.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Player))]
@@ -49,9 +34,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 FixName,
                 true,
-                "When you teleport far away on a server without this mod, other players stop seeing " +
-                "you standing frozen where you left. Fix Teleport Ghost Players does this on the " +
-                "server for every player; this does it from your own game for you.");
+                "Stops other players seeing you frozen where you left after you teleport far away on a server without this mod.");
         }
 
         [HarmonyPrepare]
@@ -74,11 +57,14 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         [HarmonyPostfix]
         [HarmonyPatch("UpdateTeleport")]
         private static void UpdateTeleportPostfix(Player __instance) {
+            // A host runs Fix Teleport Ghost Players instead.
             if (Enabled == null || !Enabled.Value || RunMode.IsServer) { return; }
 
             ZDO zdo = __instance.m_nview.GetZDO();
             if (zdo == null) { return; }
 
+            // Wait while the ZDO lags the body: LateUpdate brings it and the reference position along. Never
+            // move the ZDO ahead of the reference position, or the scene destroys it, local player included.
             Vector2s zone = ZoneSystem.GetZone(__instance.transform.position);
             Vector2s filed = zdo.GetSector();
             if (Mathf.Max(Mathf.Abs(zone.x - filed.x), Mathf.Abs(zone.y - filed.y)) >= JumpZones) {
@@ -87,7 +73,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
             if (!_pending) { return; }
 
-            // After the teleport the traveller's next zone line clears the ghost, as in vanilla.
+            // Retried each step while the connection has no room. After the teleport the traveller's next
+            // zone line clears the ghost, as in vanilla.
             if (SendAcrossZoneLine(zdo) || !__instance.IsTeleporting()) { _pending = false; }
         }
 

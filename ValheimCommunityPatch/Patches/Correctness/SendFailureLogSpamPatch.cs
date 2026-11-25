@@ -3,19 +3,10 @@ using System.Reflection;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Send Failure Log Spam: stops "Failed to send data" being written once per socket per
-    // frame while a peer's send queue is backed up.
-    //
-    // ZSteamSocket.SendQueuedPackages logs every failed send, and it runs from Update for every
-    // socket every frame. A send only fails when the peer's queue has backed up, which is exactly
-    // when the machine can least afford to format lines, capture stack traces and write to disk.
-    //
-    // A transpiler points the ZLog.Log call at this mod's debug sink, so the message is silenced by
-    // default and comes back with EnableDebugMode. Only the call operand changes; the break that
-    // follows it still stops the drain loop on the first failure.
-    //
-    // Both, and worse on a server, which holds one socket per connected peer. Provenance: same
-    // defect as ComfyMods/BetterZeeLog (GPL-3.0, redseiko), which removes the call outright.
+    // ZSteamSocket logs "Failed to send data" per socket per frame while a peer's send queue is backed up.
+    // Transpiles ZSteamSocket.SendQueuedPackages to send its ZLog.Log call to the debug sink.
+    // A backed-up connection no longer floods the log just when the machine can least afford it.
+    // Provenance: same defect as ComfyMods/BetterZeeLog (GPL-3.0, redseiko), which removes the call outright.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZSteamSocket))]
@@ -28,10 +19,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Send Failure Log Spam",
                 true,
-                "Stops 'Failed to send data' being written to the game log once per socket per frame " +
-                "whenever a peer's send queue backs up - which is exactly when the server can least " +
-                "afford it. The message is still visible with EnableDebugMode on. Changing this " +
-                "requires a game restart.");
+                "Stops 'Failed to send data' filling the game log every frame while a connection is backed up " +
+                "(EnableDebugMode still shows it); turning it on needs a game restart.");
         }
 
         private static readonly MethodInfo ZLogMethod = AccessTools.Method(typeof(ZLog), nameof(ZLog.Log));
@@ -46,7 +35,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
         }
 
-        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches. Only the call operand changes, so the break
+        // after it still ends the drain loop on the first failure.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("SendQueuedPackages")]

@@ -4,26 +4,9 @@ using System.Reflection.Emit;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Paint-Only Terrain Rebuilds: a terrain modifier that only paints the ground, like the one
-    // under a big rock or copper deposit, refreshes just the terrain paint when it loads or unloads
-    // instead of rebuilding the whole terrain tile.
-    //
-    // TerrainModifier.PokeHeightmaps always calls Heightmap.Poke with paintOnly false, so every
-    // modifier's Awake and OnDestroy queues a full rebuild of each tile it touches: the collision
-    // mesh and its PhysX cook, the render mesh, the corner depths and the building-support cache
-    // event. A modifier that neither levels nor smooths can only change the paint mask, and those
-    // come and go with the zones around the player: the rock4 rocks and copper deposits of the Black
-    // Forest, coast and heath, the heath rock pillars, and village roads.
-    //
-    // A transpiler swaps that Poke call for one that asks for vanilla's paint-only rebuild for such a
-    // modifier, the request terrain paint ops already make. The tile still regenerates its heights
-    // and paint mask with every modifier and terrain edit applied, but keeps both meshes. Vanilla's
-    // request merge keeps a rebuild full when anything else asked for a full one, and a tile's first
-    // build is always full. A Regenerate prefix and postfix compare the tile's heights across every
-    // paint-only rebuild and run the full rebuild when they moved, which happens when a tile's
-    // terrain edits unload before the tile itself does, so the meshes always match the heights.
-    //
-    // Both: a server generating land ahead of the players places these rocks on terrain it builds too.
+    // Fix Paint-Only Terrain Rebuilds: PokeHeightmaps asks for a full tile rebuild even for paint-only modifiers.
+    // Transpiles that Poke to a paint-only rebuild; a Regenerate prefix/postfix runs the full one if the heights moved.
+    // Rocks and ore deposits loading and unloading around the player stop rebuilding terrain collision and meshes.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(TerrainModifier), "PokeHeightmaps")]
@@ -82,7 +65,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Vanilla's Poke, asking for the paint-only rebuild when the modifier cannot change heights.
-        // Turned off, the height guard stays on for tiles already asked for one.
+        // Vanilla's request merge keeps a rebuild full when anything else asked for a full one, and a
+        // tile's first build is always full. Turned off, the height guard stays on for tiles already
+        // asked for one.
         private static void PokeFor(Heightmap hmap, int delayed, bool paintOnly, TerrainModifier modifier) {
             hmap.Poke(delayed, paintOnly || (!modifier.m_level && !modifier.m_smooth && !ApiSwitch.Off && Hooks.Healthy));
         }

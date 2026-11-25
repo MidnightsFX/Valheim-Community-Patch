@@ -3,27 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Spawns Inside Bases: stops creatures spawning on ground a player base covers while the objects
-    // that cover it are not loaded.
-    //
-    // SpawnSystem.IsSpawnPointGood keeps spawns out of a base with EffectArea.IsPointInsideArea, a physics
-    // query that only finds objects in the scene. Points are drawn 40 to 80 m from the player, which at the
-    // lowest Simulation Distance reaches past the three by three zones whose objects are loaded. Terrain
-    // stays for a few seconds after its zone's objects are removed and arrives before they are created, so
-    // such a point finds ground and no base, and FindBaseSpawnPoint draws up to 20 points until one passes.
-    // A slow game widens the gap, because objects are created a few at a time each frame.
-    //
-    // A postfix on IsSpawnPointGood turns down a point that passed when its zone is outside the loaded area,
-    // where a creature would be unloaded at once, or when a base object with no instance has its area over
-    // the point. Those objects come from the ZDOs of the surrounding zones and their areas from the prefabs,
-    // so modded pieces count. Points vanilla rejects and spawners allowed inside a base are left alone.
-    //
-    // A client only holds the ZDOs of zones it has been near, sent nearest first at a capped rate, so it can
-    // not see every base object. Close to a base it can see, it also turns down a point within reach of a
-    // zone it does not hold yet: one it was never near, or one that came near before new objects last stopped
-    // arriving. Away from any base spawning stays as it was.
-    //
-    // Client: spawning needs a local player.
+    // IsSpawnPointGood only sees loaded base objects, so at low Simulation Distance creatures spawn in unloaded bases.
+    // Postfixes IsSpawnPointGood to reject points outside the loaded zones or under a base area of an unloaded ZDO.
+    // Creatures no longer spawn inside a base whose workbenches and fires have not loaded yet.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch]
@@ -37,8 +19,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "Fix Spawns Inside Bases",
                 true,
                 "Stops creatures spawning on ground your base covers while the workbenches and fires that " +
-                "cover it are not loaded. Vanilla only sees loaded objects, so this happens at the lowest " +
-                "Simulation Distance while moving through a base, and more often on a slow machine.");
+                "cover it are not loaded, as happens at the lowest Simulation Distance.");
         }
 
         private struct BaseArea {
@@ -221,12 +202,16 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             return false;
         }
 
+        // Terrain outlives its zone's objects by a few seconds and arrives before them, so such a point finds
+        // ground and no base. Outside the loaded zones a creature would be unloaded at once.
         [HarmonyPostfix]
         [HarmonyPatch(typeof(SpawnSystem), nameof(SpawnSystem.IsSpawnPointGood))]
         private static void IsSpawnPointGoodPostfix(SpawnSystem.SpawnData spawn, ref Vector3 spawnPoint, ref bool __result) {
             if (!__result || spawn.m_insidePlayerBase || !Enabled.Value) { return; }
 
             if (!IsZoneNear(ZoneSystem.GetZone(spawnPoint)) || IsUnderUnloadedBase(spawnPoint)) { __result = false; }
+            // A client holds only the ZDOs of zones it has been near, sent at a capped rate, so close to a base
+            // it also turns down a point by a zone not yet received in full. Away from a base nothing changes.
             else if (!ZNet.instance.IsServer() && IsNearUnheldZone(spawnPoint) && IsBaseNearby(spawnPoint)) { __result = false; }
         }
 

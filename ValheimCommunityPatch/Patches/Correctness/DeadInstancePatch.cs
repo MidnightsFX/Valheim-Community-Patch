@@ -3,26 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Loading Screen Hang: a networked object destroyed without the scene being told is
-    // unregistered, so a teleport, dungeon exit or respawn next to it can finish loading.
-    //
-    // ZNetScene clears an m_instances entry only on its own removal paths, each of which detaches
-    // the ZDO first. A ZNetView destroyed any other way leaves its entry pointing at a dead view
-    // while the ZDO stays loaded and marked created, so the object is never rebuilt either.
-    // IsAreaReady counts the dead view as not yet loaded, and Player.UpdateTeleport waits on it
-    // with no timeout. The usual source is vanilla's vfx_coin_pile_destroyed, the Infested Mine
-    // treasure pile's pick effect: its child vfx_Place_bed has a ZNetView of its own, and on every
-    // other player's client the parent is destroyed over the network before the child's own timer
-    // runs out, taking the child down with its hierarchy.
-    //
-    // TeardownHooks' ZNetView.OnDestroy postfix hands over any view that still holds its ZDO and
-    // is still the registered instance, and it gets vanilla's unload sequence for one object: drop
-    // the entry, then destroy the ZDO if it is non-persistent and this peer's, or clear Created so
-    // the scene rebuilds it. A postfix on IsAreaReady repairs any dead entry left in the area it
-    // was asked about, at most once a second while it answers no, and names the object in the log.
-    //
-    // Both: any peer's scene can be left holding a dead view; the loading screens that wait on one
-    // are a client's.
+    // A ZNetView destroyed outside ZNetScene's removal paths leaves a dead m_instances entry, hanging loading screens.
+    // ZNetView.OnDestroy (via TeardownHooks) and an IsAreaReady postfix unregister the dead entry as an unload would.
+    // A teleport, dungeon exit or respawn next to such an object finishes loading.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
@@ -35,10 +18,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Loading Screen Hang",
                 true,
-                "Unregisters a networked object that was destroyed without the game's object " +
-                "manager being told, most often the coin effect left when another player opens an " +
-                "Infested Mine treasure pile. In vanilla the leftover entry keeps the loading screen " +
-                "up forever for a dungeon exit, portal trip or respawn within one zone of it.");
+                "Unregisters networked objects destroyed without the game being told, most often an Infested " +
+                "Mine treasure pile's effect, so loading screens near them no longer wait forever.");
         }
 
         // Only while IsAreaReady keeps answering no; the scan is one lookup and one native
@@ -50,7 +31,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         /// <summary>
         /// Called from TeardownHooks for every destroyed non-ghost ZNetView. Every vanilla removal
         /// path has already detached the ZDO by now, so only a view destroyed some other way gets
-        /// past the first check.
+        /// past the first check. The usual one is vfx_coin_pile_destroyed's child vfx_Place_bed,
+        /// which has its own ZNetView and dies with its parent when another player's pick of an
+        /// Infested Mine treasure pile destroys it over the network.
         /// </summary>
         internal static void OnViewDestroyed(ZNetView view) {
             ZDO zdo = view.m_zdo;
@@ -72,6 +55,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             Unregister(scene, zdo, view);
         }
 
+        // IsAreaReady counts a dead view as not yet loaded, and Player.UpdateTeleport waits on it
+        // with no timeout.
         [HarmonyPostfix]
         [HarmonyPatch(nameof(ZNetScene.IsAreaReady))]
         private static void IsAreaReadyPostfix(ZNetScene __instance, Vector3 point, bool __result) {

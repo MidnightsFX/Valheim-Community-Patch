@@ -4,30 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Idle Scene Sweep: the 30 Hz object create/destroy pass is skipped when nothing that
-    // could change its outcome has happened since the last one.
-    //
-    // ZNetScene.CreateDestroyObjects is O(every loaded object) end to end: it rebuilds the near
-    // and distant ZDO lists from the sector stores, scans every near ZDO for its Created flag,
-    // sorts the candidates, then earmarks every ZDO and walks every instance to find removals.
-    // None of that depends on anything having changed, and in a big base it was measured at 17%
-    // of all frame time re-deriving the same answer as 33 ms ago.
-    //
-    // Three unconditional hooks track change cheaply. ZDOMan.AddToSector and RemoveFromSector are
-    // the only mutators of the sector stores; they XOR the ZDO's id into a ring-membership hash
-    // whenever the touched sector lies inside the streamed ring, so an in-ring crossing or the
-    // sector bounce every ZDO-data packet performs cancels out while a real arrival, departure,
-    // spawn or despawn changes the hash. ZDO.set_Created is a plain counter for the sectorless
-    // paths. A pass is skipped only when the scene, reference zone, ring hash, created counter
-    // and ring sizes all match the snapshot taken after the last full pass, that pass ended with
-    // nothing pending, and fewer than 30 skips have run since: one full pass per second stays as
-    // hygiene for anything untracked. On a busy server, ghost-zone generation for peers keeps
-    // the hash moving and the pass rarely idles, which is a graceful fallback to vanilla.
-    //
-    // Composition: this must stay a prefix on CreateDestroyObjects that returns true or false, so
-    // RemoveObjectsNrePatch and the sweep prefixes below it see a full pass exactly as vanilla
-    // would. Both: a dedicated server runs the same pass over the set around its pinned reference
-    // position, far outside the zone grid.
+    // Fix Idle Scene Sweep: ZNetScene.CreateDestroyObjects walks every loaded object 30 times a second, changed or not.
+    // Prefixes CreateDestroyObjects to skip the pass while sector-store and Created hooks show nothing has changed.
+    // Big bases stop spending frame time re-deriving the same answer; one full pass a second still runs.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
@@ -39,14 +18,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Scene Idle Skip",
                 false,
-                "Diagnostic. Predicts whether each object pass could be skipped, always runs it " +
-                "anyway, and logs whenever a pass predicted skippable did real work. Costs the " +
-                "passes this fix exists to avoid, so leave it off unless you are validating the " +
-                "skip conditions.",
+                "Diagnostic. Runs every object pass and logs any the idle skip would have skipped that did " +
+                "real work; costs the passes the fix saves.",
                 advanced: true);
         }
 
-        // One full pass per second at the 30 Hz pass rate.
+        // One full pass per second at the 30 Hz pass rate, for anything the hooks do not track.
         private const int HygieneInterval = 30;
 
         private static long _ringHash;
@@ -96,6 +73,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _passesSinceReport;
 
         // ---- change hooks (maintenance runs unconditionally) ---------------------------------
+
+        // AddToSector and RemoveFromSector are the only writers of the sector stores. The XOR makes an in-ring move,
+        // or the sector bounce every ZDO-data packet does, cancel out, while an arrival, departure, spawn or despawn
+        // changes the hash. The Created setter counts the changes that bypass the sector stores.
 
         // AddToSector receives the new sector and RemoveFromSector the old one, so each firing is
         // filtered by the sector it actually touched. Both hand over a packed sector index and the
@@ -150,6 +131,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- the skip ------------------------------------------------------------------------
 
+        // Keep this a bool prefix that skips or runs the whole pass, so RemoveObjectsNrePatch and the other
+        // sweep prefixes see a full pass exactly as vanilla would.
         [HarmonyPrefix]
         [HarmonyPatch("CreateDestroyObjects")]
         private static bool CreateDestroyObjectsPrefix(ZNetScene __instance) {

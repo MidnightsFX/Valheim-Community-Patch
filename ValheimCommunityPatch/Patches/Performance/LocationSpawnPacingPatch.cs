@@ -4,30 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Location Spawn Hitch: locations coming into range spawn one per frame plus as many more as
-    // a small time budget allows, instead of every ready location in the same frame.
-    //
-    // A location (a village, a fortress, a camp) arrives as a LocationProxy, which instantiates the
-    // whole location prefab synchronously the moment it is created. The object pass creates at
-    // least ten objects at a time, so crossing into an area dense with locations can build several
-    // in one frame, one long hitch.
-    //
-    // The game already has a way to put a location off: LocationProxy asks
-    // ZoneSystem.ShouldDelayProxyLocationSpawning first, and on true flags its zone as loading
-    // (so objects inside it wait, as for a location whose prefab is still loading) and asks again
-    // every frame. A postfix makes that answer true when locations spawned this frame have already
-    // used the budget; the first location of a frame always goes. Vanilla's own check runs first
-    // either way, so its prefab keep-alive still refreshes. Nothing is delayed behind a loading
-    // screen, for a location the game cannot find (it would retry forever and hold its zone), or
-    // while a zone is being generated in full, when the location's networked objects already exist.
-    //
-    // This paces work rather than checking, against the usual rule, because nothing repeats: each
-    // location is still built exactly once and whole, the object pass is untouched, and a waiting
-    // location costs one vanilla delay check per frame. A single large location still costs its
-    // own frame; what goes is several stacking into one. Stands down when another mod changes the
-    // delay check.
-    //
-    // Client: only a game with a local player streams locations around it.
+    // Fix Location Spawn Hitch: every location proxy coming into range builds its whole prefab in the same frame.
+    // Postfixes ZoneSystem.ShouldDelayProxyLocationSpawning to put off the rest once the frame's budget is spent.
+    // Crossing into an area dense with villages, camps and ruins spreads them over frames instead of one long hitch.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZoneSystem))]
@@ -41,10 +20,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Location Spawn Budget",
                 4,
-                "Milliseconds per frame spent spawning locations (villages, camps, ruins) coming into " +
-                "range before the rest wait for the next frame. The first location in a frame always " +
-                "spawns, and nothing waits behind a loading screen. 0 restores vanilla, which spawns " +
-                "every ready location at once.",
+                "Milliseconds per frame spent spawning locations (villages, camps, ruins) coming into range before " +
+                "the rest wait a frame; the first always spawns. 0 is vanilla, which spawns every ready location at once.",
                 advanced: true,
                 valMin: 0,
                 valMax: 50);
@@ -63,7 +40,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(LocationSpawnPacingPatch));
 
-        // Set while LocationProxy.SetLocation spawns a location of a zone generated in full.
+        // Set while LocationProxy.SetLocation spawns a location of a zone generated in full, whose
+        // networked objects already exist, so it is never delayed.
         private static int _fullSpawnDepth;
 
         // Debug summary.
@@ -72,7 +50,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static int _delayed;
         private static long _worstFrame;
 
-        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // LocationProxy asks this first and, on true, holds its zone as loading and asks again next frame. A
+        // postfix, so vanilla's check still refreshes the prefab keep-alive. Pacing rather than skipping: each
+        // location is still built once and whole. Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyPostfix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(ZoneSystem.ShouldDelayProxyLocationSpawning))]
@@ -82,6 +62,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             int budget = BudgetMs != null ? BudgetMs.Value : 0;
             if (budget <= 0 || ApiSwitch.Off || _spent < budget * Stopwatch.Frequency / 1000) { return; }
 
+            // A location the game cannot find would retry forever and hold its zone.
             if (RunMode.InLoadingScreen() || __instance.GetLocation(hash) == null || Takeover.TakenOver) { return; }
 
             __result = true;

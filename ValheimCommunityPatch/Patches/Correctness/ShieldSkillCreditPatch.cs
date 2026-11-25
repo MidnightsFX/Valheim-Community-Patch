@@ -2,25 +2,9 @@ using System.Runtime.CompilerServices;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Shield Skill Credit: gives the skill a Staff of Protection shield raises when it breaks
-    // to the player who cast it, not to whoever was wearing it.
-    //
-    // The staff's area hit applies the shield status effect (SE_Shield) to each character in range,
-    // and Character.RPC_Damage hands the effect the caster through StatusEffect.SetAttacker, which
-    // SE_Shield does not override, so the caster is dropped. When the shield breaks, SE_Shield.IsDone
-    // raises m_levelUpSkillOnBreak (Blood Magic) on the wearer's own Skills. A mage shielding a friend
-    // levels the friend's Blood Magic, and a shield on a tamed creature, which has no Skills, levels
-    // nobody's.
-    //
-    // A postfix on SetAttacker records the casting player's peer for each shield. When IsDone sees a
-    // broken shield with a recorded caster, a prefix clears m_levelUpSkillOnBreak for that one call,
-    // so vanilla still plays the break effects but raises nothing, and a postfix raises the caster's
-    // skill by the same factor: directly when the caster is on this machine, otherwise through a
-    // routed RPC to the caster's client. A finalizer puts the field back. A shield with no recorded
-    // caster, or worn by the player on this machine who also cast it, is left to vanilla.
-    //
-    // Both: IsDone runs on whichever side owns the wearer, a dedicated server for a creature it
-    // simulates, and the caster's client applies the credit. A caster without the mod gets nothing.
+    // SE_Shield drops its caster, so a broken shield's Blood Magic goes to the wearer, or nobody on a tamed creature.
+    // A SetAttacker postfix records the caster; IsDone hooks move the break credit to them, by routed RPC when remote.
+    // The player who cast a Staff of Protection shield gets its Blood Magic when it breaks.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch]
@@ -35,10 +19,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Shield Skill Credit",
                 true,
-                "Gives the Blood Magic a Staff of Protection shield earns when it breaks to the player " +
-                "who cast it. Vanilla gives it to whoever wore the shield, so shielding a friend levels " +
-                "their Blood Magic instead of yours, and shielding a tamed creature levels nobody's. The " +
-                "caster and the shielded player both need the mod.");
+                "Gives the Blood Magic a broken Staff of Protection shield earns to the player who cast it " +
+                "instead of whoever wore it; the caster and the shielded player both need the mod.");
         }
 
         private sealed class Caster {
@@ -94,7 +76,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             Casters.GetValue(shield, NewCaster).Peer = owner;
         }
 
-        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // Clears the skill for this one call, so vanilla still plays the break effects but raises nothing; the
+        // finalizer puts it back. Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(typeof(SE_Shield), nameof(SE_Shield.IsDone))]
@@ -129,6 +112,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 return;
             }
 
+            // A caster without the mod has no handler, so the credit is lost.
             ZRoutedRpc.instance?.InvokeRoutedRPC(__state.Peer, RpcName, (int)__state.Skill, factor);
         }
 

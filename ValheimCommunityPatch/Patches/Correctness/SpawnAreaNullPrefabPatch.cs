@@ -1,17 +1,9 @@
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Spawner Null Prefabs: keeps a spawner working when its creature table has a null entry.
-    //
-    // SpawnArea.m_prefabs (tar pits, greydwarf nests, draugr piles and every other spawner) can
-    // hold entries whose prefab is null after a content update or a removed creature mod. Nothing
-    // filters them, so SelectWeightedPrefab or IsSpawnPrefab dereferences one and the exception
-    // permanently kills that spawner.
-    //
-    // A postfix on SpawnArea.Awake removes the null entries once, so the spawner keeps working
-    // with whatever is still valid.
-    //
-    // Both: a spawner inside a dedicated server's own active area runs there too.
+    // A null entry in a spawner's creature table, left by an update or removed mod, throws and kills that spawner.
+    // Postfixes SpawnArea.Awake to remove the null entries from m_prefabs once.
+    // Spawners keep working with whatever creatures are still valid.
     // Provenance: the same fix as ComfyMods/LetMePlay (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
     [ModDisableable]
@@ -25,9 +17,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Spawner Null Prefabs",
                 true,
-                "Removes null entries from spawner (SpawnArea) tables on load. Without it a single missing " +
-                "creature prefab - common after a game update or a removed creature mod - throws during " +
-                "spawn selection and silently kills that spawner.");
+                "Removes missing creatures from spawner tables on load, so one left by a game update or a " +
+                "removed creature mod no longer kills that spawner.");
         }
 
         private static readonly System.Predicate<SpawnArea.SpawnData> IsNullPrefab = data => data == null || data.m_prefab == null;

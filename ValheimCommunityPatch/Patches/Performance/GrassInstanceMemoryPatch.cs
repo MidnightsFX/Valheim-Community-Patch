@@ -6,26 +6,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Grass Instance Memory: each grass renderer's matrix array starts small and grows as grass is
-    // placed in it, instead of every renderer holding room for 1,024 blades.
-    //
-    // InstanceRenderer allocates a 1,024-entry Matrix4x4 array, 64 KB, in its field initializer.
-    // ClutterSystem creates one renderer per instanced clutter type in every grass patch and destroys
-    // them as patches leave range. Most hold a few dozen blades and the densest a few hundred, yet each
-    // costs the full 64 KB: about 19 MB held around the player at the game's grass distance, several
-    // times that with a raised one, and fresh garbage of that size whenever patches are built.
-    //
-    // A transpiler has the constructor allocate 16 entries. Priority.First prefixes on every method
-    // that writes the array grow it by doubling before the write, never past vanilla's 1,024:
-    // AddInstance, SetInstance, and Resize, which SetInstances and SetInstancesBillboard size through.
-    // Every index vanilla can write stays writable and the draw call sees the same matrices. Arrays
-    // start small only once a ClutterSystem has woken with the growth hooks attached and no other mod
-    // able to write the array around them; before that, and after a turn-off, renderers get vanilla's
-    // 1,024, and arrays already small keep growing. Next to FarLands or SteadyFrame, whose grass module
-    // builds patches itself and hands that back to the game when another mod hooks AddInstance, the
-    // first ClutterSystem.Awake removes every hook of this fix before any array has started small.
-    //
-    // Client: only the clutter system fills these, and it does not run on a dedicated server.
+    // Fix Grass Instance Memory: every grass renderer allocates room for 1,024 blades (64 KB) however few it holds.
+    // Transpiles the InstanceRenderer constructor to allocate 16; AddInstance, SetInstance and Resize prefixes grow it.
+    // Grass around the player holds a fraction of the memory, and building grass patches leaves far less garbage.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(InstanceRenderer))]
@@ -76,34 +59,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static int InitialCapacity() => _small && !ApiSwitch.Off ? SmallCapacity : VanillaCapacity;
 
-        private static bool _gpuChecked;
-
-        // Before ReadyHook in the same Awake, so _small is never set while the constructor still asks.
-        // Every plugin has loaded by now, which is not true when this mod patches.
-        [HarmonyPatch(typeof(ClutterSystem), "Awake")]
-        internal static class GpuGrassHook {
-            [HarmonyPrefix]
-            private static void Prefix() {
-                if (_gpuChecked) { return; }
-                _gpuChecked = true;
-                if (!GpuGrassCompat.BuildsGrass) { return; }
-
-                GpuGrassCompat.Unhook(AccessTools.DeclaredConstructor(typeof(InstanceRenderer), new Type[0]), typeof(GrassInstanceMemoryPatch));
-                GpuGrassCompat.Unhook(AddInstanceMethod, typeof(GrowthHooks));
-                GpuGrassCompat.Unhook(SetInstanceMethod, typeof(GrowthHooks));
-                GpuGrassCompat.Unhook(ResizeMethod, typeof(GrowthHooks));
-                GpuGrassCompat.Unhook(AccessTools.DeclaredMethod(typeof(ClutterSystem), "Awake"), typeof(ReadyHook));
-                _gpuStoodDown = true;
-
-                FixRegistry.MarkStoodDown(typeof(GrassInstanceMemoryPatch));
-                Logger.LogInfo($"{GpuGrassCompat.Name} builds the grass itself, so '{FixName}' stands down and " +
-                               "leaves grass patches to it.");
-            }
-        }
-
-        // Read by ReadyHook, which still runs once in the Awake that removed it.
-        private static bool _gpuStoodDown;
-
         // Replaces `ldc.i4 1024` in `m_instances = new Matrix4x4[1024]` with `InitialCapacity()`.
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
@@ -145,11 +100,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static class ReadyHook {
             [HarmonyPostfix]
             private static void Postfix() {
-                if (_gpuStoodDown) {
-                    _small = false;
-                    return;
-                }
-
                 bool takenOver = false;
                 foreach (TakeoverCheck check in Takeovers) { takenOver |= check.TakenOver; }
 

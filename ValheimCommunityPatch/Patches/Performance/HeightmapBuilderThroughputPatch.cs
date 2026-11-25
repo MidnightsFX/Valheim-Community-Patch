@@ -5,25 +5,9 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Terrain Builder Throughput: the terrain build thread sleeps only when idle and holds
-    // more finished results.
-    //
-    // HeightmapBuilder.BuildThread sleeps 10 ms after every iteration, including one that just
-    // finished a build with more work queued, which caps terrain generation far below what the
-    // thread could do and extends every zone spawn's wait for terrain. Its ready queue is capped
-    // at 16 with silent oldest-first eviction, and the distant-terrain ring alone keeps 9 in
-    // flight, so finished results are evicted before they are consumed and rebuilt from scratch.
-    //
-    // A prefix replaces the loop with the same code and the same lock discipline, sleeping only
-    // when the queue was empty, and with a configurable ready cap (default 32). The thread enters
-    // BuildThread once, when the singleton is created, so the patch has to be in place before
-    // that; Prepare logs if it was not.
-    //
-    // Because this loop replaces the one other mods would patch, it carries their hooks through
-    // the mod API (Common/APIReceiver.cs): zones another mod asks for are built first, every
-    // finished build is announced, and finished builds can be handed back in.
-    //
-    // Both: servers generate terrain for every ghost zone around every peer.
+    // Fix Terrain Builder Throughput: the terrain thread sleeps 10 ms after every build and drops results before use.
+    // Prefixes HeightmapBuilder.BuildThread with the same loop, sleeping only when idle and with a larger ready cap.
+    // Zones get their terrain sooner, and finished terrain is no longer thrown away and built again.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(HeightmapBuilder))]
@@ -35,9 +19,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Terrain Builder Ready Cap",
                 32,
-                "How many finished terrain results the build thread may hold before discarding the " +
-                "oldest. Each is roughly 100 KB. Vanilla holds 16, which the distant-terrain ring " +
-                "alone nearly fills.",
+                "How many finished terrain builds, roughly 100 KB each, are kept before the oldest is discarded. " +
+                "Vanilla keeps 16, which the distant-terrain ring alone nearly fills.",
                 advanced: true,
                 valMin: 16,
                 valMax: 128);
@@ -57,6 +40,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         /// <summary>True while this loop, and so the API's priority and finished-build hooks, is the one the build thread runs.</summary>
         internal static bool LoopRunning => _loopRunning;
 
+        // The thread enters BuildThread once, when the singleton is created, so a later patch never runs.
         [HarmonyPrepare]
         private static bool Prepare() {
             if (HeightmapBuilder.m_instance != null) {
@@ -69,6 +53,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return true;
         }
 
+        // Replaces the loop other mods would patch, so it carries their hooks through the mod API
+        // (Common/APIReceiver.cs): priority zones, finished-build events and builds handed back in.
         [HarmonyPrefix]
         [HarmonyPatch("BuildThread")]
         private static bool BuildThreadPrefix(HeightmapBuilder __instance) {

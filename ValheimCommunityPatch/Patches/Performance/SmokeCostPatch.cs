@@ -3,27 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Smoke Overhead: each smoke puff pays fewer engine calls per frame, with no visible
-    // change.
-    //
-    // Smoke.CustomUpdate writes m_body.mass every frame, a native physics write of a value that is
-    // a smooth curve of the smoke's age. SmokeRenderer.LateUpdate reads every smoke's
-    // transform.position twice per frame: once to recheck which 10 m render chunk it belongs to,
-    // an answer that changes every few seconds, and once to build the particle batch.
-    //
-    // Prefixes replace both methods with copies that write the mass on 2% steps of lifetime
-    // (drift from vanilla bounded at 0.04 on a 0..1 curve), run the chunk-transfer scan four times
-    // a second, and read each position once. Particle positions are world coordinates, so a smoke
-    // that crossed a chunk renders identically from the old chunk for up to a quarter second. The
-    // render loop also clamps to the 100-entry chunk arrays that vanilla indexed unchecked.
-    // Re-check both copies against the game source on updates.
-    //
-    // The CustomUpdate prefix runs after every other mod's. When one of them has already replaced
-    // the update (ValheimPerformanceOverhaul does while its smoke option is on), this one leaves
-    // the puff alone, since a second update would age it twice and push it twice, and says so
-    // once in the log. The render prefix stays on: no other mod is known to replace it.
-    //
-    // Client: smoke is rendering.
+    // Fix Smoke Overhead: every smoke puff writes its physics mass and has its position read twice, every frame.
+    // Prefixes replace Smoke.CustomUpdate and SmokeRenderer.LateUpdate with copies that bucket and throttle that work.
+    // Each smoke puff costs fewer engine calls per frame, with no visible change.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Smoke))]
@@ -40,14 +22,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
             owners => $"Smoke puff updates are replaced by {owners}, so '{FixName}' leaves them to that " +
                       "mod. Its smoke rendering change stays on.");
 
-        // Vanilla's CustomUpdate with the mass write bucketed. Priority.Last: see
-        // ValheimCommunityPatch.ApplyPatches.
+        // Vanilla's CustomUpdate with the mass write bucketed; re-check the copy against the game
+        // source on updates. Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("CustomUpdate")]
         private static bool CustomUpdatePrefix(Smoke __instance, float deltaTime, float time, bool __runOriginal) {
             if (!__runOriginal) {
-                // Read only for its one-time log line naming the other mod.
+                // Another mod has replaced the update (ValheimPerformanceOverhaul does while its smoke
+                // option is on); a second one would age and push the puff twice. Read only for its
+                // one-time log line naming the other mod.
                 _ = Takeover.TakenOver;
                 return false;
             }
@@ -61,7 +45,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             float num1 = 1f - Mathf.Clamp01(__instance.m_time / __instance.m_ttl);
 
-            // Fiftieths of lifetime; the first tick always writes to cover the prefab default.
+            // Fiftieths of lifetime, at most 0.04 off vanilla's 0..1 curve; the first tick always
+            // writes to cover the prefab default.
             int bucket = (int)(Mathf.Clamp01(__instance.m_time / __instance.m_ttl) * 50f);
             int previousBucket = (int)(Mathf.Clamp01((__instance.m_time - deltaTime) / __instance.m_ttl) * 50f);
             if (bucket != previousBucket || __instance.m_time <= deltaTime) {
@@ -86,10 +71,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static class RendererHook {
             private static float _nextTransfer;
 
+            // Particle positions are world coordinates, so a puff that crossed into another chunk
+            // renders the same from its old one until the next transfer.
             private const float TransferInterval = 0.25f;
 
             // Vanilla's LateUpdate with the transfer scan throttled, one position read per smoke,
-            // and the array clamp.
+            // and the array clamp; re-check the copy against the game source on updates. No other
+            // mod is known to replace it, so it stays on when the puff update stands down.
             [HarmonyPrefix]
             [HarmonyPatch("LateUpdate")]
             private static bool LateUpdatePrefix(SmokeRenderer __instance) {
@@ -110,6 +98,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                         system.Emit(smokeList.Count - system.particleCount);
                     }
 
+                    // Vanilla indexes the 100-entry chunk arrays unchecked.
                     int count = Mathf.Min(smokeList.Count, particles.Length);
                     for (int i = 0; i < count; i++) {
                         Smoke smoke = smokeList[i];

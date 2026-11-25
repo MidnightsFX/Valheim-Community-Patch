@@ -4,26 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Water Color Seams: shallow and deep water color blends smoothly across zone borders instead
-    // of changing in a hard straight line along the 64 m grid.
-    //
-    // Each zone's water tile carries the sea depth at its four corners, and the water shader blends
-    // them twice: with the mesh UV for wave height, and with TRANSFORM_TEX(uv, _MainTex) for color.
-    // The shader declares no _MainTex and the material sets none, so _MainTex_ST is zero, the color UV
-    // is (0, 0) everywhere, and the whole tile is colored by its south-west corner. Neighbouring tiles
-    // whose south-west corners differ meet in a visible line, which is common along shores, while the
-    // waves across the same border stay continuous.
-    //
-    // A postfix on WaterVolume.SetupMaterial, which runs once when a tile starts, gives that tile's
-    // material the identity _MainTex_ST, so color uses the same blend as the waves. Four corners 64 m
-    // apart are coarse, and blended properly one shallow corner gives open sea across the whole tile the
-    // sandy shallow-water color, so the postfix also moves the material's shallow color part of the way
-    // to its deep color. Every tile gets the same colors, so the result stays seamless. The depth array
-    // is left alone: the shader's wave height reads it and never reads a color, so the visible waves
-    // still match the ones boats and swimmers ride. Fixed-depth water (caves, hot springs) is left alone,
-    // and the postfix stands down if the shader declares a _MainTex, whose own tiling would then be right.
-    //
-    // Client: material state is rendering state.
+    // Water color reads depth with a zero _MainTex_ST, so each 64 m tile is one corner's color and borders show lines.
+    // Postfixes WaterVolume.SetupMaterial to give the tile material an identity _MainTex_ST and tint its shallow color.
+    // Sea color blends smoothly across zone borders near shores, as the waves already do.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(WaterVolume))]
@@ -58,10 +41,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Water Color Seams",
                 true,
-                "Blends shallow and deep water color across zone borders. Vanilla colors each 64m water tile " +
-                "by the depth at one of its corners, so near shores the sea changes color in a hard straight " +
-                "line along the zone grid. Applies to water tiles that load after it is turned on; " +
-                "turning it off gives every loaded tile the game's colors back at once.");
+                "Blends sea color smoothly across zone borders instead of in hard straight lines near shores; " +
+                "applies to water that loads after it is turned on.");
 
             // Switched or turned off, loaded tiles go back to the game's look, so they match the
             // tiles that load afterwards.
@@ -73,11 +54,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Water Color Shore Tint",
                 0.75f,
-                "With Fix Water Color Seams on, how far the sandy shallow-water color is moved towards the " +
-                "deep-sea color, from 0 to 1. 0 is the game's own color, where one shallow corner gives a " +
-                "whole 64m tile of open sea a sandy tint; 1 uses the deep color everywhere. Thin water still " +
-                "shows the real seabed through it. Changes color only, never waves. Applies to water tiles " +
-                "that load afterwards.",
+                "How far Fix Water Color Seams moves the sandy shallow-water color toward the deep-sea color, from " +
+                "0 (the game's color) to 1 (deep color everywhere). Changes color only, never waves, and applies to " +
+                "water that loads afterwards.",
                 advanced: true,
                 valMin: 0f,
                 valMax: 1f);
@@ -97,6 +76,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
             // The per-renderer instance vanilla has just written _depth to.
             Material material = surface.material;
+
+            // A shader that declares its own _MainTex has tiling that is already right.
             if (material.HasProperty(MainTex)) { return; }
 
             // The shader uses _MainTex_ST without declaring it, so the material does not list it:
@@ -111,6 +92,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
             material.SetVector(MainTexSt, IdentitySt);
 
+            // Blended properly, one shallow corner tints a whole tile of open sea sandy, so the shallow color moves
+            // toward the deep one, the same on every tile. The depth data is left alone, so the waves drawn still
+            // match the ones boats and swimmers ride.
             if (!material.HasProperty(Shallow) || !material.HasProperty(Deep)) { return; }
 
             if (!vanilla.Tinted) {

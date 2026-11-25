@@ -2,20 +2,9 @@ using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Anti-Sting Concoction: makes Deathsquitos flee a player under the concoction whichever game
-    // runs their AI.
-    //
-    // MonsterAI.PheromoneFleeCheck looks through the target player's status effects for one that tells
-    // this creature to flee. Status effects only exist in the game that owns the player, so when another
-    // player's game owns the creature the list it reads is empty and the creature attacks anyway. With
-    // two players in one place that is often the case.
-    //
-    // A postfix on SE_Stats.Setup and a prefix on StatusEffect.Stop keep a count on the player's ZDO, under
-    // one key per creature name. A postfix on PheromoneFleeCheck reads that count when the target is a
-    // player another game owns. For the player on this machine vanilla's answer stands.
-    //
-    // Both: the player's game writes the count and whichever game owns the creature reads it, a dedicated
-    // server for a creature it simulates. Both of those games need the mod.
+    // Status effects exist only in the player's own game, so a Deathsquito run by another game ignores the concoction.
+    // SE_Stats.Setup postfix and Stop prefix count it on the player's ZDO; a PheromoneFleeCheck postfix reads it.
+    // Deathsquitos flee a player under the Anti-Sting Concoction whichever game runs their AI.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch]
@@ -31,9 +20,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 "Fix Anti-Sting Concoction",
                 true,
                 "Makes Deathsquitos flee a player under the Anti-Sting Concoction whichever game runs their " +
-                "AI. Vanilla only checks the status effects it can see, and those exist only in the game of " +
-                "the player who drank it, so a Deathsquito run by another player's game attacks anyway. The " +
-                "player who drank it and the player running the Deathsquito both need the mod.");
+                "AI; the player who drank it and the player running the Deathsquito both need the mod.");
         }
 
         private static readonly Dictionary<string, int> Keys = new Dictionary<string, int>();

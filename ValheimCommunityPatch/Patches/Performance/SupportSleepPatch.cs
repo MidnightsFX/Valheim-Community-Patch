@@ -4,46 +4,13 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Idle Support Checks and Fix Idle Wear Visits: a building piece skips its structural
-    // support re-check, and when everything else is provably quiet its whole wear visit, until
-    // an event that could change the answer fires.
+    // Fix Idle Support Checks: UpdateSupport re-validates every piece's support cache each visit, costly in big bases.
+    // A prefix skips UpdateSupport until ClearCachedSupport or a neighbour's arrival, death or support change wakes it.
+    // Large bases stop spending their wear updates re-proving support that has not changed.
     //
-    // WearNTear.UpdateSupport has a cache fast path but re-validates the cache on every visit:
-    // for each cached support collider it reads the collider's position and the cached piece's
-    // support value (1.0.21 caches the piece; earlier builds re-resolved it every time).
-    // WearNTearUpdater visits every loaded piece continuously, so in a large base the validation
-    // itself is the cost, spent re-proving that nothing changed. A skipped call leaves the four
-    // parallel cache lists untouched, so they stay in step as vanilla requires; nothing here
-    // fills or reads them.
-    //
-    // Support is a pure function of a piece's neighbourhood, so a piece whose support was
-    // computed once skips UpdateSupport until one of these wakes it:
-    //  - ClearCachedSupport ran on it, the funnel for every vanilla invalidation (terrain edits,
-    //    the cross-client RPC, a freshly placed piece's broadcast).
-    //  - A neighbour was destroyed. Deaths are queued and swept once per frame against a coarse
-    //    XZ grid of support envelopes, with an exact 3D envelope-overlap test picking the true
-    //    neighbours. Cells whose every piece is already awake are skipped whole.
-    //  - A neighbour's support value changed by more than Support Change Threshold, so the
-    //    relaxation wave travels exactly as far as vanilla's and a settled structure goes quiet.
-    //  - A new piece arrived: Awake wakes the envelope-overlapping sleepers around it, as
-    //    vanilla's fast path would re-detect returning support within a sweep.
-    //  - A wear visit changed the support value without going through UpdateSupport.
-    // Pieces that never computed under this tracking, and pieces below their material minimum,
-    // run vanilla, and every piece revalidates after MaxSkipStreak consecutive skips as a net for
-    // anything unforeseen. Awake restores the persisted support in place of vanilla's max-support
-    // placeholder, so an arrival does not look like a change. For the same reason a piece with a
-    // real value skips the wear visit outside the active area, whose only work is persisting
-    // that placeholder; a placeholder already stored (by a client without this fix) is put back
-    // once. The one heuristic: a piece that has produced the same value several times running
-    // (Settled Piece Patience) may defer a wake that came only from a neighbour's value drifting;
-    // structural wakes never wait.
-    //
-    // The wear-visit sleep skips the whole UpdateWear visit for pieces where every remaining
-    // input is quiet too: owned locally, dry or roofed while wet, above the waterline, outside
-    // the Ashlands, inside the active area, and no damage or repair since the last visit. Its
-    // predicate lives in the wear-visit section below.
-    //
-    // Both: a dedicated server owns and updates the pieces in its active area.
+    // Fix Idle Wear Visits: WearNTearUpdater runs every loaded piece's UpdateWear even when none of its inputs changed.
+    // A prefix on UpdateWear skips the visit while support sleeps and every wear input is quiet (WearBlockReason).
+    // Idle pieces in a large base cost almost nothing per sweep.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(WearNTear))]
@@ -59,33 +26,25 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Support Sleep",
                 false,
-                "Diagnostic. Runs the vanilla support check on every visit while predicting " +
-                "what 'Fix Idle Support Checks' would have skipped, and logs any visit where a " +
-                "predicted-quiet piece's support actually changed. Costs everything the fix " +
-                "saves, so leave it off unless you are validating the predictions.",
+                "Diagnostic. Runs the vanilla support check on every visit and logs any piece predicted " +
+                "quiet whose support changed; costs everything 'Fix Idle Support Checks' saves.",
                 advanced: true);
 
             WearVerify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Wear Sleep",
                 false,
-                "Diagnostic. Runs the vanilla wear visit on every piece while predicting what " +
-                "'Fix Idle Wear Visits' would have skipped, and logs any visit where a " +
-                "predicted-quiet piece's support, health or wetness actually changed. Costs " +
-                "everything the fix saves, so leave it off unless you are validating the " +
-                "predictions.",
+                "Diagnostic. Runs every wear visit and logs any piece predicted quiet whose support, health " +
+                "or wetness changed; costs everything 'Fix Idle Wear Visits' saves.",
                 advanced: true);
 
             WakeEpsilon = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Support Change Threshold",
                 0.01f,
-                "How much a piece's structural support must change before its neighbours are " +
-                "re-checked. Support propagates through a structure as a wave, and re-checking " +
-                "neighbours on every last-decimal drift keeps the whole structure awake; a " +
-                "difference this small never accumulates, because each hop can only shrink it. " +
-                "Support values run to a thousand, so the default is far below anything that " +
-                "affects whether a build stands. 0 restores the exact comparison.",
+                "How far a piece's support must move, in support points, before its neighbours re-check " +
+                "theirs; the default is far below the 10 points the weakest material needs to stand. " +
+                "0 restores the exact comparison.",
                 advanced: true,
                 valMin: 0f,
                 valMax: 1f);
@@ -94,13 +53,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Settled Piece Patience",
                 3,
-                "How many times in a row a building piece must re-check its support and get the " +
-                "same answer before it is allowed to take a slower look when only a neighbour's " +
-                "value drifted. In a large base the re-check signal is almost always on, so " +
-                "without this the skip never happens; a piece that has proven it is not moving " +
-                "can afford to see a small neighbouring drift a little late. Anything structural " +
-                "- building, destroying, damage, repairs, terrain edits - is always immediate, " +
-                "and any real change resets the piece's patience to zero. 0 turns this off.",
+                "How many identical support re-checks in a row let a piece see a neighbour's small drift " +
+                "late. Building, destroying, damage, repairs and terrain edits always wake it at once; " +
+                "0 turns this off.",
                 advanced: true,
                 valMin: 0,
                 valMax: 10);
@@ -109,18 +64,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Log Support Wake Stats",
                 false,
-                "Diagnostic. Periodically logs how the support wake traffic breaks down - first " +
-                "computations, how far recomputed values actually moved, how many neighbours " +
-                "each wake touched, and how often the game's own surroundings scan overflows " +
-                "its fixed buffer. Samples that last one on a fraction of checks because it " +
-                "costs a real physics query, so this is not free - but it is cheap enough to " +
-                "leave on while measuring, and it is how 'Support Change Threshold' gets sized.",
+                "Diagnostic. Logs a breakdown of support wakes every 30 s, used to size 'Support Change " +
+                "Threshold'; one physics query per 32 support re-checks makes it cheap but not free.",
                 advanced: true);
         }
 
-        // Wakes per piece are rare events; the streak cap is the hygiene net for signals nothing
-        // models (see header). At a saturated updater cycle this bounds unnoticed staleness to a
-        // few minutes, on a value that only goes stale if a mod moves built pieces.
+        // Wakes per piece are rare events; the streak cap is the hygiene net for signals no wake
+        // models. At a saturated updater cycle this bounds unnoticed staleness to a few minutes, on
+        // a value that only goes stale if a mod moves built pieces.
         private const int MaxSkipStreak = 9;
 
         // No point counting quiet runs past the threshold's ceiling.
@@ -130,8 +81,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // 1-4 cells, so waking a neighbourhood touches a handful of short lists.
         private const float CellSize = 8f;
 
-        // Wake box for pieces that never built an envelope (see header): covers the collider
-        // reach of the largest building pieces from their origin; the sleeping side's own
+        // Wake box for pieces that never built an envelope (SetupColliders is lazy): covers the
+        // collider reach of the largest building pieces from their origin; the sleeping side's own
         // registered envelope supplies the other half of the overlap.
         private const float FallbackWakeRadius = 5f;
 
@@ -156,7 +107,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             // clean counts without a lookup. Null while unregistered.
             public Cell[] m_cells;
 
-            // Wear-sleep bookkeeping (see the wear-visit section of the header).
+            // Wear-sleep bookkeeping (see the wear-visit sleep section below).
             public bool m_wetSleepable;    // last ran visit found it roofed and dry (may sleep while wet)
             public bool m_wearWake;        // damage/repair/roof-change; next visit must run
             public bool m_geoCached;       // position captured (static pieces, captured once)
@@ -258,7 +209,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static long _statVisits, _statFirstCompute, _statIdentical;
 
         // Changes bucketed relative to the piece's material maximum, which runs from 100 (wood)
-        // to 2000 (ashstone), so one absolute number would not mean the same thing on both.
+        // to 5000 (ancient), so one absolute number would not mean the same thing on both.
         private static long _statRelTenth, _statRelOne, _statRelTen, _statRelHuge;
         private static long _statWaves, _wakeCandidates, _wakeWoken, _wakeCellsSkipped;
 
@@ -428,6 +379,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return threshold > 0 && state.m_quietRuns >= threshold;
         }
 
+        // Support is a pure function of a piece's neighbourhood, so a computed piece may skip this until
+        // woken. A skipped call leaves vanilla's four parallel cache lists untouched, so they stay in step.
         // First, so the value it remembers is the one from before the visit. A mod whose prefix replaces
         // UpdateSupport (ValheimPerformanceOptimizations) has written its answer by the time a later
         // prefix runs, so the postfix would see no change and the relaxation wave would stop here.
@@ -563,7 +516,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // Every vanilla invalidation signal funnels through here (see header).
         [HarmonyPostfix]
         [HarmonyPatch("ClearCachedSupport")]
         private static void ClearCachedSupportPostfix(WearNTear __instance) {
@@ -844,8 +796,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     Logger.LogError(
                         $"Wear sleep verify: DIVERGED on '{__instance.name}' - predicted quiet, " +
                         "but the visit changed support, health or wetness. A wake signal is " +
-                        "missing. Please report this - leave 'Fix Idle Wear Visits' off until " +
-                        "it is understood.");
+                        "missing. Please report this - leave 'Verify Wear Sleep' on until it is " +
+                        "understood, so every visit runs the game's own way.");
                 }
 
                 // A ran visit refreshed the visuals and re-established wet-sleep eligibility.

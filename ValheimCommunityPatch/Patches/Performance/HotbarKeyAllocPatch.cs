@@ -4,19 +4,9 @@ using System.Reflection.Emit;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Hotbar Key Allocation: the hotbar keys are checked with cached key names instead of
-    // sixteen freshly formatted strings every frame.
-    //
-    // Player.Update checks hotbar slots 1-8 every frame the local player takes input, asking
-    // ZInput for "Hotbar{0}" and, unless that one is down, "Hotbar{0}Alt", each built with
-    // string.Format over a boxed int: up to sixteen strings and sixteen boxes per frame, all garbage.
-    //
-    // A transpiler replaces each `ldstr; ldloc; box int; call string.Format` with the slot number
-    // and a call that returns a cached name, built once with the same Format call so the strings
-    // are identical. A slot outside the cache falls back to formatting. The ldstr becomes a nop
-    // rather than being removed because it carries the loop head's label.
-    //
-    // Client: only the local player takes input.
+    // Fix Hotbar Key Allocation: Player.Update formats up to sixteen hotbar key names over boxed ints every frame.
+    // Transpiles Player.Update to swap each "Hotbar{0}" string.Format call for a lookup of names cached at startup.
+    // Taking input no longer makes garbage strings and boxes every frame.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(Player), "Update")]
     internal static class HotbarKeyAllocPatch {
@@ -58,7 +48,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     continue;
                 }
 
-                // Stack: [] -> [slot] -> [name]. Labels and blocks stay where they were.
+                // Stack: [] -> [slot] -> [name]. Labels and blocks stay where they were: the ldstr becomes a
+                // nop rather than being removed because it carries the loop head's label.
                 codes[i].opcode = OpCodes.Nop;
                 codes[i].operand = null;
                 codes[i + 2].opcode = OpCodes.Nop;

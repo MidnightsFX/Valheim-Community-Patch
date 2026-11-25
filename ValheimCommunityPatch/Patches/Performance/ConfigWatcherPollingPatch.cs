@@ -7,28 +7,9 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Config Watcher Polling: the file watchers mods use to reload their configs share one
-    // directory listing per poll instead of each re-reading the same folders every 750 ms.
-    //
-    // Unity's Mono has no native file watcher, so every FileSystemWatcher runs on
-    // System.IO.DefaultWatcher: one thread that sleeps 750 ms, then for each watcher lists its
-    // folders (recursively when subdirectories are included) and reads the timestamps of every file
-    // it tracks; one whose filter names a single file asks instead, in every folder it recurses
-    // into, whether that file exists. A modded install has a dozen or more watchers over the same
-    // BepInEx tree, so the same folders are listed and the same files checked that many times per
-    // cycle: a fifth of a core of background work and more garbage than anything else in the
-    // process, which the garbage collector's pauses on the main thread pay for.
-    //
-    // Transpilers on DoFiles and IterateAndModifyFilesData point the listing, existence and
-    // timestamp calls at shims that serve the answer taken earlier in the same cycle, so each folder
-    // and file is read once per cycle however many watchers cover it. Nothing older than 500 ms is ever served, so a
-    // watcher never sees a listing staler than one vanilla poll; a hook on UpdateDataAndDispatch
-    // notices the pass over the watcher table starting again and drops the cache, and applies the
-    // optional longer poll. The poll thread itself is not touched. Everything here runs on that
-    // thread, touches no Unity API, and never throws of its own: an exception there ends the thread
-    // and Mono never restarts it.
-    //
-    // Both: dedicated servers run the same watchers.
+    // Fix Config Watcher Polling: each mod's config file watcher re-lists the same BepInEx folders every 750 ms.
+    // Transpiles Mono's DefaultWatcher.DoFiles and IterateAndModifyFilesData to share each listing within a poll cycle.
+    // Config watchers cost a fraction of the background work and garbage, so the main thread pauses for GC less.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch]
@@ -49,17 +30,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
             PollInterval = ValConfig.BindClientConfig(
                 "Config Watcher Poll Interval",
                 VanillaPollSeconds,
-                "How often, in seconds, the file watchers that mods use to reload their configs re-read " +
-                "the folders they watch. 0.75 is the game's own rate. Raising it cuts background work " +
-                "and garbage collection pauses further; a config edit then takes up to this long to be " +
-                "noticed. Per-machine: this is not synced from the server.",
+                "Seconds between scans by the file watchers mods use to reload their configs; 0.75 is the " +
+                "game's own rate. Higher cuts background work further but a config edit takes up to this " +
+                "long to be noticed; per-machine, not synced from the server.",
                 VanillaPollSeconds,
                 10f);
         }
 
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ConfigWatcherPollingPatch));
 
-        // Mono's private watcher. Resolved by name, since a Unity update can ship another Mono.
+        // Unity's Mono has no native file watcher, so every FileSystemWatcher polls through this private
+        // one, on a single thread. Resolved by name, since a Unity update can ship another Mono.
         private static readonly Type WatcherType = AccessTools.TypeByName("System.IO.DefaultWatcher");
         private static readonly Type DataType = AccessTools.TypeByName("System.IO.DefaultWatcherData");
         private static readonly MethodInfo DoFilesMethod = WatcherType == null ? null : AccessTools.DeclaredMethod(WatcherType, "DoFiles");
@@ -151,7 +132,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // ---- shims: same signatures as the BCL calls they stand in for ---------------------------
-        // The BCL call is made exactly as vanilla would, and its exceptions propagate unchanged.
+        // The BCL call is made exactly as vanilla would, and its exceptions propagate unchanged. These run on
+        // the poll thread, so they touch no Unity API.
 
         private static bool DirectoryExists(string path) {
             if (ApiSwitch.Off) { return Directory.Exists(path); }
@@ -319,7 +301,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     last.Scanned = true;
                     last.Tick = now;
                 } catch (Exception) {
-                    // Bookkeeping only; never let anything of ours end the poll thread.
+                    // Bookkeeping only. An exception would end the poll thread, and Mono never restarts it.
                 }
 
                 return true;

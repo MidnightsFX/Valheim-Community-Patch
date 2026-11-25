@@ -6,30 +6,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Rare Drop Pity: gives every star level of a creature one shared rare drop countdown per
-    // item, and makes a new countdown pay out at the listed chance from the first kill.
-    //
-    // CharacterDrop.GenerateDropList counts kills down to a guaranteed drop in s_pseudoCounter, keyed
-    // on the item and its chance. A star doubles the chance of most rare drops, so each star level
-    // counts down on its own, and a level whose chance passes 0.3 gets a plain roll no countdown sees;
-    // dry streaks run past what any one countdown allows. A new countdown also starts at a full-length
-    // roll, so the first kills pay out at half the listed chance. Player.Load merges a character's
-    // countdowns into the static dictionary without clearing it, so browsing characters mixes their
-    // countdowns, and a new character saves whatever the dictionary holds.
-    //
-    // A transpiler moves the decision for drops with their own chance of at most 0.3 into Roll, and
-    // keeps every check ahead of it, such as the No Pseudo Drops world modifier. They count down under
-    // the key the game gives the unstarred drop, so saves carry over and an unstarred kill on a running
-    // countdown does exactly what vanilla does. A kill spends its star level's chance divided by the
-    // drop's own, and what it spends past zero carries into the next countdown. Above 0.3 a kill keeps
-    // its plain roll at the game's chance: a miss spends and a hit restarts, but only a roll drops
-    // there, so those levels stay at vanilla's rate. A new countdown starts at the lower of two rolls,
-    // where a running one would stand at a random moment. A prefix on FejdStartup.SetupCharacterPreview
-    // empties the dictionary before each preview loads.
-    //
-    // Both: whichever machine owns the creature rolls its drops, a dedicated server for one it
-    // simulates. Each machine keeps its own countdowns. Stands down for SaveYourLuckBruh, which
-    // rewrites the same countdowns.
+    // Vanilla counts rare drops down per star level and starts at half the listed chance, so dry streaks run long.
+    // Transpiles CharacterDrop.GenerateDropList to one countdown per item; a SetupCharacterPreview prefix clears them.
+    // Every star level counts toward one countdown per item, paying out at the listed chance from the first kill.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch]
@@ -53,11 +32,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 FixName,
                 true,
-                "Makes every star level of a creature count toward one rare drop countdown per item, " +
-                "instead of a separate countdown per star level, with a starred kill counting as many " +
-                "kills as its chance is higher. A new countdown pays out at the listed chance from the " +
-                "first kill, and browsing characters on the main menu no longer mixes their countdowns. " +
-                "Each machine keeps its own countdowns, so it applies to creatures that machine owns.");
+                "Makes every star level of a creature count toward one rare drop countdown per item that " +
+                "pays out at the listed chance from the first kill, and stops character browsing mixing countdowns.");
         }
 
         private static readonly FieldInfo ChanceField = AccessTools.Field(typeof(CharacterDrop.Drop), nameof(CharacterDrop.Drop.m_chance));
@@ -86,7 +62,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static bool OnSharedCountdown(CharacterDrop.Drop drop) =>
             Enabled.Value && drop.m_chance > 0f && drop.m_chance <= CountdownLimit;
 
-        // Replaces the limit in the game's "chance <= 0.3", so every star level reaches the checks behind it.
+        // Replaces the limit in the game's "chance <= 0.3", so every star level reaches the checks behind it,
+        // such as the No Pseudo Drops world modifier.
         private static float LimitFor(CharacterDrop.Drop drop) =>
             OnSharedCountdown(drop) ? float.PositiveInfinity : CountdownLimit;
 
@@ -101,18 +78,23 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static float Roll(CharacterDrop.Drop drop, float chance) {
             if (!_rollsThisDrop) { return Random.value; }
 
+            // The key the game gives the unstarred drop, so saves carry over and an unstarred kill on a
+            // running countdown does exactly what vanilla does.
             float ownChance = drop.m_chance;
             int key = drop.m_prefab.name.GetStableHashCode() + (int)(ownChance * 1000f);
             int range = (int)(1f / ownChance * 2f);
             int spent = WholeKills(chance / ownChance);
 
-            // The game's first kill on a new countdown does not spend, hence the added kill.
+            // The lower of two rolls, where a running countdown would stand at a random moment. The
+            // game's first kill on a new countdown does not spend, hence the added kill.
             if (!CharacterDrop.s_pseudoCounter.TryGetValue(key, out int left)) {
                 left = Mathf.Min(Random.Range(0, range), Random.Range(0, range)) + 1;
             }
 
             left -= spent;
 
+            // Only the game's plain roll drops here, so these star levels stay at vanilla's rate; a miss
+            // still spends and a hit restarts the countdown.
             if (chance > CountdownLimit) {
                 bool hit = Random.value <= chance;
                 CharacterDrop.s_pseudoCounter[key] = hit ? Random.Range(0, range + 2) : Mathf.Max(left, 1);
@@ -183,6 +165,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             return codes;
         }
 
+        // Player.Load merges a character's countdowns into this static dictionary without clearing it,
+        // so each preview would add to the last and a new character would save them.
         [HarmonyPrefix]
         [HarmonyPatch(typeof(FejdStartup), nameof(FejdStartup.SetupCharacterPreview))]
         private static void SetupCharacterPreviewPrefix() {

@@ -2,25 +2,9 @@ using System.Reflection;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Equipment Modifier Allocation: the local player's equipment modifiers are totalled through
-    // typed field reads instead of reflection that boxes every value, fifty times a second.
-    //
-    // Player.UpdateModifiers runs every physics step for the local player. For each of the eleven
-    // modifier fields of an item's shared data (movement, heat resistance, the stamina modifiers,
-    // max adrenaline) it reads all eight equipped slots with FieldInfo.GetValue, which boxes the
-    // float: up to 88 small allocations per step.
-    //
-    // A prefix computes the same totals through FieldRefAccess readers built from vanilla's own
-    // FieldInfo array, in vanilla's slot order (right, left, chest, legs, helmet, shoulder, utility,
-    // trinket) and with the same float additions, so the stored values are bit for bit vanilla's.
-    // Nothing is cached between steps: mods that change item stats while playing stay correct. It
-    // stands down to vanilla whenever the inputs are not what vanilla's loop expects (a field that
-    // is not an instance float, mismatched arrays, an equipped item without shared data, where
-    // vanilla throws as before), and for the session when another mod rewrites the method. It runs
-    // after other mods' prefixes and respects one that already replaced the call; the mods that add
-    // their own slots' modifiers do it in postfixes, which still run.
-    //
-    // Client: only the local player's modifiers are totalled.
+    // Fix Equipment Modifier Allocation: Player.UpdateModifiers boxes every modifier read, up to 88 a physics step.
+    // A prefix totals them with FieldRefAccess readers in vanilla's slot order, bit for bit vanilla's sums.
+    // The local player's equipment modifiers stop allocating fifty times a second, with identical results.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Player), "UpdateModifiers")]
@@ -40,7 +24,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static FieldInfo[] _readersFor;
         private static AccessTools.FieldRef<ItemDrop.ItemData.SharedData, float>[] _readers;
 
-        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches. Mods that add their own slots' modifiers
+        // do it in postfixes, which still run. Nothing is cached between steps, so mods that change item
+        // stats while playing stay correct.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         private static bool Prefix(Player __instance, bool __runOriginal) {

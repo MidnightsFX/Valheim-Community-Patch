@@ -4,26 +4,10 @@ using System.Reflection.Emit;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Active Status Effect Lookup: finds a character's active status effect by name from a map
-    // kept alongside its effect list, instead of walking the list.
-    //
-    // SEMan.GetStatusEffect checks the name hash against m_statusEffectsHashSet and, when it is
-    // there, walks m_statusEffects calling NameHash() on each effect until one matches. Every
-    // AddStatusEffect starts with this lookup, and the local player's update adds its environment
-    // effects (shelter, campfire, resting, encumbered) every frame.
-    //
-    // Hooks keep a map of name hash to effect per SEMan: created with the SEMan and dropped in its
-    // OnDestroy, filled from what AddStatusEffect returns, and emptied by RemoveStatusEffect when it
-    // removed something, RemoveAllStatusEffects and the expiry pass in Update, which a transpiler
-    // hooks just before it clears m_removeStatusEffects. Removal itself stays vanilla, which has to
-    // search the list to remove from it anyway. The SEMan last used and its map are kept aside, so
-    // most calls, which are the local player's, skip finding the map among every character's.
-    // A prefix answers GetStatusEffect after vanilla's own hash-set check, so an effect the set no
-    // longer holds is never returned, and a hash the map has not seen falls through to vanilla's
-    // walk. The map is trusted only when every hook attached; otherwise the fix stands down to
-    // vanilla for the session, as it does when another mod transpiles GetStatusEffect.
-    //
-    // Client: only a character's owner runs its effects. Provenance: contributed by searica (PR #22).
+    // Fix Active Status Effect Lookup: SEMan.GetStatusEffect walks the effect list, and every AddStatusEffect calls it.
+    // Hooks on add, remove, expiry and teardown keep a name-hash map, and a prefix answers GetStatusEffect from it.
+    // The player's per-frame environment effects cost one map read each instead of a list walk.
+    // Provenance: contributed by searica (PR #22).
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch]
@@ -112,6 +96,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- map maintenance ---------------------------------------------------------------
         // These run even while the fix is switched off, so the maps are right when it is back on.
+        // Removal itself stays vanilla's, which has to search the list to remove from it anyway.
 
         [HarmonyPostfix]
         [HarmonyPatch(typeof(SEMan), MethodType.Constructor, typeof(Character), typeof(ZNetView))]

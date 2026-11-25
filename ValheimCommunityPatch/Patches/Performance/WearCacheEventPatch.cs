@@ -3,31 +3,15 @@ using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Piece Event Stall: building pieces register for terrain-rebuild cache clears in a
-    // per-heightmap table instead of a C# event whose subscribe copies the list and whose
-    // unsubscribe scans it.
-    //
-    // WearNTear.Start subscribes ClearCachedSupport to its heightmap's
-    // m_clearConnectedWearNTearCache event and OnDestroy unsubscribes. A multicast delegate is an
-    // immutable array, so every += copies it and every -= scans and copies it. With tens of
-    // thousands of pieces on one heightmap that is O(n) per piece and O(n^2) for a batch, and
-    // crossing a zone boundary loads and unloads pieces in batches, with an allocation each.
-    //
-    // Start is replaced with a copy that registers the piece in a dictionary (heightmap id ->
-    // piece id -> piece) instead of subscribing, and the shared OnDestroy postfix unregisters it.
-    // Each heightmap's event gets one subscriber of this fix's own, added with its first piece,
-    // which calls ClearCachedSupport on the registered pieces, which is all the event ever did per
-    // piece. So whoever raises the event reaches them: vanilla's Regenerate after a full rebuild,
-    // and a mod that raises it again once a deferred rebuild has landed (ValheimOptimized does).
-    // The event stays functional for any other subscriber. A piece whose Start ran while the hooks
-    // were unhealthy is event-subscribed and served by vanilla, so the removal is unconditional.
-    //
-    // Both: a dedicated server runs WearNTear and Regenerate for its active area.
+    // Fix Piece Event Stall: each building piece joining or leaving its heightmap's cache-clear event copies the list.
+    // Prefixes WearNTear.Start to register pieces per heightmap, served by one event subscriber per heightmap.
+    // Big bases no longer stall at zone borders on event updates that grew with the square of their piece count.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(WearNTear))]
     internal static class WearCacheEventPatch {
-        // The registered pieces of one heightmap, and the one subscriber that serves them.
+        // The registered pieces of one heightmap, and the one subscriber that serves them. On the event rather
+        // than on Regenerate, so a mod that raises it after a deferred rebuild (ValheimOptimized) reaches them too.
         private sealed class PieceSet {
             public readonly Dictionary<int, WearNTear> Pieces = new Dictionary<int, WearNTear>();
             public readonly Action Forward;
@@ -80,6 +64,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
+        // Unconditional: a piece that subscribed to the event instead is not in the registry, and vanilla serves it.
         /// <summary>The destroy half, called from TeardownHooks' one WearNTear.OnDestroy postfix.</summary>
         internal static void OnPieceDestroyed(WearNTear piece, int pieceId) {
             Heightmap hmap = piece.m_connectedHeightMap;

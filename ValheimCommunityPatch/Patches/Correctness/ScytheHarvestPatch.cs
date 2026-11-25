@@ -5,19 +5,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Scythe Harvest: lets the scythe cut every plant the game marks as harvestable, such as
-    // Magecaps, Jotun Puffs, mushrooms, dandelions and thistles.
-    //
-    // Attack.DoMeleeAttack gathers the colliders a swing reaches and looks for a Pickable on the object
-    // each one sits on. Farmed crops keep their collider on that object, but these plants keep the
-    // Pickable on the root and their colliders on child objects, so the swing finds nothing even though
-    // m_harvestable is set.
-    //
-    // A transpiler replaces that one GetComponent<Pickable> with a lookup that falls back to the parent.
-    // Vanilla's harvestable and CanBePicked checks and its Interact call still run on what the lookup
-    // returns, so plants without the flag, such as berry bushes, stay out of reach.
-    //
-    // Client: the harvest only runs for the local player's swing.
+    // A melee swing looks for a Pickable on each hit collider's own object, so it misses plants with child colliders.
+    // Transpiles Attack.DoMeleeAttack's GetComponent<Pickable> into a lookup that falls back to the parent object.
+    // The scythe cuts every plant marked harvestable, such as Magecaps, Jotun Puffs, mushrooms and thistles.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Attack))]
@@ -30,10 +20,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Scythe Harvest",
                 true,
-                "Lets the scythe cut every plant the game marks as harvestable, including Magecaps, Jotun " +
-                "Puffs, mushrooms, dandelions, thistles, fiddleheads and smoke puffs. Vanilla looks for the " +
-                "plant on the object its collider sits on, and these keep their colliders on child objects, " +
-                "so a swing missed them. Changing this requires a game restart.");
+                "Lets the scythe cut every plant the game marks as harvestable, such as Magecaps, Jotun Puffs, " +
+                "mushrooms, dandelions and thistles; turning it on needs a game restart.");
         }
 
         private static readonly MethodInfo GetPickableMethod =
@@ -45,6 +33,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly HashSet<Pickable> _cutThisFrame = new HashSet<Pickable>();
         private static int _cutFrame = -1;
 
+        // Vanilla's harvestable and CanBePicked checks still run on the result, so unflagged plants such as
+        // berry bushes stay out of reach.
         private static Pickable FindPickable(GameObject hit) {
             Pickable own = hit.GetComponent<Pickable>();
             if (own != null || !Enabled.Value) { return own; }

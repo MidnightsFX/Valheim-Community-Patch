@@ -7,16 +7,9 @@ using UnityEngine;
 using UnityEngine.Profiling;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // ZDO memory stats: the 'vcp_zdomem' server console command and the 'Log ZDO Memory Stats'
-    // periodic line, reporting the sizes the server memory fixes act on.
-    //
-    // One line: connected peers, the sum and maximum of the per-peer sent-object tables, the
-    // dead-object record count, live ZDO and ZDO pool counts, the per-type field table counts and
-    // field table pool depths, what each memory fix has evicted or dropped so far, and the managed
-    // heap. Every number is a Count or a cached counter, so it costs nothing to leave on.
-    //
-    // Server: the command is server-only and an admin can run it remotely; the periodic line only
-    // writes on the host. Diagnostic; nothing here changes behaviour.
+    // The 'vcp_zdomem' server console command and the 'Log ZDO Memory Stats' periodic line, reporting the
+    // sizes of the server's ZDO bookkeeping that the server memory fixes act on. Every number is a Count
+    // or a cached counter, so it costs nothing to leave on; nothing here changes behaviour.
     [PatchSide(Side.Server)]
     internal static class ZdoMemoryStats {
         internal static ConfigEntry<bool> LogStats;
@@ -29,9 +22,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Log ZDO Memory Stats",
                 false,
-                "Diagnostic. Writes the line the '" + Command + "' console command prints to the log " +
-                "every 'ZDO Memory Stats Interval' seconds on the server, so the effect of the " +
-                "server memory fixes can be followed over an uptime.",
+                "Diagnostic. Logs the '" + Command + "' line every 'ZDO Memory Stats Interval' seconds on " +
+                "the server, to follow the server memory fixes over an uptime.",
                 advanced: true);
 
             LogInterval = ValConfig.BindServerConfig(

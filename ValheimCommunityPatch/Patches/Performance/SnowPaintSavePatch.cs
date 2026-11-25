@@ -6,49 +6,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Snow Paint Saves: Deep North snow paint saves a zone's terrain at most once every few
-    // seconds, and only refreshes the ground and grass when the change could be seen.
-    //
-    // Every burning fire_pit, hearth and bonfire melts the snow around it five times a second
-    // (Fireplace.UpdateSnowMelt, fire_pit_iron every 2.5 s), and footsteps and shovels paint snow
-    // the same way. Each operation ends in TerrainComp.DoOperation, which saves the zone's whole
-    // terrain, queues a rebuild of its paint and resets the grass. Save has a guard for paint that
-    // did not change, ComputePaintMaskHash, but that hash is an exact sum of floats and snow paint
-    // never holds still: these operations set m_pointMultiplicationFactor, so the depth fades by a
-    // fraction of itself each time and does not reach zero. Paint read back from an 8-bit texture
-    // would stop it, but getMask only reads the texture when no rebuild is pending, so as soon as
-    // two operations land on a zone in one frame the second reads the raw float and the value moves
-    // again. A base with 14 hearths on a player's world measured about 78 full saves a second, each
-    // writing and gzipping a whole zone, for over 40% of the main thread. Refilling the snow, as
-    // Deep North Snowfall does on waking, starts it all again. Other peers in range
-    // reload the zone and rebuild it in full, collision included, as those saves reach them.
-    //
-    // A transpiler on DoOperation routes its three calls here, for snow paint only:
-    //  - The paint is compared at 8-bit precision, the precision the paint texture and everything
-    //    that reads it has. When no step changed anywhere in the zone, nothing can look different,
-    //    so the save, the rebuild and the grass reset are all skipped. Skipping the rebuild also
-    //    leaves getMask reading the texture, so the fade settles instead of creeping on for hours.
-    //    On that base, snow around the fires ended within a few steps of vanilla's.
-    //  - A change that can be seen refreshes the ground at once, so the player sees no delay. The
-    //    first save in a quiet zone runs immediately and later ones wait for 'Snow Paint Save
-    //    Interval'. The paint waits in memory, which is what the zone draws from anyway.
-    //
-    // Nothing is left unsaved: a waiting zone saves when its interval is up, at most one a frame so
-    // many zones coming due cannot stack into one spike, and all of them save before a world save.
-    // A compiler being unloaded saves on the way out. By then ZNetScene has already reset its view,
-    // so the ZDO recorded when the save was put off is lent back for that one call, after checking
-    // it is still this zone's and still owned here. What can be lost is at most one interval of
-    // paint on a peer that disconnects or gives up the zone first, which a fire simply melts again.
-    // A dedicated server's world save only holds what clients have sent it, so it can be up to one
-    // interval behind them: the hook runs on the saving process, and clients are not told to flush.
-    //
-    // Only paint-only operations with m_pointMultiplicationFactor above zero take this path: in the
-    // game that is exactly the snow_fire, snow_shovel, snow_tree and snow_walk prefabs. The hoe,
-    // cultivator, roads, level and raise operations, and any other mod's, keep vanilla's behavior.
-    //
-    // Both: whichever peer owns a zone's terrain compiler runs DoOperation, a host, a dedicated
-    // server or a client, and it changes nothing peers need to agree on. Other peers see melting a
-    // few seconds later than they would have.
+    // Snow paint never settles under Save's exact-float check, so every melt tick saves and resends a whole zone.
+    // Transpiles TerrainComp.DoOperation so snow paint saves only on an 8-bit change, at most once per save interval.
+    // Fires and footsteps in snow stop flooding the main thread and the network with whole-zone saves.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(TerrainComp))]
@@ -65,18 +25,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 FixName,
                 true,
-                "Limits how often Deep North snow saves the ground. Every burning fire pit, hearth and " +
-                "bonfire melts the snow around it five times a second, and in vanilla each of those can " +
-                "save the whole zone, which with a dozen fires in a base can take the game down to a few " +
-                "frames a second. With this on, snow only saves and refreshes the ground when the change " +
-                "could be seen, and saves a zone at most once per 'Snow Paint Save Interval'.");
+                "Saves and refreshes the ground for Deep North snow only when the change could be seen, at most " +
+                "once per 'Snow Paint Save Interval', so fires in a base no longer drag the game down.");
 
             SaveInterval = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Snow Paint Save Interval",
                 5f,
-                "With Fix Snow Paint Saves on, the most often snow saves a zone's terrain, in seconds. " +
-                "Other players see melting and footprints up to this much later. 0 saves every visible change.",
+                "Seconds between snow saves of one zone's terrain with Fix Snow Paint Saves on; other players see " +
+                "melting up to this much later. 0 saves every visible change.",
                 advanced: true, valMin: 0f, valMax: 60f);
         }
 
@@ -152,12 +109,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static void LimitedSave(TerrainComp comp, bool paintOnly, TerrainOp.Settings modifier) {
             _nothingVisible = false;
 
+            // In the game only snow_fire, snow_shovel, snow_tree and snow_walk are paint-only with a
+            // multiplication factor; hoe, cultivator, roads, level, raise and other mods' ops stay vanilla.
             // Turned off, a zone already waiting still saves on its turn in FrameHook.
             if (!paintOnly || modifier.m_pointMultiplicationFactor <= 0f || !IsOn || !Hooks.Healthy) {
                 comp.Save(paintOnly);
                 return;
             }
 
+            // The factor fades the paint by a fraction of itself each time, so it never holds still
+            // to vanilla's exact float hash. Nothing 8-bit changed means nothing can look different;
+            // skipping the rebuild too keeps getMask reading the texture, so the fade settles.
             Tile tile = TileFor(comp);
             int seen = VisibleHash(comp);
             if (tile.HasSeen && seen == tile.Seen) {
@@ -168,6 +130,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             tile.HasSeen = true;
             tile.Seen = seen;
 
+            // The paint waits in memory, which is what the zone draws from anyway. At most one interval
+            // can be lost, on a peer that disconnects or gives up the zone first; a fire melts it again.
             float now = Time.realtimeSinceStartup;
             if (now >= tile.NextSave) {
                 SaveTile(tile, now);
@@ -253,7 +217,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         [HarmonyPatch(typeof(ZDOMan))]
         internal static class WorldSaveHook {
-            // On the server, before the world's ZDOs are copied for the save thread.
+            // On the server, before the world's ZDOs are copied for the save thread. Clients are not
+            // told to flush, so a dedicated server's save can be up to one interval behind them.
             [HarmonyPrefix]
             [HarmonyPatch(nameof(ZDOMan.PrepareSave))]
             private static void PrepareSavePrefix() {
@@ -288,6 +253,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     return;
                 }
 
+                // ZNetScene has already reset the view, so the ZDO is lent back for this one save.
                 view.m_zdo = zdo;
                 __instance.Save(true);
                 view.m_zdo = null;

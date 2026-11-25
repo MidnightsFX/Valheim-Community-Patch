@@ -5,31 +5,9 @@ using SoftReferenceableAssets;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Location Room Preload: a location about to be generated has its prefab and its dungeon's
-    // room prefabs loaded in the background well before it is needed, and a zone the player is
-    // about to enter never waits long for them.
-    //
-    // Before generating a zone that holds an unplaced location, ZoneSystem.SpawnZone asks
-    // PokeCanSpawnLocation whether the location is loaded, and the whole zone, ground included,
-    // waits until it is; for a first spawn that load covers every room prefab of the location's
-    // dungeon too. Three things go wrong. The load only starts when generation first reaches the
-    // zone, and the ring generated ahead of the player is skipped on every tick a nearby zone is
-    // installed, so while travelling the load starts as the zone comes into view and the ground
-    // stays missing until it finishes. The load record is kept per prefab, and an existing
-    // location's proxy asks too, for the location prefab alone; when that record is the one
-    // found it reports loaded, and DungeonGenerator.Generate then loads every room prefab
-    // synchronously in one frame, well over a second for the Deep North halls.
-    //
-    // A prefix on ZoneSystem.UpdatePrefabLifetimes asks PokeCanSpawnLocation, as a first spawn,
-    // for every unplaced location in the generation ring of the host and each player, so the loads
-    // start as zones enter the ring. A postfix on PokeCanSpawnLocation completes a record a proxy
-    // made, starting the room loads it skipped through the record's own fields and vanilla's own
-    // callback so vanilla's release frees them, and answers "not yet" until they are in. For a
-    // zone the player is about to enter (asked from PokeLocalZone) it stops waiting after 'Location
-    // Load Wait' and lets generation load what is missing at once: a hitch rather than a hole in
-    // the ground. Proxies still see the location prefab as loaded.
-    //
-    // Server: only the world owner generates zones.
+    // Fix Location Room Preload: a zone's ground waits for its location and rooms to load, a load that starts too late.
+    // Prefixes ZoneSystem.UpdatePrefabLifetimes to preload the generation ring and postfixes PokeCanSpawnLocation.
+    // Travelling no longer shows missing ground, and a first-time dungeon no longer loads all its rooms in one frame.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZoneSystem), "PokeCanSpawnLocation")]
@@ -41,14 +19,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Location Load Wait",
                 1f,
-                "Seconds a zone you are about to enter may wait for its location and dungeon rooms to " +
-                "finish loading in the background. While it waits, its ground is missing; after this, " +
-                "what is still loading loads at once, at the cost of a hitch.",
+                "Seconds a zone you are about to enter waits, with its ground missing, for its location and dungeon " +
+                "rooms to load in the background. After that the rest loads at once, at the cost of a hitch; 0 never waits.",
                 advanced: true,
                 valMin: 0f,
                 valMax: 10f);
         }
 
+        // Answers "not yet" until a first spawn's rooms are in. Proxies still see the location prefab as loaded.
         [HarmonyPostfix]
         private static void Postfix(ZoneSystem __instance, ZoneSystem.ZoneLocation location, bool isFirstSpawn, ref bool __result) {
             if (ApiSwitch.Off || !isFirstSpawn || location == null) { return; }
@@ -73,6 +51,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return null;
         }
 
+        // The load record is kept per prefab, and a nearby copy's proxy loads the prefab alone; that record then reports
+        // loaded and Generate loads every room in one frame. This starts the room loads through the record's own fields
+        // and vanilla's callback, so vanilla's release frees them.
         private static void Complete(ZoneSystem.LocationPrefabLoadData record, ZoneSystem.ZoneLocation location) {
             record.m_isFirstSpawn = true;
 
@@ -117,6 +98,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             private static void Finalizer() => _localDemand--;
         }
 
+        // Past 'Location Load Wait', generation loads what is missing at once: a hitch rather than a hole in the ground.
         private static bool WaitedEnough(ZoneSystem.ZoneLocation location, bool loaded) {
             AssetID id = location.m_prefab.m_assetID;
             if (loaded) {
@@ -153,13 +135,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(LocationRoomPreloadPatch));
 
-        // Runs once per zone tick, after this tick's generation and before lifetimes count down.
+        // Runs once per zone tick, after this tick's generation and before lifetimes count down. Vanilla starts a
+        // load only when generation reaches the zone, and skips the ring ahead while nearby zones install.
         [HarmonyPatch(typeof(ZoneSystem), "UpdatePrefabLifetimes")]
         internal static class LoadAheadHook {
             [HarmonyPrefix]
             private static void Prefix(ZoneSystem __instance) {
                 if (ApiSwitch.Off) { return; }
 
+                // Only the world owner generates zones.
                 ZNet znet = ZNet.instance;
                 if (znet == null || !znet.IsServer()) { return; }
 

@@ -1,19 +1,9 @@
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Area Damage Log Spam: stops area damage objects that do not use contact damage writing a warning
-    // to the game log for everything that touches them.
-    //
-    // Aoe.CauseTriggerDamage runs from OnCollisionEnter, OnCollisionStay, OnTriggerEnter and OnTriggerStay.
-    // With m_useTriggers off it does nothing but warn, once per contact per physics step. Most such objects
-    // last seconds. The Pufferfish keeps one on its model for good, with a solid collider, and on an item
-    // stand there is no rigidbody above it to take the physics messages instead, so a player or a pile of
-    // dropped items touching the fish writes the warning continuously.
-    //
-    // A prefix skips the method when m_useTriggers is off, which skips only the warning and the string built
-    // for it. The line is still written with EnableDebugMode on.
-    //
-    // Both: any machine simulating the object can log it.
+    // An Aoe without trigger damage warns per contact every physics step; a Pufferfish on an item stand never stops.
+    // Prefixes Aoe.CauseTriggerDamage to skip it when m_useTriggers is off, where vanilla's body is only that warning.
+    // The game log stays clean; the line still goes to debug logging with EnableDebugMode on.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(Aoe))]
@@ -26,10 +16,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Area Damage Log Spam",
                 true,
-                "Stops area damage objects that do not use contact damage writing a warning to the game log " +
-                "for everything touching them, every physics step. A Pufferfish on an item stand kept this " +
-                "going for as long as a player or dropped items touched it. The line is still visible with " +
-                "EnableDebugMode on.");
+                "Stops area damage objects without contact damage, such as a Pufferfish on an item stand, " +
+                "flooding the game log with a warning for everything touching them.");
         }
 
         [HarmonyPrefix]

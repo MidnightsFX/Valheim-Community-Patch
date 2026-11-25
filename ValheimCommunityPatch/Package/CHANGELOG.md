@@ -1,5 +1,14 @@
 # Changelog
 
+**0.47.0**
+```
+- Joining a server reuses the world map from your last visit instead of building it again
+- Only players who hit a boss get credit for killing it
+- Improves compatibility with AVX, FarLands and SteadyFrame
+- Minor optimizations to reduce slow frames
+- Adds an option that stops the one-time freeze when a location loads for the first time
+```
+
 **0.46.0**
 ```
 - Crashfix: Itemstands placed before 1.0 with a cape no longer crash the game

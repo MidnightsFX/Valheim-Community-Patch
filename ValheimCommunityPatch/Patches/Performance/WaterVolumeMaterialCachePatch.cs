@@ -3,24 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Water Material Lookup: each water tile caches its surface material instead of fetching
-    // it from the engine every frame.
-    //
-    // WaterVolume.UpdateMaterials runs for every loaded water volume every frame and is one line,
-    // m_waterSurface.material.SetFloat(...). Renderer.material is a native call that returns the
-    // same instance until something assigns the renderer a new material.
-    //
-    // A prefix caches the material per volume on first use and writes the water time through the
-    // cache. Every 30 frames it checks that the surface still shows the cached material, and
-    // re-fetches it if another mod has swapped it (Seasonality freezes and thaws water this way);
-    // otherwise the old material would get the wave time and the water on screen would stand still
-    // while the waves boats ride go on. A swapped-in material also never had the tile's depth and
-    // wind written to it by SetupMaterial, which runs once when the tile starts, so it would be
-    // colored differently from tiles that loaded with it: the volume's SetupMaterial is run again
-    // on it, as a reload would. The entry is dropped when the volume disables, and a destroyed
-    // material is re-fetched once.
-    //
-    // Client: material state is rendering state.
+    // Fix Water Material Lookup: WaterVolume.UpdateMaterials fetches each tile's material natively every frame.
+    // A prefix caches it per volume and checks every 30 frames for a swapped material, re-running SetupMaterial on it.
+    // Water costs less each frame, and another mod's frozen or thawed water still animates and colors correctly.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(WaterVolume))]
@@ -33,6 +18,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // which do not run Start again; dropped when the volume is destroyed.
         private static readonly Dictionary<WaterVolume, Material> SetUp = new Dictionary<WaterVolume, Material>();
 
+        // Seasonality swaps the material to freeze and thaw water; the old one would get the wave time
+        // and the water on screen would stand still while the waves boats ride go on.
         private const int CheckEveryFrames = 30;
 
         // The game sets s_waterTime once per frame before the UpdateMaterials loop, so a new value
@@ -65,7 +52,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
                 Cache[__instance] = material;
 
-                // Not before the volume's first SetupMaterial: Start runs it on this material.
+                // A swapped-in material never had the tile's depth and wind written by SetupMaterial,
+                // which runs once at Start, so it is run again, as a reload would. Not before the
+                // volume's first SetupMaterial: Start runs it on this material.
                 if (SetUp.TryGetValue(__instance, out Material setUp) && setUp != material) {
                     __instance.SetupMaterial();
                 }

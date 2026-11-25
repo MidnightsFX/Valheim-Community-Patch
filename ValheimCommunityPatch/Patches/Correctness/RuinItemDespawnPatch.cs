@@ -4,21 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Ruin Item Despawn: lets dropped items despawn in Ashlands ruins, as they do anywhere else
-    // outside a player's base.
-    //
-    // A dropped item despawns after an hour unless ItemDrop.IsInsideBase finds a player base area at its
-    // position. CharredRuins, CharredTowerRuins and the rooms of AshlandRuins carry such an area of their
-    // own, with a radius of up to 40 m, as a plain child of the location or room. It keeps spawners out of
-    // the ruin, and it also keeps everything dropped there in the world for good, so loot piles up.
-    //
-    // A transpiler points IsInsideBase's one EffectArea.IsPointInsideArea call at a lookup that passes over
-    // areas sitting under a Location or Room. Pieces are spawned as objects of their own, so a campfire or
-    // workbench never sits under one and a base built in a ruin still counts, even where the ruin's area is
-    // found first. Spawning makes its own lookups and is unchanged, and so are the fire pits and guard stones
-    // of traders and Dvergr outposts, which are pieces.
-    //
-    // Both: runs on whichever side owns the item.
+    // Ashlands ruins carry their own player-base area, so items dropped in them never despawn and loot piles up.
+    // Transpiles ItemDrop.IsInsideBase's EffectArea.IsPointInsideArea call to skip areas under a Location or Room.
+    // Dropped items despawn in ruins as anywhere else, while a base a player built in a ruin still keeps its items.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ItemDrop))]
@@ -31,15 +19,16 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Ruin Item Despawn",
                 true,
-                "Lets dropped items despawn in Ashlands ruins as they do anywhere else outside a player's " +
-                "base. Several ruins count as a player base themselves, so everything dropped in them stayed " +
-                "in the world for good. Items near a base a player built in a ruin still stay. Changing this " +
-                "requires a game restart.");
+                "Lets dropped items despawn in Ashlands ruins as they do anywhere else, while items near a base " +
+                "built in a ruin still stay; turning it on needs a game restart.");
         }
 
         private static readonly MethodInfo LookupMethod = AccessTools.Method(typeof(EffectArea), nameof(EffectArea.IsPointInsideArea));
         private static readonly MethodInfo FindBaseAreaMethod = AccessTools.Method(typeof(RuinItemDespawnPatch), nameof(FindBaseArea));
 
+        // CharredRuins, CharredTowerRuins and AshlandRuins' rooms hold the area as a plain child, to keep spawners
+        // out; spawning makes its own lookups and still sees it. Pieces, traders' and Dvergr outposts' fire pits and
+        // guard stones included, are objects of their own and never sit under one, so a base in a ruin still counts.
         private static bool IsPartOfRuin(EffectArea area) =>
             area.GetComponentInParent<Location>() != null || area.GetComponentInParent<Room>() != null;
 

@@ -6,37 +6,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Fix Terrain Seams: terrain lighting normals are computed across zone boundaries, so the
-    // ground on either side of a 64 m border is shaded the same.
-    //
-    // Heightmap.RebuildRenderMesh uses Mesh.RecalculateNormals, which averages only the triangles
-    // in that zone's own mesh. A boundary vertex exists in both neighbouring meshes and gets a
-    // different normal from each side, which draws as a hard crease along every zone border. The
-    // geometry itself already lines up; only the shading disagrees.
-    //
-    // Rebuilt maps are collected in a dirty set, and one pass at the end of MonoUpdaters.LateUpdate
-    // processes each affected map (the rebuilt ones plus their four neighbours) once per frame. For
-    // each map with all four neighbours loaded, normals are computed analytically by central
-    // difference over the height data, reading across the boundary into the neighbour where the
-    // sample falls outside the map; a map missing a neighbour keeps vanilla's normals and is redone
-    // when that neighbour loads. Tangents are computed in the same loop (the mesh has a planar UV
-    // layout, so the tangent is +X projected against the normal, w = -1), and a transpiler skips
-    // vanilla's RecalculateTangents whenever this pass will supply them later in the frame.
-    //
-    // A neighbour that exists but has no height data yet counts as not loaded. Vanilla builds a map
-    // inside its OnEnable, but a mod can put that off to a later frame (Fires Ghetto Networking's
-    // Spread Terrain Rebuilds does), and reading the empty map threw and ended the pass, leaving the
-    // maps still to come without the tangents they had deferred to it. When the build does run, its
-    // RebuildRenderMesh marks the map dirty, which redoes the maps around it.
-    //
-    // Stands down when another mod can skip RebuildRenderMesh with a prefix, because that mod builds
-    // the mesh later, where this pass cannot see it, and writes its own normals over these.
-    // ValheimOptimized builds all but a zone's first mesh near the player or behind a loading screen
-    // on its own threads, so this pass shaded the outdated mesh and the seam came and went as zones
-    // and their neighbours rebuilt.
-    //
-    // Client: normals are shading only. The target method runs on a dedicated server too, for the
-    // collider, so a runtime IsDedicated guard backs the patch-time gate.
+    // RecalculateNormals sees one zone's mesh only, so border vertices shade differently per side, creasing the grid.
+    // Postfixes Heightmap.RebuildRenderMesh and MonoUpdaters.LateUpdate to compute normals across borders once a frame.
+    // Ground on either side of a 64 m zone border shades the same, and distant tiles rebuild with cheaper tangents.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
@@ -52,18 +24,14 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 FixName,
                 true,
-                "Computes terrain lighting normals across zone boundaries instead of per zone. Vanilla " +
-                "shades the same ground differently on each side of a 64m zone border, which shows up as " +
-                "a hard crease running through flat terrain - most noticeable in the Plains and Meadows.");
+                "Removes the hard lighting crease along zone borders, most visible on flat Plains and Meadows ground.");
 
             VerifyTangents = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Terrain Tangents",
                 false,
-                "Diagnostic. Uses Unity's tangent recalculation instead of the analytic tangents the " +
-                "seam fix normally computes, compares the two on a sample of vertices, and logs any " +
-                "disagreement. Costs the mesh pass the analytic version exists to avoid, so leave it " +
-                "off unless terrain lighting looks wrong.",
+                "Diagnostic. Uses Unity's terrain tangents instead of the seam fix's own and logs where the two " +
+                "disagree; costs the mesh work the fix saves.",
                 advanced: true);
         }
 
@@ -71,6 +39,12 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         private static readonly List<Vector3> NormalBuffer = new List<Vector3>();
         private static readonly List<Vector4> TangentBuffer = new List<Vector4>();
         private static readonly List<Vector4> VerifyBuffer = new List<Vector4>();
+        private static Vector3[] s_normals = new Vector3[0];
+        private static Vector4[] s_tangents = new Vector4[0];
+
+        // World heights of a map and a one-vertex rim taken from its neighbours, (stride + 2) square.
+        private static float[] s_grid = new float[0];
+        private static float[] s_heights = new float[0];
 
         // Maps whose render mesh was rebuilt this frame, processed by the LateUpdate hook.
         private static readonly HashSet<Heightmap> Dirty = new HashSet<Heightmap>();
@@ -82,7 +56,9 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         private static readonly MethodInfo TangentsOrDeferMethod =
             AccessTools.Method(typeof(SeamlessNormalsPatch), nameof(TangentsOrDefer));
 
-        // Transpilers do not count: the mesh is still built inside the method, and this pass runs after it.
+        // A mod that can skip RebuildRenderMesh with a prefix builds the mesh later, out of this pass's sight, and
+        // writes its own normals over these (ValheimOptimized does, on its own threads). Transpilers do not count:
+        // the mesh is still built inside the method, and this pass runs after it.
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
             typeof(SeamlessNormalsPatch),
             AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildRenderMesh"),
@@ -123,15 +99,27 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             return codes;
         }
 
-        // Deferring is only legal when the dirty pass is guaranteed to supply tangents afterwards.
+        // Deferring is only legal when the dirty pass is guaranteed to supply tangents afterwards. A
+        // distant-terrain tile has no seam pass, but the same formula from its fresh normals replaces
+        // Unity's tangent pass, which was two thirds of rebuilding one (1.4 of 2.1 ms).
         private static void TangentsOrDefer(Mesh mesh, Heightmap hmap) {
             if (WillProcess(hmap)) { return; }
+
+            if (hmap.IsDistantLod && WillShadeDistant()) {
+                ApplyFallbackTangents(hmap);
+                return;
+            }
 
             mesh.RecalculateTangents();
         }
 
+        private static bool WillShadeDistant() {
+            return Enabled != null && Enabled.Value && !RunMode.IsDedicated && !Takeover.TakenOver;
+        }
+
         // MonoUpdaters hosts the pass and does not exist in the menu scene. The takeover check comes
-        // last so it is first asked in a world, after every mod has patched.
+        // last so it is first asked in a world, after every mod has patched. RebuildRenderMesh also
+        // runs on a dedicated server, for the collider, hence the IsDedicated check.
         private static bool WillProcess(Heightmap hmap) {
             return Enabled != null && Enabled.Value
                 && !RunMode.IsDedicated
@@ -214,13 +202,13 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             private static void Postfix(Heightmap __instance) => Dirty.Remove(__instance);
         }
 
-        // T = normalize((1,0,0) - N.x * N), w = -1. The one place the formula lives.
+        // T = normalize(N.y, -N.x, 0), w = -1: the surface's slope along +X. The mesh's u coordinate runs
+        // along X, so this is the direction Unity's RecalculateTangents derives, and it is already at right
+        // angles to the normal. Measured against Unity's on loaded tiles: mean dot 0.99999. The ApplyNormals
+        // loop writes it out inline with the same operations.
         private static Vector4 AnalyticTangent(Vector3 normal) {
-            float tx = 1f - normal.x * normal.x;
-            float ty = -normal.x * normal.y;
-            float tz = -normal.x * normal.z;
-            float inv = 1f / Mathf.Sqrt(tx * tx + ty * ty + tz * tz);
-            return new Vector4(tx * inv, ty * inv, tz * inv, -1f);
+            float inv = 1f / Mathf.Sqrt(normal.y * normal.y + normal.x * normal.x);
+            return new Vector4(normal.y * inv, -normal.x * inv, 0f, -1f);
         }
 
         // One map that cannot be read must not end the pass: every rebuilt map after it has deferred
@@ -251,45 +239,90 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             Heightmap north = FindNeighbour(hmap, 0f, zoneSize);
 
             if (west == null || east == null || south == null || north == null) { return false; }
+            if (hmap.m_heights.Count != stride * stride) { return false; }
 
-            // Heights are relative to each heightmap's own transform, so cross-map samples need
-            // the world offsets; one transform read per map rather than one per sample.
-            float selfY = hmap.transform.position.y;
-            float westY = west.transform.position.y;
-            float eastY = east.transform.position.y;
-            float southY = south.transform.position.y;
-            float northY = north.transform.position.y;
+            int padded = stride + 2;
+            FillGrid(hmap, west, east, south, north, width, stride, padded);
 
             float invStep = 1f / (2f * hmap.m_scale);
             bool analyticTangents = VerifyTangents == null || !VerifyTangents.Value;
 
-            NormalBuffer.Clear();
-            TangentBuffer.Clear();
+            int count = stride * stride;
+            if (s_normals.Length != count) {
+                s_normals = new Vector3[count];
+                s_tangents = new Vector4[count];
+            }
+
+            // Mono's JIT inlines neither Mathf.Sqrt nor AnalyticTangent, so both are written out here with
+            // the same float operations (Mathf.Sqrt is (float)Math.Sqrt). The (float) casts on the sums are
+            // needed: without them Mono adds in double precision on the way to Math.Sqrt, which changed the
+            // last bit of one normal in eight. Measured per 65x65 tile: 0.52 ms for the old per-sample
+            // version, 0.31 with Mathf.Sqrt, 0.23 like this.
+            float[] grid = s_grid;
+            Vector3[] normals = s_normals;
+            Vector4[] tangents = s_tangents;
             for (int y = 0; y < stride; y++) {
+                int row = (y + 1) * padded + 1;
+                int o = y * stride;
                 for (int x = 0; x < stride; x++) {
-                    float dx = (Sample(hmap, x + 1, y, west, east, south, north, selfY, westY, eastY, southY, northY)
-                              - Sample(hmap, x - 1, y, west, east, south, north, selfY, westY, eastY, southY, northY)) * invStep;
-                    float dz = (Sample(hmap, x, y + 1, west, east, south, north, selfY, westY, eastY, southY, northY)
-                              - Sample(hmap, x, y - 1, west, east, south, north, selfY, westY, eastY, southY, northY)) * invStep;
+                    int c = row + x;
+                    float dx = (grid[c + 1] - grid[c - 1]) * invStep;
+                    float dz = (grid[c + padded] - grid[c - padded]) * invStep;
 
-                    float inv = 1f / Mathf.Sqrt(dx * dx + 1f + dz * dz);
-                    Vector3 normal = new Vector3(-dx * inv, inv, -dz * inv);
-                    NormalBuffer.Add(normal);
+                    float inv = 1f / (float)System.Math.Sqrt((float)(dx * dx + 1f + dz * dz));
+                    float nx = -dx * inv;
+                    float nz = -dz * inv;
+                    normals[o + x] = new Vector3(nx, inv, nz);
 
-                    if (analyticTangents) { TangentBuffer.Add(AnalyticTangent(normal)); }
+                    if (analyticTangents) {
+                        float tinv = 1f / (float)System.Math.Sqrt((float)(inv * inv + nx * nx));
+                        tangents[o + x] = new Vector4(inv * tinv, -nx * tinv, 0f, -1f);
+                    }
                 }
             }
 
-            mesh.SetNormals(NormalBuffer);
+            mesh.SetNormals(normals);
 
             if (analyticTangents) {
-                mesh.SetTangents(TangentBuffer);
+                mesh.SetTangents(tangents);
             } else {
                 mesh.RecalculateTangents();
                 CompareTangents(mesh);
             }
 
             return true;
+        }
+
+        // Heights are relative to each heightmap's own transform, so every value gets its map's world
+        // offset. Adjacent heightmaps share their boundary vertices: this map's vertex `width` is the east
+        // neighbour's vertex 0, so one step past our edge is the neighbour's vertex 1 and one step before
+        // it is the west neighbour's vertex width-1. A central difference never asks for a diagonal, so
+        // the rim's corners stay unused.
+        private static void FillGrid(
+            Heightmap hmap, Heightmap west, Heightmap east, Heightmap south, Heightmap north,
+            int width, int stride, int padded) {
+            if (s_grid.Length != padded * padded) { s_grid = new float[padded * padded]; }
+            if (s_heights.Length != stride * stride) { s_heights = new float[stride * stride]; }
+
+            float selfY = hmap.transform.position.y;
+            float westY = west.transform.position.y;
+            float eastY = east.transform.position.y;
+            float southY = south.transform.position.y;
+            float northY = north.transform.position.y;
+
+            hmap.m_heights.CopyTo(s_heights);
+            for (int y = 0; y < stride; y++) {
+                int row = (y + 1) * padded;
+                for (int x = 0; x < stride; x++) { s_grid[row + x + 1] = s_heights[y * stride + x] + selfY; }
+
+                s_grid[row] = west.GetHeight(width - 1, y) + westY;
+                s_grid[row + stride + 1] = east.GetHeight(1, y) + eastY;
+            }
+
+            for (int x = 0; x < stride; x++) {
+                s_grid[x + 1] = south.GetHeight(x, width - 1) + southY;
+                s_grid[(stride + 1) * padded + x + 1] = north.GetHeight(x, 1) + northY;
+            }
         }
 
         // Analytic tangents from the normals already on the mesh, for a rebuilt map that bailed.
@@ -316,12 +349,12 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         private static void CompareTangents(Mesh mesh) {
             VerifyBuffer.Clear();
             mesh.GetTangents(VerifyBuffer);
-            if (VerifyBuffer.Count != NormalBuffer.Count) { return; }
+            if (VerifyBuffer.Count != s_normals.Length) { return; }
 
             int divergent = 0;
             float worstDot = 1f;
             for (int i = 0; i < VerifyBuffer.Count; i += 173) {
-                Vector4 analytic = AnalyticTangent(NormalBuffer[i]);
+                Vector4 analytic = AnalyticTangent(s_normals[i]);
                 Vector4 unity = VerifyBuffer[i];
 
                 float dot = analytic.x * unity.x + analytic.y * unity.y + analytic.z * unity.z;
@@ -338,23 +371,6 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             }
         }
 
-        // Adjacent heightmaps share their boundary vertices: this map's vertex `width` is the east
-        // neighbour's vertex 0, so one step past our edge is the neighbour's vertex 1 and one step
-        // before it is the west neighbour's vertex width-1. A central difference never asks for a
-        // diagonal, so both coordinates are never out of range at once.
-        private static float Sample(
-            Heightmap hmap, int x, int y, Heightmap west, Heightmap east, Heightmap south, Heightmap north,
-            float selfY, float westY, float eastY, float southY, float northY) {
-            int width = hmap.m_width;
-
-            if (x < 0) { return west.GetHeight(width - 1, y) + westY; }
-            if (x > width) { return east.GetHeight(1, y) + eastY; }
-            if (y < 0) { return south.GetHeight(x, width - 1) + southY; }
-            if (y > width) { return north.GetHeight(x, 1) + northY; }
-
-            return hmap.GetHeight(x, y) + selfY;
-        }
-
         // Zone heightmaps are exactly zoneSize apart, so offsetting by that lands on the
         // neighbour's centre.
         private static Heightmap FindNeighbour(Heightmap hmap, float dx, float dz) {
@@ -363,7 +379,9 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             if (neighbour == null || neighbour == hmap || neighbour.IsDistantLod) { return null; }
             if (neighbour.m_width != hmap.m_width || neighbour.m_scale != hmap.m_scale) { return null; }
 
-            // Not built yet: GetHeight checks the grid coordinates but not the list behind them.
+            // Not built yet: a mod can defer the build past OnEnable (Fires Ghetto Networking's Spread Terrain
+            // Rebuilds), and GetHeight checks the grid coordinates but not the list behind them. The build's own
+            // rebuild later marks the map dirty, which redoes the maps around it.
             if (!HeightmapSampling.IsBuilt(neighbour)) { return null; }
 
             return neighbour;

@@ -3,24 +3,10 @@ using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Recipe Lookup Scan: ObjectDB.GetRecipe answers from a cache keyed by item name instead of
-    // walking the whole recipe list on every call.
-    //
-    // GetRecipe compares the item's name with the item of each recipe in m_recipes, front to back.
-    // The crafting screen calls it for every worn item on every frame it is open at a station, to
-    // decide whether the repair button glows, and item tooltips call it as well. With the recipe
-    // lists large mod packs build, that is thousands of string comparisons a frame.
-    //
-    // A prefix returns the same recipe, the first whose item has that name, from a dictionary
-    // filled on first use of each name; names with no recipe are cached too. The cache is dropped
-    // whenever m_recipes is replaced or its contents change, read from the list's own mutation
-    // counter, so recipes mods add or remove while playing are found, and a cached recipe whose item
-    // has since changed is looked up again. Where vanilla's loop would throw, vanilla runs and does.
-    // It runs after other mods' prefixes and respects one that already replaced the call, and
-    // stands down for the session when another mod transpiles the method.
-    //
-    // Client: every caller in the game is UI. Provenance: ComfyMods/ComfyAutoRepair (GPL-3.0,
-    // redseiko), whose RecipeManager cache this is, with change detection added.
+    // Fix Recipe Lookup Scan: GetRecipe scans every recipe, for each worn item, every frame a crafting station is open.
+    // Prefixes GetRecipe to answer from a cache keyed by item name, dropped whenever the recipe list changes.
+    // The crafting screen and tooltips stay cheap with the large recipe lists mod packs build.
+    // Provenance: ComfyMods/ComfyAutoRepair (GPL-3.0, redseiko), its RecipeManager cache with change detection added.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.GetRecipe))]
@@ -43,7 +29,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static List<Recipe> _cachedList;
         private static int _cachedVersion;
 
-        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches. Respects another mod's prefix that already
+        // replaced the call.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         private static bool Prefix(ObjectDB __instance, ItemDrop.ItemData item, ref Recipe __result, bool __runOriginal) {

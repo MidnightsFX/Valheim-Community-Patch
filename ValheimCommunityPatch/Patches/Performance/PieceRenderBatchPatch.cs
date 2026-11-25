@@ -8,30 +8,9 @@ using UnityEngine;
 using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Building Renderer Overhead: the plain building pieces of each 16 m area are drawn as a few merged
-    // meshes instead of one renderer each. On by default; each player can switch it off (Client config,
-    // Building Render Batching), the one performance fix with a switch, because it changes how pieces are drawn.
-    //
-    // Unity does per-renderer work every frame for every piece in range: culling, the shadow-caster setup
-    // for each shadow cascade and draw submission, all on the main thread. A big base has tens of
-    // thousands of piece renderers, and that work, not the GPU, sets its frame rate.
-    //
-    // A WearNTear.Awake postfix queues each placed piece; half a second later it is adopted if every
-    // script on it is one that never changes how it is drawn and its materials use the piece shader
-    // without a per-object tint (Common/PieceRenderTemplate). Its renderers' meshes are merged per cell
-    // on a worker thread (Common/PieceMerge) and swapped in whole; only then are its own renderers
-    // hidden with forceRenderingOff, and the LODGroups whose every renderer is merged switched off, since
-    // Unity keeps evaluating them for hidden renderers. The piece itself is untouched:
-    // colliders, scripts and network state stay live. Anything that changes how it looks puts it back:
-    // a health-stage change re-collects it, MaterialMan values are read in a PropertyContainer.UpdateBlock
-    // postfix (hover highlight and Ashlands glow take it out of its merged mesh for as long as they last,
-    // snow and Grausten's texture offset go into the mesh, anything else gives it back to the game), and
-    // a destroyed piece is zeroed out of its mesh at once. Destruction debris takes only renderers the
-    // camera saw last frame, so the fragments call in RPC_CreateFragments is redirected to a copy that
-    // counts a hidden renderer as seen when its merged copy was drawn. Stands down next to another mod
-    // that hides or merges piece renderers, or that hooks a method it reads or reproduces.
-    //
-    // Client: rendering.
+    // Fix Building Renderer Overhead: per-renderer culling and shadow setup for every piece caps a big base's FPS.
+    // Adopts plain pieces from a WearNTear.Awake postfix, merges them per 16 m cell and hides their own renderers.
+    // Big bases draw far faster while every piece stays a real piece that can be damaged, repaired and built onto.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(WearNTear))]
@@ -44,28 +23,29 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private const float RetryTransient = 1f;
         private const double BudgetMs = 1.0;
         private const double LoadingBudgetMs = 8.0;
+        // Per second, not per frame: at 500 FPS 40 a frame cost 14 us of every frame (measured), 0.7% of it.
+        // 2,400 a second is 40 a frame at 60 FPS; a slow frame still checks at most 40.
+        private const float SweepPerSecond = 2400f;
         private const int SweepPerFrame = 40;
 
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<bool> Verify;
 
+        // The only per-player switch among the performance fixes, because it changes how pieces are drawn.
         internal static void BindConfig() {
             Enabled = ValConfig.cfg.Bind(
                 "Client config",
                 "Building Render Batching",
                 true,
                 new ConfigDescription(
-                    "Draws the plain building pieces of each 16 m area as a few merged meshes instead of one " +
-                    "object each, which makes big bases much faster to draw. Pieces stay real pieces, and any " +
-                    "piece whose look changes (highlighted, damaged, burning, destroyed) is drawn the game's way " +
-                    "again. Switch it off to draw every piece the game's way. Can be changed while playing."));
+                    "Draws the plain building pieces of each 16 m area as a few merged meshes, which makes big " +
+                    "bases much faster to draw; can be switched while playing."));
             Verify = ValConfig.BindServerConfig(
                 ValConfig.SectionDebug,
                 "Verify Building Render Batching",
                 false,
-                "Diagnostic. Checks a sample of merged pieces every second against their real state and logs " +
-                "any difference, plus a summary every 30 s (pieces merged, reasons pieces were left alone, " +
-                "cells, meshes, main-thread time). Leave it off unless you are validating the fix.",
+                "Diagnostic. Checks a sample of merged pieces each second against their real state and logs any " +
+                "difference, plus a summary every 30 s.",
                 advanced: true);
         }
 
@@ -100,6 +80,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool _engaged;
         private static bool _active;
 
+        // Merges each cell on a worker thread and swaps the mesh in whole; only then are a piece's own renderers
+        // hidden and its fully merged LODGroups switched off, which Unity keeps evaluating for hidden renderers.
         private static PieceMerge _merge;
         private static readonly Dictionary<int, PieceEntry> ById = new Dictionary<int, PieceEntry>();
         private static readonly Dictionary<int, PieceEntry> ByRenderer = new Dictionary<int, PieceEntry>();
@@ -109,8 +91,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly HashSet<int> Released = new HashSet<int>();
         private static readonly Dictionary<string, int> Rejects = new Dictionary<string, int>();
         private static int _sweep;
+        private static float _sweepCredit;
         private static int _adopted;
 
+        // Stands down next to another mod that hides or merges piece renderers, or hooks a method this reads
+        // or reproduces.
         private static bool Decide() {
             if (RunMode.IsHeadless || !Hooks.Healthy) { return false; }
 
@@ -215,7 +200,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _adopted++;
         }
 
-        // Fills the entry and puts it in its cell; null when it is taken, else why not.
+        // Fills the entry and puts it in its cell; null when it is taken, else why not. PieceRenderTemplate
+        // takes only pieces whose scripts never change how they are drawn and whose materials use the piece
+        // shader without a per-object tint.
         private static string Collect(PieceEntry e, out bool retry) {
             retry = false;
             string why = PieceRenderTemplate.Collect(e.W, e.Parts, e.Renderers, e.Groups);
@@ -334,6 +321,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return ReadProps(c.m_shaderProperties);
         }
 
+        // Hover highlight and Ashlands glow take a piece out of its mesh while they last; snow and Grausten's
+        // texture offset go into the mesh; any other value hands the piece back to the game.
         private static Props ReadProps(Dictionary<int, MaterialMan.ShaderPropertyBase> values) {
             Props p = default;
             foreach (KeyValuePair<int, MaterialMan.ShaderPropertyBase> kv in values) {
@@ -419,7 +408,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Destructible.CreateFragments, with a hidden renderer counted as seen when its merged copy was in
-        // view at the level the merge drew it.
+        // view at the level the merge drew it: vanilla's debris takes only renderers the camera saw last frame.
         private static void CreateFragments(GameObject rootObject, bool visibleOnly) {
             WearNTear w = _active && visibleOnly && rootObject != null ? rootObject.GetComponent<WearNTear>() : null;
             if (w == null || !ById.TryGetValue(w.GetInstanceID(), out PieceEntry e) || !e.Hidden) {
@@ -535,7 +524,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // Catches what no hook sees: a renderer switched off or swapped by another mod.
         private static void Sweep() {
-            for (int n = 0; n < SweepPerFrame && All.Count > 0; n++) {
+            _sweepCredit = Mathf.Min(_sweepCredit + SweepPerSecond * Time.unscaledDeltaTime, SweepPerFrame);
+            int count = (int)_sweepCredit;
+            _sweepCredit -= count;
+            for (int n = 0; n < count && All.Count > 0; n++) {
                 if (_sweep >= All.Count) { _sweep = 0; }
                 PieceEntry e = All[_sweep++];
                 if (e.W == null) {

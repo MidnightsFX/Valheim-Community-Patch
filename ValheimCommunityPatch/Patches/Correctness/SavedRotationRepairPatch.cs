@@ -4,26 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Repair Saved Rotations: turns building pieces an earlier save rounded down back onto the game's
-    // 22.5 degree rotation steps when the world loads. Off by default.
-    //
-    // A world saved by 1.0 without Fix Saved Rotations holds the rotations it rounded down at exactly
-    // half a degree below where they were. The game places pieces in steps of 22.5 degrees, so an
-    // upright piece whose saved angle sits exactly half a degree below such a step was most likely at
-    // the step itself. A building mod turning in 1 degree steps also places at those angles (22, 67,
-    // 112 ... degrees), and a save without the fix cannot tell the two apart, which is why this is
-    // the admin's call. Trees, rocks and other objects with random rotations land on those angles by
-    // chance and are left alone.
-    //
-    // Fix Saved Rotations' ZDO.Load postfix calls in here for every object that carries no exact
-    // rotation of its own, and the half degree is added back to an upright piece at such an angle. A
-    // save written with that fix marks pieces placed at those angles as meant, so they are never
-    // turned; pieces that only loaded there stay unmarked. The repair is written into the save the
-    // next time its area is saved. A postfix on LoadChunks logs how many were turned, or with the
-    // repair off, how many it would turn. The world loads in ZNet.Start, after ZNetScene.Awake has
-    // registered every prefab, modded ones included, so which prefabs are pieces is known by then.
-    //
-    // Server: only the machine that loads the world file runs it.
+    // Saves made without Fix Saved Rotations left building pieces half a degree short of the game's 22.5 degree steps.
+    // Fix Saved Rotations' ZDO.Load postfix calls RepairIfShifted to turn them back; LoadChunks logs the count.
+    // With the admin's opt-in, old buildings return to the angles they were placed at on the next world load.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
@@ -36,12 +19,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Repair Saved Rotations",
                 false,
-                "Turns building pieces that a save without Fix Saved Rotations left half a degree off back to " +
-                "where they were placed, when the world loads. Only an upright piece exactly half a degree short " +
-                "of the game's 22.5 degree rotation steps is turned, so a piece a building mod placed at such an " +
-                "angle in 1 degree steps (22, 67, 112 ... degrees) before this fix was installed is turned too. " +
-                "Pieces placed while Fix Saved Rotations was on are never turned. The world load logs how many " +
-                "pieces sit at those angles.");
+                "Turns building pieces that a save without Fix Saved Rotations left half a degree off back when " +
+                "the world loads, including any a 1 degree building mod placed at those angles (22, 67, 112 ... " +
+                "degrees); the world load logs how many pieces sit there.");
         }
 
         // 22.5 degrees in the save's half-degree steps.
@@ -61,7 +41,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
         internal static bool IsPiece(int prefab) => _pieces.Contains(prefab);
 
-        // An upright rotation exactly half a degree below a 22.5 degree step, as read from the save.
+        // An upright rotation exactly half a degree below a 22.5 degree step, as read from the save. A
+        // building mod turning in 1 degree steps also places pieces there (22, 67, 112 ...), and an old
+        // save cannot tell the two apart, which is why the repair is off by default.
         internal static bool LooksShifted(Vector3 saved) {
             if (saved.x != 0f || saved.z != 0f) { return false; }
 
@@ -72,6 +54,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
         internal static bool LoadedUnrepaired(ZDOID uid) => Unrepaired.Contains(uid);
 
+        // Fix Saved Rotations skips this for an object carrying its own exact rotation, so pieces it saved
+        // as meant are never turned. Pieces only: trees and rocks land on these angles by chance.
         internal static void RepairIfShifted(ZDO zdo) {
             Vector3 rotation = zdo.m_rotation;
             if (!LooksShifted(rotation) || !IsPiece(zdo.GetPrefab())) { return; }
@@ -103,6 +87,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         [HarmonyPatch(typeof(ZNetScene), "Awake")]
         private static void ZNetSceneAwakePostfix() => CollectPieces();
 
+        // The world loads in ZNet.Start, after ZNetScene.Awake has registered every prefab, modded ones
+        // included, so the piece set is complete here.
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ZDOMan.Load))]
         private static void LoadPrefix() {

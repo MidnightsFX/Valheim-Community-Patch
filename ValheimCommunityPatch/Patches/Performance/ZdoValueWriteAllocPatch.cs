@@ -6,27 +6,14 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix ZDO Value Write Allocation: writing a ZDO field no longer boxes the value to ask
-    // whether it changed.
-    //
-    // BinarySearchDictionary<TKey, TValue>.SetValue (assembly_utils) compares the stored value
-    // with this.m_values[keyIndex].Equals((object) value). TValue is unconstrained, so that cast
-    // is a box: one heap allocation per write, compared and dropped on the same line. That method
-    // is the only way ZDO data is written (ZDO.Set -> ZDOExtraData.Set -> ZDOHelper.InitAndSet),
-    // so every velocity, animation, health, fuel and growth write in the world pays it.
-    //
-    // A transpiler on the five value-type instantiations (float, Vector3, Quaternion, int, long)
-    // rewrites `box; constrained.; callvirt object.Equals(object)` into `call TValue.Equals(TValue)`.
-    // The receiver is already a managed pointer from the preceding ldelema, so the stack shape is
-    // unchanged. The answer is identical, NaN-to-NaN included: each type's Equals(object) is a type
-    // test followed by the typed overload. string and byte[] are not patched: they never boxed, and
-    // Mono shares one compiled body across reference-type instantiations, so a patch aimed at one
-    // would land on the other.
-    //
-    // Both: this is the ZDO data layer.
+    // Fix ZDO Value Write Allocation: BinarySearchDictionary.SetValue boxes every ZDO value it writes to compare it.
+    // Transpiles SetValue for float, Vector3, Quaternion, int and long to call the type's own Equals without boxing.
+    // Every ZDO field write in the world (velocity, animation, health, fuel, growth) stops allocating garbage.
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class ZdoValueWriteAllocPatch {
+        // string and byte[] never boxed, and Mono shares one compiled body across reference-type
+        // instantiations, so a patch aimed at one would land on the other.
         private static readonly Type[] BoxedValueTypes = {
             typeof(float), typeof(Vector3), typeof(Quaternion), typeof(int), typeof(long),
         };
@@ -54,8 +41,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // One transpiler serves all five targets: the value type comes off __originalMethod's
-        // declaring type. Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // SetValue (assembly_utils) compares m_values[keyIndex].Equals((object)value), a box since TValue is
+        // unconstrained. Rewritten to `call TValue.Equals(TValue)`: the receiver is already a managed pointer
+        // from ldelema, and each type's Equals(object) is a type test then the typed overload, so the answer
+        // is identical, NaN included. One transpiler serves all five targets: the value type comes off
+        // __originalMethod's declaring type. Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         private static IEnumerable<CodeInstruction> SetValueTranspiler(

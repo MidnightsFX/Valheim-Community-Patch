@@ -4,34 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Zone Collider Stall: an already-generated zone entering the active ring bakes its
-    // terrain collider on a background thread instead of the main thread.
-    //
-    // Assigning a MeshCollider's sharedMesh cooks the PhysX mesh synchronously, and
-    // Heightmap.RebuildCollisionMesh does that on every zone heightmap rebuild. For a zone that
-    // already exists and is only being loaded because it entered the ring, that cook is the
-    // largest single item in the frame and most of the zone-boundary stutter.
-    //
-    // For two cases only, the prefix hides the collider so vanilla's rebuild skips the
-    // assignment, the postfix queues Physics.BakeMesh on a worker thread with the collider's own
-    // cooking options, and a MonoUpdaters.LateUpdate postfix assigns sharedMesh once the bake is
-    // done, which then finds it cached. The cases are SpawnMode.Client zone spawns and the
-    // delayed-poke rebuilds TerrainModifier already deferred a frame, both away from the player's
-    // own zone. Everything else (fresh generation, terraforming, the player's zone, spawns with no
-    // local player) keeps the synchronous cook because callers rely on the collider in the same
-    // frame. A rebuild or OnDestroy on a map with a bake in flight waits for it, because the worker
-    // is reading the very mesh they mutate or destroy, and a rebuild assigns that finished bake
-    // first so the collider never falls back to an older shape. Heightmap.ForceGenerateAll, which
-    // ships, carts and SnapToGround call to make terrain collision current, finishes every bake in
-    // flight before it runs and cooks its own rebuilds synchronously.
-    //
-    // Stands down when another mod can skip the rebuild with a prefix or rewrites it, because that
-    // mod cooks the collider its own way. ValheimOptimized skips it, rewrites the mesh and bakes it on
-    // a Unity job, and Harmony still runs this prefix and postfix around that, so both mods baked the
-    // same mesh at once and this one assigned it mid-bake: a native "pure virtual function call"
-    // crash inside Physics.BakeMesh.
-    //
-    // Client: a dedicated server never takes either deferred path.
+    // Fix Zone Collider Stall: RebuildCollisionMesh cooks terrain colliders on the main thread, stuttering zone loads.
+    // A prefix and postfix move the cook to Physics.BakeMesh on a worker, and a LateUpdate postfix assigns the result.
+    // Already-generated zones entering the active area no longer stall the frame on their collider.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
@@ -57,7 +32,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(AsyncColliderBakePatch));
 
-        // Asked at the first rebuild this fix would defer, before anything is queued.
+        // Asked at the first rebuild this fix would defer, before anything is queued. A mod that can
+        // skip or rewrite the rebuild cooks the collider its own way: ValheimOptimized bakes on a Unity
+        // job, and both baking at once crashed natively ("pure virtual function call") in BakeMesh.
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
             typeof(AsyncColliderBakePatch),
             AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildCollisionMesh"),
@@ -123,9 +100,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static void RebuildCollisionMeshPrefix(Heightmap __instance, out MeshCollider __state) {
             __state = null;
 
-            // The finished bake is assigned before this rebuild changes the mesh, which a deferred
-            // rebuild would otherwise leave the collider without until its own bake lands. The cook
-            // is already cached, so the assignment is cheap.
+            // The worker reads the mesh this rebuild is about to change, so a bake in flight is waited
+            // out, then assigned so the collider never falls back to an older shape until the next
+            // bake lands. The cook is already cached, so the assignment is cheap.
             PendingBake inflight = FindPending(__instance);
             if (inflight != null) {
                 WaitOut(inflight);
@@ -133,6 +110,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 Assign(inflight);
             }
 
+            // Only client zone spawns and TerrainModifier's delayed pokes away from the player's zone
+            // defer. Fresh generation, terraforming and spawns with no local player cook synchronously:
+            // their callers rely on the collider in the same frame.
             if ((!_deferContext && !_lateUpdateContext) || _forceContext) { return; }
             // Turned off, nothing new is deferred; bakes already in flight land as before.
             if (__instance.m_collider == null || ApiSwitch.Off || Takeover.TakenOver) { return; }

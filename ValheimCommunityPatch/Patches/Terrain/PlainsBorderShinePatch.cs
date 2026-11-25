@@ -3,27 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Fix Plains Border Shine: ground where black forest blends into plains is no longer drawn as
-    // glossy as wet Mistlands ground, which made dirt paths there look wet when facing the sun.
-    //
-    // A terrain tile carries its corners' biome codes in its vertex colors (see BiomeColorAliasPatch),
-    // and Mistlands' code (0,0,1,1) is Black Forest's (0,0,1,0) plus Plains' (0,0,0,1), so every black
-    // forest to plains blend also decodes as part Mistlands, up to half in the middle of a tile. The
-    // terrain shader's Mistlands branch moves the ground's gloss toward eight times its brightness by
-    // that weight, and bright plains ground reaches full gloss from a weight of about a quarter, so the
-    // middle of every border tile shines and the shine ends on the 64 m zone grid. Grass covers it except
-    // on dirt paths, whose paint leaves the gloss of the ground under it alone unless it rains.
-    //
-    // Each vertex of near terrain is split between plains and the black forest side across the same
-    // dead zone Fix Swamp Plains Shore Seams uses, so no triangle holds both a vertex with black forest
-    // and one with plains; what the two give up is meadows, the only ground with neither channel
-    // ("Black Forest Plains Blend Sharpness" sets how narrow that is). With the swamp fix on, swamp joins
-    // the black forest side and that fix's bridge keeps clear of the plains, so this remap runs both and
-    // the swamp fix's own stands aside. Tile rebuilds run it in the swamp fix's per-tile color pass
-    // (see BiomeColorAliasPatch); a postfix on GetBiomeColor(ix, iy) runs it for other callers. Distant
-    // terrain is left alone, as the swamp fix leaves it.
-    //
-    // Client: vertex colors are rendering state.
+    // Mistlands' terrain color code is Black Forest's plus Plains', so their blend is drawn with Mistlands' wet gloss.
+    // Remaps vertex colors across a dead zone in the per-tile color pass and a GetBiomeColor(ix, iy) postfix.
+    // Dirt paths where black forest meets plains no longer look wet in the sun; a narrow meadows strip separates them.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
@@ -45,19 +27,15 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 FixName,
                 true,
-                "Stops ground where black forest blends into plains from being drawn as glossy as wet " +
-                "Mistlands ground, which makes dirt paths there look wet when facing the sun. The game's " +
-                "terrain colors cannot express a black forest and plains blend without also meaning " +
-                "Mistlands, so the two give way to a narrow strip of meadows ground where they meet instead " +
-                "(see Black Forest Plains Blend Sharpness).");
+                "Stops ground where black forest blends into plains being drawn as glossy as wet Mistlands " +
+                "ground, putting a narrow meadows strip between them (see Black Forest Plains Blend Sharpness).");
 
             Sharpness = ValConfig.BindServerConfig(
                 ValConfig.SectionTerrain,
                 "Black Forest Plains Blend Sharpness",
                 3f,
-                "With Fix Plains Border Shine on, how quickly black forest and plains ground give way to " +
-                "each other. 1 blends across the whole 64m tile with a wide meadows strip in the middle; " +
-                "higher values keep each ground closer to where they meet and narrow the strip.",
+                "How quickly black forest and plains ground give way to each other with Fix Plains Border Shine " +
+                "on: 1 blends across the whole 64 m tile around a wide meadows strip, higher narrows the strip.",
                 advanced: true,
                 valMin: 1f,
                 valMax: 8f);
@@ -73,11 +51,13 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             owners => $"Terrain mesh building is changed by {owners}, so '{FixName}' stands down and that " +
                       "mod's terrain colors apply.");
 
-        // True while this fix colors near terrain, Fix Swamp Plains Shore Seams' part included.
+        // True while this fix colors near terrain, Fix Swamp Plains Shore Seams' part included: with that fix
+        // on, swamp joins the black forest side here and its own remap stands aside.
         internal static bool Handles => Enabled != null && Enabled.Value && !Takeover.TakenOver;
 
         internal static float SharpnessValue =>Sharpness != null ? Mathf.Max(1f, Sharpness.Value) : 1f;
 
+        // For callers outside tile rebuilds, which run Remap in BiomeColorAliasPatch's per-tile color pass.
         [HarmonyPostfix]
         [HarmonyPatch("GetBiomeColor", typeof(float), typeof(float))]
         private static void GetBiomeColorPostfix(Heightmap __instance, float ix, float iy, ref Color __result) {
@@ -92,6 +72,9 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 swampFix, BiomeColorAliasPatch.SharpnessValue, BiomeColorAliasPatch.BridgeValue);
         }
 
+        // Mistlands (0,0,1,1) decodes from any Black Forest (0,0,1,0) and Plains (0,0,0,1) blend, and plains
+        // ground reaches full Mistlands gloss from a weight of about a quarter. So no triangle may hold both a
+        // black forest and a plains vertex; meadows, the only ground with neither channel, fills the gap.
         internal static void Remap(ref Color color, int contributing, float sharpness,
                                    bool swampFix, float swampSharpness, BiomeColorAliasPatch.BridgeGround ground) {
             if ((contributing & BiomeColorAliasPatch.ProtectedCorners) != 0) { return; }

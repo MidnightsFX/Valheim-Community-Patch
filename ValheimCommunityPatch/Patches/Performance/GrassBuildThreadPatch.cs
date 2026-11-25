@@ -9,26 +9,9 @@ using UnityEngine;
 using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Grass Build Stall: grass patches are placed on a background thread instead of the main thread.
-    //
-    // ClutterSystem.GenerateVegPatch places every blade of a new grass patch on the main thread: for
-    // each clutter type up to 80 seeded random candidates, each with forest and fractal noise, a
-    // ground query and biome, altitude, slope and paint-mask checks. Every patch that comes into
-    // range is built this way, a whole ring of them after a world load, a teleport, a graphics change
-    // or a terrain edit, and the cost grows with the square of the grass distance.
-    //
-    // A replacing prefix copies what placement reads (the clutter settings and the heightmaps under
-    // the patch) and queues the patch for a worker thread, returning it empty. The worker runs the
-    // game's placement loop on the copies, with a copy of UnityEngine.Random's generator seeded the
-    // same way, so it places the same blades; the generator is checked against the engine's before
-    // the first patch. A ClutterSystem.LateUpdate postfix fills finished patches within a time budget,
-    // creating each type's InstanceRenderer as the game does. A rebuilt patch keeps its old grass until
-    // then, and a patch freed first drops its build. Patches that would spawn clutter other than
-    // instanced grass, and the main menu's, are built the game's way. Stands down while HearthBelow is
-    // loaded (as Fix Grass Ground Raycasts, whose ground answer the worker reproduces), next to FarLands
-    // or SteadyFrame, which build grass themselves, and when another mod hooks a method it reproduces.
-    //
-    // Client: ClutterSystem needs a camera.
+    // Fix Grass Build Stall: ClutterSystem.GenerateVegPatch places every blade of a new grass patch on the main thread.
+    // Prefixes GenerateVegPatch to run the game's placement on a worker thread; a LateUpdate postfix fills the patches.
+    // Grass rebuilds after a load, teleport or terrain edit leave the main thread, with the same blades as before.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ClutterSystem))]
@@ -45,10 +28,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Grass Build Thread",
                 false,
-                "Diagnostic. Also builds every grass patch the game's way on the main thread, compares it " +
-                "blade for blade with the one built on the background thread, and logs any difference and a " +
-                "running count. Costs the main-thread work this fix exists to avoid, so leave it off unless " +
-                "you are validating it.",
+                "Diagnostic. Also builds every grass patch the game's way and logs any blade that differs " +
+                "from the background build; costs the main-thread work the fix saves.",
                 advanced: true);
         }
 
@@ -93,9 +74,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(Heightmap), "OnDestroy"), typeof(TerrainHooks)));
 
         // The worker reproduces these, so any other mod's hook on one of them would not run for the
-        // grass it places, and the copied arrays are written without AddInstance.
+        // grass it places, and the copied arrays are written without AddInstance. FarLands' and
+        // SteadyFrame's shared GPU grass module hooks GenerateVegPatch only to build patches itself,
+        // which it never does while this fix's hook is on, since it counts that hook as another builder.
         private static readonly TakeoverCheck[] Takeovers = {
-            Reproduced(GenerateVegPatchMethod),
+            Reproduced(GenerateVegPatchMethod, "ValheimMods.Shared.GpuGrass"),
             Reproduced(AccessTools.DeclaredMethod(typeof(ClutterSystem), nameof(ClutterSystem.GetGroundInfo), new[] {
                 typeof(Vector3), typeof(Vector3).MakeByRefType(), typeof(Vector3).MakeByRefType(),
                 typeof(Heightmap).MakeByRefType(), typeof(Heightmap.Biome).MakeByRefType() })),
@@ -110,12 +93,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
             Reproduced(AccessTools.DeclaredMethod(typeof(Heightmap), nameof(Heightmap.IsCleared), new[] { typeof(Vector3) })),
         };
 
-        private static TakeoverCheck Reproduced(MethodBase target) => new TakeoverCheck(
+        private static TakeoverCheck Reproduced(MethodBase target, params string[] ignoredOwners) => new TakeoverCheck(
             typeof(GrassBuildThreadPatch),
             target,
             HookKinds.Any,
             owners => $"Grass placement is changed by {owners}, so '{FixName}' stands down and grass " +
-                      "patches are built on the main thread.");
+                      "patches are built on the main thread.",
+            ignoredOwners);
 
         private static bool _loggedPrepare;
         private static bool _decided;
@@ -153,33 +137,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrepare]
         private static bool Prepare() => PrepareAny();
 
-        private static bool _gpuChecked;
-        private static bool _gpuStoodDown;
-
-        // Every plugin has loaded by the first ClutterSystem.Awake, which is not true when this mod
-        // patches, and the GPU grass module first looks for other hooks after it.
-        [HarmonyPatch(typeof(ClutterSystem), "Awake")]
-        internal static class GpuGrassHook {
-            [HarmonyPrepare]
-            private static bool Prepare() => PrepareAny();
-
-            [HarmonyPrefix]
-            private static void Prefix() {
-                if (_gpuChecked) { return; }
-                _gpuChecked = true;
-                if (!GpuGrassCompat.BuildsGrass) { return; }
-
-                GpuGrassCompat.Unhook(GenerateVegPatchMethod, typeof(GrassBuildThreadPatch));
-                _gpuStoodDown = true;
-
-                FixRegistry.MarkStoodDown(typeof(GrassBuildThreadPatch));
-                Logger.LogInfo($"{GpuGrassCompat.Name} builds the grass itself, so '{FixName}' stands down.");
-            }
-        }
-
         // Decided at the first patch of the session, once every mod has patched.
         private static bool Engaged() {
-            if (ApiSwitch.Off || _broken || _gpuStoodDown) { return false; }
+            if (ApiSwitch.Off || _broken) { return false; }
 
             if (!_decided) {
                 _decided = true;
@@ -205,6 +165,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 return false;
             }
 
+            // The worker seeds a copy of UnityEngine.Random as the game does, so it places the same blades.
             if (!UnityRandom.MatchesUnity(out string mismatch)) {
                 FixRegistry.MarkStoodDown(typeof(GrassBuildThreadPatch));
                 Logger.LogWarning($"{FixName} stands down: its copy of the game's random number generator does not " +

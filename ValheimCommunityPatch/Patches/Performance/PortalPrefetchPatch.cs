@@ -5,30 +5,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Portal Destination Send Delay: while a player stands at a connected portal, the server
-    // starts sending the buildings at the other end, so going through has less left to wait for.
-    //
-    // A dedicated server streams each player only the area around the position that player last
-    // reported. A portal's destination therefore starts arriving only after the player has gone
-    // through and reported the new position, and on a big base sending its building pieces is
-    // most of the loading screen. Meanwhile the player stood at the portal with a connection that
-    // had nothing left to carry once their own surroundings were sent.
-    //
-    // A TeleportWorld.UpdatePortal postfix on the client sends the portal's id to the server once,
-    // when the local player comes within Portal Prefetch Range of a connected portal. The server
-    // waits until that player's reported position is near the portal, resolves the portal's
-    // connection itself, and queues every Solid and Terrain object in the 3x3 zones around the
-    // other end that the player has not been sent: terrain first, then nearest first, capped.
-    // These are the objects Fix Loading Screen Wait's confirmation checks. A CreateSyncList
-    // postfix appends a batch from the queue only while the player's own sync list is nearly
-    // empty, vanilla's own rule for distant objects, and sizes the batch to what the last send
-    // carried. The queue is dropped once the player's reported position leaves the portal, which
-    // going through it does, after a minute, or when it is drained. Not m_forceSend:
-    // AddForceSendZdos puts forced objects at the head of the list, ahead of the player's own
-    // surroundings. Capability is a hello over peer RPCs, as in Fix Loading Screen Wait, so
-    // peers without this mod never send or receive any of it.
-    //
-    // Both: the server half answers on the server; the client half needs a local player.
+    // The server streams only the area a player last reported, so a portal's destination starts sending after arrival.
+    // Postfixes TeleportWorld.UpdatePortal to request it and ZDOMan.CreateSyncList to send it with spare bandwidth.
+    // A player at a portal receives the buildings beyond it early, so the loading screen after it is shorter.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZNet))]
@@ -42,10 +21,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Fix Portal Destination Send Delay",
                 true,
-                "While you stand at a connected portal, the server starts sending the buildings at the " +
-                "other end, using only what your connection has spare, so the loading screen behind the " +
-                "portal is shorter. Needs this mod on the server and the client; players without it are " +
-                "unaffected. Turn it off to stop the server sending destinations a player may not visit.");
+                "Has the server send the buildings at a portal's other end while you stand at it, using only " +
+                "spare bandwidth, so the loading screen after it is shorter; needs the mod on server and client.");
 
             PrefetchRange = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
@@ -255,14 +232,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 }
 
                 // Only into room the player's own area leaves. Ahead of this sit the player's
-                // surroundings and anything forced, so the queue never delays either.
+                // surroundings and anything forced, so the queue never delays either; m_forceSend
+                // would not do, as AddForceSendZdos puts forced objects ahead of the surroundings.
                 if (toSync.Count >= IdleListLength) { return; }
 
                 if (!Append(zdoMan, zdoPeer, prefetch, toSync)) { Stop(zdoPeer, prefetch, "complete"); }
             }
 
             // The server's own copy of the portal and its connection decide the destination; the
-            // client only says which portal it stands at.
+            // client only says which portal it stands at. Queues the objects Fix Loading Screen
+            // Wait's confirmation checks, terrain first, then nearest first.
             private static bool Start(ZDOMan zdoMan, ZDOMan.ZDOPeer zdoPeer, Prefetch prefetch, ZDO portal, float now) {
                 Game game = Game.instance;
                 if (game == null || !game.PortalPrefabHash.Contains(portal.GetPrefab())) { return false; }

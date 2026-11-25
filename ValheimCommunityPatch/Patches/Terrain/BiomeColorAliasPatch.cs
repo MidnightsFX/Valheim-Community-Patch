@@ -7,53 +7,19 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Fix Swamp Plains Shore Seams: shores where swamp blends into plains no longer show the Ashlands
-    // shoreline texture ending in hard straight lines along the 64 m zone grid.
-    //
-    // A terrain tile's vertex colors carry its biome as a color code per corner
-    // (Heightmap.GetBiomeColor), lerped across the tile. The 1.0 terrain shader decodes each biome's
-    // weight as one minus the largest per-channel distance to its code, and Ashlands' code (1,0,0,1)
-    // is Swamp's (1,0,0,0) plus Plains' (0,0,0,1), so any swamp-to-plains blend also decodes as part
-    // Ashlands. The shader's Ashlands branch runs whenever that weight is above zero rather than in
-    // proportion to it, and paints flat ground within 2 m of the water with the Ashlands shoreline at
-    // full strength. A tile that is all swamp or all plains has exactly zero Ashlands weight, so the
-    // effect starts dead on the zone border. No color can mean "part swamp, part plains" without it.
-    //
-    // Each vertex of near terrain is split between swamp, plains and a bridge strip where the two meet,
-    // keeping the vertex's total biome weight; "Swamp Plains Blend Sharpness" sets how narrow the strip
-    // is. The strip's ground is chosen by "Swamp Plains Bridge Ground":
-    //  - BlackForest, the only earthy code with neither channel (Meadows reads as bright grass). A fixed
-    //    dead zone keeps any triangle from holding one vertex with swamp and another with plains, so no
-    //    pixel decodes as Ashlands. A BlackForest-to-plains blend decodes as part Mistlands and shines;
-    //    with Fix Plains Border Shine on, that fix runs this remap together with its own and the strip
-    //    gives way to meadows before the plains (see PlainsBorderShinePatch).
-    //  - Ashlands, deliberately, in both channels. Near water the shoreline then fills the strip and ends
-    //    where the strip does, following the swamp and plains crossover instead of the zone grid. Its
-    //    weight is capped below 0.9, above which the shader draws lava from the base mask's alpha, which
-    //    is 1 everywhere outside the Ashlands. It applies only where the corners contributing
-    // to the vertex include both a swamp and a plains code and no real Ashlands or Mistlands code (whose
-    // alpha is genuine); on a shared edge only the two edge corners contribute, so both tiles decide
-    // alike and meet without a seam. Distant terrain is left alone: the branch only runs within about
-    // 400 m of the camera.
-    //
-    // RebuildRenderMesh colors each vertex through GetBiomeColor(ix, iy), the corner lerp. A transpiler
-    // swaps that call for a pass shared with Fix Plains Border Shine, which reads the tile's corner codes
-    // once and lerps and remaps every vertex itself, with no hooked call per vertex. A postfix on
-    // GetBiomeColor(ix, iy) runs the same remap for other mods that call it, such as Seasonality
-    // recoloring tiles each season. While another mod hooks that method, as Expand World Data does for
-    // territory colors, the pass asks it for every vertex instead.
-    //
-    // Stands down when another mod can skip RebuildRenderMesh with a prefix, because that mod can
-    // color the mesh without this lerp. ValheimOptimized does for all but a zone's first mesh near the
-    // player or behind a loading screen, so a fixed shore lost the fix at its next rebuild.
-    //
-    // Client: vertex colors are rendering state.
+    // The terrain shader reads a swamp-to-plains blend as part Ashlands and draws its shoreline in grid-straight lines.
+    // Remaps the blend in a tile pass transpiled into RebuildRenderMesh, and in a GetBiomeColor postfix for others.
+    // Swamp and plains meet through a bridge strip that follows their crossover, with no Ashlands shoreline lines.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
     internal static class BiomeColorAliasPatch {
         private const string FixName = "Fix Swamp Plains Shore Seams";
 
+        // BlackForest is the only earthy code with neither channel (Meadows reads as bright grass); a
+        // black forest-to-plains blend decodes as part Mistlands and shines, which Fix Plains Border
+        // Shine handles. Ashlands is deliberate: near water its shoreline fills the strip and ends
+        // where the strip does, following the crossover instead of the zone grid.
         internal enum BridgeGround { BlackForest, Ashlands }
 
         internal static FixToggle Enabled;
@@ -64,7 +30,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         // to about 0.03 of Color32 rounding, so vertices either side of a 2 x 0.1 dead band never meet.
         internal const float DeadZone = 0.1f;
 
-        // The shader starts drawing lava at an Ashlands weight of 0.9.
+        // The shader starts drawing lava at an Ashlands weight of 0.9, from the base mask's alpha,
+        // which is 1 everywhere outside the Ashlands.
         internal const float AshlandsCap = 0.85f;
 
         internal static void BindConfig() {
@@ -73,19 +40,16 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 FixName,
                 true,
-                "Stops shores where swamp blends into plains from being drawn with the Ashlands shoreline, " +
-                "which ends in hard straight lines along the 64m zone grid. The game's terrain colors " +
-                "cannot express a swamp and plains blend without also meaning Ashlands, so this bridges " +
-                "the two with a strip of ground where they meet instead (see Swamp Plains Bridge Ground).");
+                "Stops shores where swamp blends into plains from showing the Ashlands shoreline in hard straight " +
+                "lines along the zone grid, by bridging the two with a strip of other ground (see Swamp Plains " +
+                "Bridge Ground).");
 
             Sharpness = ValConfig.BindServerConfig(
                 ValConfig.SectionTerrain,
                 "Swamp Plains Blend Sharpness",
                 3f,
-                "With Fix Swamp Plains Shore Seams on, how quickly swamp and plains ground give way to each " +
-                "other. 1 blends across the whole 64m tile with a wide bridge strip in the middle; higher " +
-                "values keep swamp and plains ground closer to the crossover and narrow the strip (about " +
-                "11m at 3, 9m at 4). A black forest strip never gets narrower than about 5m.",
+                "How narrow the strip where swamp meets plains is: 1 blends across the whole 64m tile, higher " +
+                "narrows it (about 11m at 3, 9m at 4). A black forest strip stays at least about 5m wide.",
                 advanced: true,
                 valMin: 1f,
                 valMax: 8f);
@@ -94,10 +58,9 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 "Swamp Plains Bridge Ground",
                 BridgeGround.BlackForest,
-                "With Fix Swamp Plains Shore Seams on, the ground drawn in the strip where swamp meets plains. " +
-                "BlackForest keeps the Ashlands look out entirely. Ashlands is closest to how the game " +
-                "blends them: near water the Ashlands shoreline fills the strip and ends at its edge, " +
-                "following where swamp and plains meet rather than the zone grid.",
+                "The ground drawn in the strip where swamp meets plains. BlackForest keeps the Ashlands look out " +
+                "entirely; Ashlands is closer to the game's look, with the shoreline following the crossover " +
+                "instead of the zone grid.",
                 advanced: true);
 
             Enabled.SettingChanged += (sender, args) => RebuildLoadedTerrain();
@@ -105,6 +68,9 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             Bridge.SettingChanged += (sender, args) => RebuildLoadedTerrain();
         }
 
+        // A mod that can skip RebuildRenderMesh with a prefix can color the mesh without this lerp:
+        // ValheimOptimized does for all but a zone's first mesh, so a fixed shore lost the fix at its
+        // next rebuild.
         private static readonly TakeoverCheck Takeover = new TakeoverCheck(
             typeof(BiomeColorAliasPatch),
             AccessTools.DeclaredMethod(typeof(Heightmap), "RebuildRenderMesh"),
@@ -126,6 +92,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         internal static float SharpnessValue => Sharpness != null ? Mathf.Max(1f, Sharpness.Value) : 1f;
         internal static BridgeGround BridgeValue => Bridge != null ? Bridge.Value : BridgeGround.BlackForest;
 
+        // For other mods that call the per-vertex color, such as Seasonality recoloring tiles each season.
         [HarmonyPostfix]
         [HarmonyPatch("GetBiomeColor", typeof(float), typeof(float))]
         private static void GetBiomeColorPostfix(Heightmap __instance, float ix, float iy, ref Color __result) {
@@ -136,6 +103,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
             // Neither channel set: the remap would return it unchanged.
             if (__result.r <= 0f && __result.a <= 0f) { return; }
+            // The shader's shoreline branch only runs within about 400 m of the camera.
             if (__instance.IsDistantLod || Takeover.TakenOver) { return; }
 
             ReadCorners(__instance);
@@ -341,6 +309,9 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             }
         }
 
+        // The shader decodes Ashlands (1,0,0,1) as Swamp (1,0,0,0) plus Plains (0,0,0,1), and draws its
+        // shoreline at full strength for any weight above zero, so no blend of the two may survive here.
+        // Each vertex is split into swamp, plains and bridge, keeping its total biome weight.
         internal static void Remap(ref Color color, int contributing, float sharpness, BridgeGround ground) {
             if ((contributing & ProtectedCorners) != 0) { return; }
             if ((contributing & SwampCorners) == 0 || (contributing & PlainsCorners) == 0) { return; }
@@ -367,7 +338,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             color.b += bridge;
         }
 
-        // Corners 0-3 are SW, SE, NW, NE; a corner contributes unless its lerp weight is zero.
+        // Corners 0-3 are SW, SE, NW, NE; a corner contributes unless its lerp weight is zero. On a shared
+        // edge only the two edge corners contribute, so both tiles decide alike and meet without a seam.
         internal static int ContributingCorners(float ix, float iy) {
             return (ix < 1f && iy < 1f ? 1 : 0)
                  | (ix > 0f && iy < 1f ? 2 : 0)
@@ -399,6 +371,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         internal static void AddCorner(int index, Color32 code) {
             int bit = 1 << index;
 
+            // A real Ashlands or Mistlands code, whose alpha is genuine.
             if (code.a > 0 && (code.r > 0 || code.b > 0)) {
                 ProtectedCorners |= bit;
             } else {

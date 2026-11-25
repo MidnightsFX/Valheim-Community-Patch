@@ -3,25 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Mist Query Overhead: mist volume queries read a zone-bucketed snapshot instead of
-    // scanning every live mister with a native position read each.
-    //
-    // Mister.InsideMister and its siblings loop over every loaded Mister reading
-    // transform.position, and ParticleMist runs them per emitted particle candidate, ten times a
-    // second, with a further per-particle loop over every Demister reading a native force-field
-    // property. In the Mistlands that is thousands of native reads and full scans per frame.
-    // ParticleMist.FindMaxMistAlltitude also fires 20 ground-height raycasts per tick.
-    //
-    // Misters never move, so their snapshot rebuilds only when one spawns or despawns (with a
-    // slow safety refresh), bucketed by 64 m zone so a query reads only the handful nearby.
-    // Demisters do move (carried torches, ships) and keep a per-frame snapshot. The ground probes
-    // are answered from heightmap data through the shared registry and sampler, with the Random
-    // draws replicated so downstream randomness is unchanged. The comparison math mirrors vanilla
-    // line for line. A demister with no force field is snapshotted with range 0 rather than
-    // throwing as vanilla would.
-    //
-    // Client: ParticleMist.Update needs a local player, and the AI checks short-circuit on a flag
-    // only a client sets. ComfyMods' Dramamist patches different methods and composes with this.
+    // Fix Mist Query Overhead: Mistlands mist checks scan every mister and demister with native reads, per particle.
+    // Prefixes Mister and ParticleMist queries to read zone-bucketed snapshots, and heightmaps instead of raycasts.
+    // Mist in the Mistlands costs far less per frame, and the random draws everything downstream sees are unchanged.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Mister))]
@@ -69,6 +53,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch("OnDisable")]
         private static void OnDisablePostfix() => _mistersDirty = true;
 
+        // Misters never move, so the snapshot rebuilds only when one is enabled or disabled, plus a slow
+        // safety refresh.
         private static void EnsureMisters() {
             int frame = Time.frameCount;
             if (!_mistersDirty && frame - _misterRebuildFrame < SafetyRefreshFrames) { return; }
@@ -118,6 +104,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return MisterBuckets.TryGetValue(ZoneSystem.GetZone(p), out List<int> bucket) ? bucket : EmptyBucket;
         }
 
+        // Demisters move (carried torches, ships), so theirs is taken once per frame.
         private static void EnsureDemisters() {
             int frame = Time.frameCount;
             if (frame == _demisterSnapFrame) { return; }
@@ -132,6 +119,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 Demisters[i] = new DemisterSnap {
                     m_demister = d,
                     m_pos = d.transform.position,
+                    // Vanilla would throw on a demister with no force field; range 0 keeps it out instead.
                     m_endRange = field != null ? field.endRange : 0f,
                 };
             }
@@ -139,6 +127,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- mister queries ------------------------------------------------------------------
 
+        // The comparisons mirror vanilla's. ComfyMods' Dramamist patches different methods and composes
+        // with these.
         [HarmonyPrefix]
         [HarmonyPatch(nameof(Mister.InsideMister))]
         private static bool InsideMisterPrefix(Vector3 p, float radius, ref bool __result) {

@@ -6,26 +6,9 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Trim ZDO Data Pool: released ZDO field tables stop pinning their old contents, and the
-    // pools they return to get a ceiling.
-    //
-    // A ZDO's fields of one type live in a BinarySearchDictionary, and when the ZDO is destroyed
-    // or its last field of that type removed, ZDOHelper hands the table to Pool<T>, a static
-    // stack with no limit and no trim. BinarySearchDictionary.Clear only zeroes its length: the
-    // key and value arrays stay allocated, and for strings and byte arrays the value array keeps
-    // the old payloads alive. So each pool holds the high-water mark of tables ever live at once,
-    // plus whatever strings and blobs those tables last held. A plateau rather than a climb, but
-    // one the process never comes down from.
-    //
-    // A transpiler on ZDOExtraData's release and remove entry points swaps ZDOHelper.Release and
-    // ZDOHelper.Remove(zid, hash) for versions that do the same work and then, when the fix is on,
-    // clear a reference-typed table's value array before pooling it, and drop the table instead
-    // of pooling it once that type's pool holds 'ZDO Data Pool Max Depth'. Patched at the callers
-    // rather than on the generic helpers because Mono compiles one body for all reference-type
-    // instantiations, so a patch aimed at the string version would land on the byte-array one.
-    // With the fix off the replacements do exactly what vanilla does.
-    //
-    // Server: the tables and their pools are largest where the whole world is loaded. Off by default.
+    // ZDO field table pools never shrink, and each pooled table keeps its old strings and byte arrays alive.
+    // Transpiles ZDOExtraData's release and remove methods to clear reference-typed tables and cap each pool's depth.
+    // Server memory can come back down after a busy period instead of holding the peak since the world loaded.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch]
@@ -39,17 +22,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionServerMemory,
                 "Trim ZDO Data Pool",
                 false,
-                "Caps the pools that recycle objects' field tables, and clears the strings and byte " +
-                "arrays a recycled table still points at. Without it the pools hold as many tables as " +
-                "were ever in use at once, each keeping its last contents alive, so memory never " +
-                "comes back down from the busiest moment since the world loaded. Off by default.");
+                "Caps the pools that recycle objects' field tables and clears the strings and byte arrays a " +
+                "recycled table still holds, so server memory can come back down after a busy period.");
 
             MaxDepth = ValConfig.BindServerConfig(
                 ValConfig.SectionServerMemory,
                 "ZDO Data Pool Max Depth",
                 4096,
-                "Tables of each field type kept for reuse. Tables released beyond this are left to " +
-                "the garbage collector; new ones are created again when needed.",
+                "Field tables of each type kept for reuse; any released beyond this are left to the garbage " +
+                "collector, and 0 keeps none.",
                 advanced: true,
                 valMin: 0,
                 valMax: 100000);
@@ -116,6 +97,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static void Recycle<T>(BinarySearchDictionary<int, T> table) {
             Stack<BinarySearchDictionary<int, T>> pool = PoolOf<T>.Stack;
 
+            // Vanilla's pooling when off, and off a server: the pools only grow large where the whole world is loaded.
             if (pool == null || Enabled == null || !Enabled.Value || !RunMode.IsServer) {
                 Pool<BinarySearchDictionary<int, T>>.Release(table);
                 return;
@@ -130,6 +112,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     return;
                 }
 
+                // BinarySearchDictionary.Clear only zeroes its length, so the value array still holds the old strings
+                // and byte arrays.
                 if (PoolOf<T>.IsReference && PoolOf<T>.Values != null) {
                     T[] values = PoolOf<T>.Values(table);
                     if (values != null) { Array.Clear(values, 0, values.Length); }
@@ -163,7 +147,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // Every ZDOExtraData method whose body calls one of the two helpers: the seven ReleaseX
         // methods, the seven RemoveX methods and the untyped Remove. Found by reading their IL
-        // rather than by name, so a renamed accessor is still covered.
+        // rather than by name, so a renamed accessor is still covered. Patched at these callers
+        // rather than on the generic helpers because Mono compiles one body for all reference-type
+        // instantiations, so a patch aimed at the string version would land on the byte-array one.
         [HarmonyTargetMethods]
         private static IEnumerable<MethodBase> TargetMethods() {
             if (VanillaRelease == null || VanillaRemove == null || OurRelease == null || OurRemove == null) {

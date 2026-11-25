@@ -4,28 +4,9 @@ using System.Reflection;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Build Menu Language Subscription: the hammer build menu refreshes its search terms on a
-    // language change through one handler, instead of subscribing every piece button again each
-    // time the menu reuses it.
-    //
-    // BuildUiPieceButton.Setup adds RefreshSearchTerm to the static Localization.OnLanguageChange
-    // and nothing ever removes it. BuildUi.UpdatePieceButtons calls Setup on every piece shown
-    // each time the menu opens or its tab, category or favorites change, reusing pooled buttons,
-    // so the same button is added again every time. The repair button is created and destroyed on
-    // every refresh, and each destroyed one stays reachable. Adding to a multicast delegate copies
-    // its whole invocation list, so each Setup allocates an array as long as the list, which grows
-    // for the whole session and across logouts: thousands of entries after a few minutes of
-    // building, megabytes of garbage per category switch, and as many refreshes on a language
-    // change.
-    //
-    // A transpiler replaces the Delegate.Combine in Setup with a call that leaves the event as it
-    // was. One static handler, subscribed in BuildUi.Awake and removed in OnDestroy as Minimap and
-    // Chat do with theirs, refreshes the menu's shown buttons and its repair button when the
-    // language changes. Pooled buttons are skipped, since Setup refreshes them before they are
-    // shown again. Buttons subscribe themselves as vanilla does while the handler's hooks are
-    // missing or the fix is off.
-    //
-    // Client: BuildUi is the hammer menu.
+    // Fix Build Menu Language Subscription: piece buttons re-subscribe on every Setup; the event list grows forever.
+    // A transpiler drops the Delegate.Combine in Setup; one handler added in BuildUi.Awake refreshes the shown buttons.
+    // Opening the hammer menu or switching categories stops allocating megabytes and keeping destroyed buttons alive.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(BuildUiPieceButton))]
@@ -49,7 +30,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             AccessTools.Method(typeof(BuildMenuLanguageEventPatch), nameof(KeepSubscription));
 
         // Takes the place of Delegate.Combine(Localization.OnLanguageChange, RefreshSearchTerm) in
-        // Setup, whose result is stored back into the event.
+        // Setup, whose result is stored back into the event. Combine copies the whole invocation
+        // list, so in vanilla every Setup allocated an array as long as the ever-growing list.
         private static Delegate KeepSubscription(Delegate current, Delegate added) {
             if (ApiSwitch.Off || !Hooks.Healthy) { return Delegate.Combine(current, added); }
 
@@ -63,6 +45,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static IEnumerable<CodeInstruction> SetupTranspiler(IEnumerable<CodeInstruction> instructions) =>
             PatchHelper.ReplaceCalls(instructions, CombineMethod, KeepSubscriptionMethod, "BuildUiPieceButton.Setup", expected: 1);
 
+        // Pooled buttons are skipped: Setup refreshes them before they are shown again.
         private static void OnLanguageChanged() {
             BuildUi buildUi = _buildUi;
             if (buildUi == null) { return; }

@@ -2,23 +2,10 @@
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Status Effect Regen Application Order: health, stamina and eitr regen from status effects
-    // add up the same whichever order the effects were applied in.
-    //
-    // SEMan hands the regen multiplier to each active effect in the order the effects were added. A
-    // bonus adds to the multiplier and a penalty scales it, so a penalty scales only the bonuses
-    // applied before it: Rested then Wet regenerates health at 1.125x, Wet then Rested at 1.25x, and
-    // Freezing or Puke, which stop health regen, stop it only when they came after every bonus.
-    //
-    // Prefixes on the three methods hand the multiplier to every bonus first and then to every
-    // penalty, each group in vanilla's list order, so each effect still applies its own arithmetic
-    // and a penalty always scales the bonuses. An effect's group is what it does to a multiplier of
-    // 1 on its own, so mods' effects are grouped by their own overrides. They run after other mods'
-    // prefixes and respect one that already replaced the call, and each stands down for the session
-    // when another mod transpiles its method.
-    //
-    // Client: regen is only worked out for the local player. Provenance: contributed by searica
-    // (PR #25).
+    // SEMan applies regen effects in the order added, so a penalty scales only the bonuses applied before it.
+    // Prefixes SEMan.ModifyHealthRegen, ModifyStaminaRegen and ModifyEitrRegen to apply all bonuses, then penalties.
+    // Health, stamina and eitr regen add up the same whichever order the status effects were applied in.
+    // Provenance: contributed by searica (PR #25).
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch]
@@ -32,8 +19,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 FixName,
                 true,
-                "Regen bonuses and penalties from status effects add up the same whichever order they " +
-                "were applied in, so effects like Wet or Freezing always reduce the extra regen from Rested.");
+                "Makes regen bonuses and penalties from status effects add up the same in any order, so Wet " +
+                "or Freezing always reduce the extra regen from Rested.");
         }
 
         private enum Regen { Health, Stamina, Eitr }
@@ -73,8 +60,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             if (!runOriginal) { return false; }
             if (Enabled == null || !Enabled.Value || takeover.TakenOver) { return true; }
 
-            // Pass 0 bonuses, pass 1 penalties and effects that leave regen alone. foreach, as
-            // vanilla, so an effect that edits the list mid-call fails the same way.
+            // Pass 0 bonuses, pass 1 penalties and effects that leave regen alone, each in vanilla's order.
+            // An effect's group is what it does to a multiplier of 1, so mods' effects sort by their own
+            // overrides. foreach, as vanilla, so an effect that edits the list mid-call fails the same way.
             List<StatusEffect> effects = seman.m_statusEffects;
             for (int pass = 0; pass < 2; pass++) {
                 foreach (StatusEffect effect in effects) {

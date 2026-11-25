@@ -5,24 +5,9 @@ using System.Text;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Missing Prefab Log Spam: objects whose prefab no longer exists are reported once per
-    // prefab and summed up at logout, instead of one warning per object per spawn pass.
-    //
-    // ZNetScene.CreateObject warns "Missing prefab hash" for every ZDO whose prefab is not
-    // registered, which is what a world looks like after a mod that added objects to it is removed.
-    // The host destroys each such ZDO after one warning and logs that too; a client cannot destroy
-    // them, so it warns again on every spawn pass for as long as they are in range. Entering an area
-    // such a mod left behind writes hundreds of lines in a second, and the console writer alone then
-    // costs a frame.
-    //
-    // Transpilers point the warning in CreateObject and the "Destroyed invalid prefab ZDO" lines in
-    // CreateObjectsSorted and CreateDistantObjects at sinks here; SpawnQueueCachePatch's replay of
-    // CreateObjectsSorted calls the destroyed sink directly. The first sighting of a hash logs one
-    // warning naming it, every later line goes to the debug sink, and ZNetScene.Shutdown logs one
-    // summary with a count per hash. The string building stays; the log write and its stack trace
-    // are the cost. CreateObject only runs on the main thread, so the counters are unguarded.
-    //
-    // Both: hosts and dedicated servers destroy the objects, clients keep warning about them.
+    // A removed mod's objects make CreateObject warn per object on every client spawn pass, costing frames.
+    // Transpilers on CreateObject, CreateObjectsSorted and CreateDistantObjects send those lines to counting sinks.
+    // The first few missing prefabs get one warning each, the rest go to debug logging, and logout logs a summary.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
@@ -42,11 +27,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 FixName,
                 true,
-                "Reports an object whose prefab no longer exists once per prefab, with a summary at logout, " +
-                "instead of warning about every such object on every spawn pass. Vanilla writes hundreds of " +
-                "lines in a second when entering an area that a removed mod left objects in, and a client " +
-                "keeps writing them for as long as those objects are in range. The lines are still visible " +
-                "with EnableDebugMode on. Changing this requires a game restart.");
+                "Warns once per missing prefab, with a summary at logout, and sends the per-object warnings a " +
+                "removed mod's leftovers cause to debug logging; turning it on needs a game restart.");
         }
 
         private static readonly MethodInfo LogMethod = AccessTools.Method(typeof(ZLog), nameof(ZLog.Log));
@@ -55,14 +37,16 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly MethodInfo DestroyedSinkMethod = AccessTools.Method(typeof(MissingPrefabLogSpamPatch), nameof(DestroyedSink));
 
         // Lines seen per distinct message, which carries the hash. On the host one line is one
-        // object; on a client the same object warns on every pass.
+        // object; on a client the same object warns on every pass. Unguarded: CreateObject only
+        // runs on the main thread.
         private static readonly Dictionary<string, int> Sightings = new Dictionary<string, int>();
         private static int _destroyed;
 
         private static bool On => Enabled != null && Enabled.Value;
 
         // Every ZLog.LogWarning in CreateObject lands here; only the missing-prefab one is counted,
-        // the rest go to the game's log as before.
+        // the rest go to the game's log as before. The caller's string is still built; the log write
+        // and its stack trace are the cost.
         private static void MissingSink(object message) {
             string text = message as string;
             if (!On || text == null || !text.StartsWith(MissingPrefix, StringComparison.Ordinal)) {

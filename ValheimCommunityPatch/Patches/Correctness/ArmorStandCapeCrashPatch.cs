@@ -5,22 +5,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Armor Stand Cape Crash: stops the game crashing when an armor stand shows a cape.
-    //
-    // Since the Deep North update a cape is MagicaCloth cloth, and VisEquipment's m_clothColliders, the body shapes the
-    // cape rests against, holds that library's colliders. The player prefab was re-authored for it, but both armor stand
-    // prefabs still list their five Unity CapsuleColliders from the old cloth system. Unity loads them into the list
-    // anyway, MagicaCloth reads each as one of its own colliders when the cape is built, and the game crashes outright
-    // with MagicaCloth2.ColliderManager.AddColliderInternal on top of the stack. Hanging a cape on a stand does it, and so
-    // does coming near a stand that wore one in a world from before the update.
-    //
-    // A postfix on VisEquipment.Awake replaces each CapsuleCollider in the list with a MagicaCloth capsule of the same
-    // axis, center and size on the same object, so the cape still rests on the stand's body, and drops any other entry
-    // that is not a MagicaCloth collider. It tests the entries rather than naming the prefabs, so a mod's copy of a stand
-    // is covered too; the player's list is already right and is left alone.
-    //
-    // Both: every game that loads a stand builds its cape, and a dedicated server loads the objects around its own
-    // position.
+    // Armor stands still list old Unity CapsuleColliders as cape colliders, and MagicaCloth crashes the game on them.
+    // Postfixes VisEquipment.Awake to swap each CapsuleCollider in m_clothColliders for a matching MagicaCloth capsule.
+    // Capes on armor stands no longer crash the game, and still rest on the stand's body.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(VisEquipment))]
@@ -33,9 +20,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Armor Stand Cape Crash",
                 true,
-                "Stops the game crashing when an armor stand shows a cape, whether hung on it now or kept from a " +
-                "world made before the Deep North update. The stands still point their capes at body shapes from " +
-                "the old cloth system; matching ones for the new system take their place.");
+                "Stops the game crashing when an armor stand shows a cape, including stands from worlds made before " +
+                "the Deep North update.");
         }
 
         // The cloth library's types are read off the field and its assembly, so VCP needs no reference to the library.
@@ -55,6 +41,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             return listType.GetGenericArguments()[0];
         }
 
+        // Unity loads the stands' old CapsuleColliders into this MagicaCloth-typed list anyway. Entries are tested
+        // rather than prefabs named, so a mod's copy of a stand is covered too; the player's list is already right.
         [HarmonyPostfix]
         [HarmonyPatch("Awake")]
         private static void AwakePostfix(VisEquipment __instance) {

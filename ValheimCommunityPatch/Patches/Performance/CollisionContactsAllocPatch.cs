@@ -4,23 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Collision Contact Allocation: reading a collision's contact points fills a reused
-    // buffer instead of allocating an array per collision callback.
-    //
-    // With reuseCollisionCallbacks on (Fix Collision Callback Allocation), Unity hands every
-    // callback the same Collision object and drops its cached contact array in between, so the
-    // first Collision.contacts read in each callback builds a new ContactPoint[]. The game reads it
-    // inside physics callbacks that fire every fixed step: Character.OnCollisionStay once per
-    // contacting collider for every owned character, ImpactEffect.OnCollisionEnter twice for one
-    // collision (the second read gets the cached array), FloatingTerrain.OnCollisionStay once.
-    //
-    // Transpilers route those reads through a buffer sized to the real contact count and filled
-    // by Collision.GetContacts. Sizing to the exact count is what keeps this a single edit: the
-    // compiled foreach and ImpactEffect's .Length read see the same length they always did. None
-    // of the three call sites holds the array across anything that could ask for contacts again.
-    // Above 64 contacts the property is used unchanged.
-    //
-    // Both.
+    // Fix Collision Contact Allocation: with reused callbacks, Collision.contacts allocates a new array per callback.
+    // Transpiles Character and FloatingTerrain.OnCollisionStay and ImpactEffect.OnCollisionEnter to use reused buffers.
+    // Physics callbacks that fire every fixed step stop feeding the garbage collector.
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class CollisionContactsAllocPatch {
@@ -34,7 +20,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly MethodInfo ReusedContactsMethod =
             AccessTools.Method(typeof(CollisionContactsAllocPatch), nameof(ReusedContacts));
 
-        // Same values, same order, same Length as Collision.contacts; only the lifetime differs.
+        // Same values, same order, same Length as Collision.contacts; only the lifetime differs. Unity drops the
+        // cached array between reused callbacks. One buffer per exact count keeps the compiled foreach and
+        // ImpactEffect's .Length unchanged; no call site holds it across anything that asks for contacts again.
         private static ContactPoint[] ReusedContacts(Collision collision) {
             if (collision == null) { return Empty; }
 

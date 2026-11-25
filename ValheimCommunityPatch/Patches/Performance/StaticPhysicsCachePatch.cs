@@ -3,23 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Static Object Ground Checks: a tree or rock's ground check reads its transform once
-    // instead of about six times, and can answer the terrain height from heightmap data.
-    //
-    // StaticPhysics.SUpdate and the methods it calls re-read this.transform and
-    // transform.position about six times per check, each a native call, and answer "how high is
-    // the terrain here" with a 10 km Physics.Raycast through ZoneSystem.GetGroundHeight.
-    // SlowUpdater drives 100 of these checks per frame continuously.
-    //
-    // A prefix replaces SUpdate with the same logic, order and thresholds, with the transform and
-    // position fetched once. An advanced, default-off toggle further answers the terrain height
-    // for objects that do not check solids from heightmap data (HeightmapSampling evaluates the
-    // same surface the ray would hit). Objects with m_checkSolids keep the raycast, because
-    // GetSolidHeight has to see rocks and buildings. The falling path is untouched. Stands down
-    // while HearthBelow is loaded: its StaticPhysics.PushUp prefix keeps objects in dug-out ground
-    // in place, and replacing SUpdate would skip it.
-    //
-    // Both: a dedicated server runs StaticPhysics for its own active area.
+    // Fix Static Object Ground Checks: StaticPhysics.SUpdate re-reads the transform about six times per ground check.
+    // A prefix replaces SUpdate with the same logic, order and thresholds, fetching the transform and position once.
+    // The 100 tree and rock ground checks run each frame make far fewer native calls.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(StaticPhysics))]
@@ -37,9 +23,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Static Ground Checks Use Heightmap Data",
                 false,
-                "Answers static objects' terrain-height checks from heightmap data instead of a " +
-                "physics raycast. Evaluates the same surface the ray would hit, without the physics " +
-                "engine. Off by default for one release while it soaks.",
+                "Answers static objects' terrain-height checks from heightmap data, the same surface the " +
+                "ray would hit, instead of a physics raycast. Off keeps the game's raycast.",
                 advanced: true);
         }
 
@@ -84,6 +69,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             sp.Fall();
         }
 
+        // GetSolidHeight keeps its raycast whatever the heightmap setting: it has to see rocks and buildings.
         private static float GetFallHeight(StaticPhysics sp, Transform transform, Vector3 position) {
             float height;
             if (sp.m_checkSolids) {

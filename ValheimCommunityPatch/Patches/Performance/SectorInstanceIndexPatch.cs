@@ -4,27 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Zone Occupancy Scan: "does any object stand in this zone" is answered from a per-zone
-    // tally instead of by walking every loaded instance.
-    //
-    // ZNetScene.HaveInstanceInSector iterates the entire instance dictionary, with a native
-    // alive-check and transform read per entry, until it finds one in the zone or has visited all
-    // of them to say no. ZoneSystem.UpdateTTL asks it for every loaded zone whose TTL expired.
-    //
-    // A per-zone count of non-distant instances answers in O(1), and a full index of every live
-    // instance grouped by its ZDO's zone (ByZone, with Slots giving each view's position for O(1)
-    // removal) is kept alongside it for ZoneDiffRemovalPatch. Both are maintained at the complete
-    // mutation surface of m_instances: ZNetScene.AddInstance is the only add, ZNetView.OnDestroy
-    // (via TeardownHooks) is the removal signal for every removal path, and ZDOMan.AddToSector is
-    // where every sector change lands. The index keys on the ZDO's sector where vanilla reads the
-    // live transform; for movers they differ by at most position-sync latency, in the direction
-    // that keeps a zone loaded marginally longer. One key is not a zone at all: the game files
-    // every ZDO outside its +/-256 zone grid under sector index 0, so that bucket (AliasedZone)
-    // mixes zones and its consumers decide it by vanilla's own test instead. Maintenance is
-    // unconditional; the read stands down to vanilla's walk if any hook failed to attach.
-    //
-    // Both: a dedicated server runs UpdateTTL over its own loaded zones, every one of which lies
-    // outside the grid because its reference position does.
+    // Fix Zone Occupancy Scan: each zone whose TTL expires asks if it holds an object by walking every loaded one.
+    // Prefixes ZNetScene.HaveInstanceInSector to answer from a per-zone tally kept up by three maintenance hooks.
+    // Zone unload checks cost a lookup instead of a walk over every loaded object.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
@@ -36,11 +18,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Zone Occupancy",
                 false,
-                "Diagnostic. Answers every zone-occupancy check both from the tally and " +
-                "vanilla's full walk, acts on vanilla's answer, and logs disagreements. Costs " +
-                "the walk this fix exists to avoid, so leave it off unless you are validating " +
-                "the tally. Transient one-off disagreements on zones holding a moving creature " +
-                "are expected and harmless; persistent ones are not.",
+                "Diagnostic. Checks every zone-occupancy answer against vanilla's full walk, uses vanilla's, " +
+                "and logs disagreements (one-off ones near a moving creature are harmless); costs the walk " +
+                "this fix saves.",
                 advanced: true);
         }
 
@@ -58,8 +38,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static readonly Dictionary<Vector2s, List<ZNetView>> ByZone = new Dictionary<Vector2s, List<ZNetView>>();
         internal static readonly Dictionary<int, Slot> Slots = new Dictionary<int, Slot>();
 
-        // Without all three maintenance hooks the index silently drifts, so every consumer (the
-        // occupancy read here and ZoneDiffRemovalPatch) stands down when any is missing.
+        // AddInstance is m_instances' only add, ZNetView.OnDestroy sees every removal path and
+        // AddToSector every sector change. Without all three the index silently drifts, so every
+        // consumer (the occupancy read here and ZoneDiffRemovalPatch) stands down when any is missing.
         private static readonly HookHealth Hooks = new HookHealth(
             typeof(SectorInstanceIndexPatch),
             "Sector instance index",
@@ -149,7 +130,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             IndexRemove(nview, id);
 
             // Keyed on the sector ZDOMan filed the ZDO under, as the move hook is: an invalidated
-            // ZDO sits in sector 0 while its position still reads as the last synced spot.
+            // ZDO sits in sector 0 while its position still reads as the last synced spot. Vanilla
+            // reads the live transform; for a mover the two differ by sync latency, which only
+            // keeps a zone loaded slightly longer.
             IndexAdd(nview, id, ZoneOf(zdo.OutsideZones ? ZoneSystem.SectorZero : zdo.GetSectorIndex()));
         }
 
@@ -194,7 +177,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (ApiSwitch.Off || !Hooks.Healthy) { return true; }
 
             // A zone the game files under sector index 0 shares its key with every other such
-            // zone, so the tally cannot answer for it.
+            // zone, so the tally cannot answer for it. Every zone a dedicated server loads around
+            // its own far-off reference position is one.
             bool indexed = ZoneSystem.SectorToIndex(sector) == ZoneSystem.SectorZero
                 ? AliasedBucketHas(sector)
                 : NonDistantCount.ContainsKey(sector);

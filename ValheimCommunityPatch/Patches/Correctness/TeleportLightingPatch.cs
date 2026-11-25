@@ -4,32 +4,10 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Lighting After Teleport: the lighting is right as soon as the loading screen lifts after a
-    // portal, a dungeon door, logging in or respawning, instead of going flat and sweeping back in.
-    //
-    // ReflectionUpdate re-renders one of two realtime reflection probes every 3 s at the network
-    // reference position, and the fresh probe's 2000 x 1000 x 2000 m box grows from nothing over 3 s
-    // on a power curve that keeps it near nothing for the first two. Anything outside both boxes is
-    // lit by the skybox alone: flat and orange. After a far portal or a dungeon door (interiors sit
-    // 5000 m up, far outside the box) the player stands outside both probes until the next render,
-    // then watches the new box grow out from them. Logging in and respawning are the same case. A
-    // dungeon door also renders a probe through its interior's environment zone, but at a reference
-    // position Player.LateUpdate has not moved yet, so that render lands back outside the door.
-    //
-    // A prefix on ReflectionUpdate.Update watches for the loading screen ending (no local player, or
-    // one that is teleporting; a TeleportTo postfix also catches a teleport that starts and ends
-    // between two Updates). A transpiler has UpdateReflection read the position Player.LateUpdate is
-    // about to set, so a render on the arrival frame lands where the player is. The first render after
-    // the loading screen is the arrival render: the environment zone's when a door makes one, or else
-    // one the prefix forces. ReflectionProbeRender shows it at full size as soon as it finishes, and
-    // the regular cycle then re-renders the other probe inside that full box, so nothing sweeps.
-    // Renders during the load itself are left to vanilla: they give the probes something to show
-    // until the arrival one finishes. Without the transpiler the prefix waits one frame for
-    // Player.LateUpdate before forcing. This hook is the one place both lighting fixes touch the probe
-    // timer: Fix Lightning Flash Lighting runs from it, after this fix, so neither can undo the other.
-    //
-    // Client: the probes exist only where there is a camera. Provenance: ported from Krosshair's
-    // Valheim Wire Patches and reworked.
+    // After a loading screen the player stands outside both reflection probes, flat and orange until one grows in.
+    // Prefixes ReflectionUpdate.Update and transpiles UpdateReflection to render a full-size probe on arrival.
+    // Lighting is right the moment the loading screen lifts after portals, dungeon doors, logins and respawns.
+    // Provenance: Krosshair's Valheim Wire Patches, ported and reworked.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ReflectionUpdate), "Update")]
@@ -53,9 +31,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Lighting After Teleport",
                 true,
-                "Keeps the lighting right after portals, dungeon doors, logging in and respawning. Vanilla " +
-                "grows a freshly rendered lighting probe out from the player over a few seconds, so after " +
-                "a loading screen the lighting goes flat and orange and sweeps back in.");
+                "Keeps the lighting right after portals, dungeon doors, logging in and respawning, instead " +
+                "of going flat and orange and sweeping back in.");
 
             Enabled.SettingChanged += (sender, args) => { if (!Enabled.Value) { Reset(); } };
         }
@@ -94,6 +71,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
 
             if (Enabled != null && Enabled.Value) {
+                // Renders during the load stay vanilla's: they give the probes something to show until
+                // the arrival render finishes.
                 if (RunMode.InLoadingScreen()) {
                     _arrivalPending = true;
                 } else if (_arrivalPending) {
@@ -113,9 +92,13 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 }
             }
 
+            // Fix Lightning Flash Lighting runs from here, after this fix: the one place both touch the
+            // probe timer, so neither can undo the other.
             LightningFlashLightingPatch.OnProbeUpdate(__instance, dt);
         }
 
+        // A fresh probe's box normally grows from nothing over 3 s, leaving everything outside it lit by
+        // the sky alone; ReflectionProbeRender shows the arrival render at full size once it finishes.
         private static void Arrive(ReflectionUpdate r) {
             ReflectionProbeRender.Force(r);
             Logger.LogDebug("Fix Lighting After Teleport: rendering the reflection probe on arrival.");

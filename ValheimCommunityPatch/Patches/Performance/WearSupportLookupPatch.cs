@@ -8,30 +8,10 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Support Lookup Cost: "which building piece owns this collider" is a table lookup
-    // instead of a native hierarchy walk.
-    //
-    // WearNTear.UpdateSupport calls Collider.GetComponentInParent<WearNTear>() once per overlap
-    // hit in its clear-broadcast and main loops. It also tests "is this collider mine" with LINQ
-    // Contains over its own collider array, an allocating enumerator per hit. WearNTearUpdater
-    // visits every loaded piece continuously. Up to 1.0.20 there was a third walk, once per cached
-    // support collider on every invocation even when the cache held; 1.0.21 replaced it with
-    // m_supportWearNTear, a list of the pieces filled beside the cached colliders (from the main
-    // loop's lookup, so from ResolveSupport while this fix is active).
-    //
-    // A transpiler swaps the walks (two, or three on a build without m_supportWearNTear) for
-    // ResolveSupport and the two Contains calls for IsOwnCollider. ResolveSupport reads a collider-to-piece dictionary that is filled when a
-    // piece builds its collider list (SetupColliders, which is lazy) and learned on a miss, so a
-    // cold table costs exactly vanilla, and is cleaned through a reverse map in the shared
-    // OnDestroy postfix. Every call site Unity-null-checks the result, so a stale entry for a
-    // destroyed piece behaves like vanilla's "no ancestor found". The lookup stands down to the
-    // walk if either maintenance hook failed to attach. GetCOM also fetches the transform once
-    // for an expression vanilla fetched it twice for.
-    //
-    // A GetSupport prefix that once lived here was removed after measurement: intercepting a
-    // method that hot cost far more than the fallback it guarded. Do not reintroduce it as a
-    // prefix. Both: a dedicated server runs UpdateSupport for its active area. Provenance: the
-    // map-probe form corroborated by ontrigger's ValheimPerformanceOptimizations (MIT).
+    // Fix Support Lookup Cost: UpdateSupport walks the hierarchy for every overlap hit to find the piece that owns it.
+    // Transpiles UpdateSupport to use a collider-to-piece table and an array scan in place of the walks and LINQ.
+    // Structural support checks on every loaded building cost less, on clients and servers alike.
+    // Provenance: map-probe form corroborated by ontrigger's ValheimPerformanceOptimizations (MIT).
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(WearNTear))]
@@ -43,10 +23,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Support Lookup",
                 false,
-                "Diagnostic. Resolves every support collider both through the lookup table and " +
-                "vanilla's hierarchy walk, acts on vanilla's answer, and logs any disagreement. " +
-                "Costs the walk this fix exists to avoid, so leave it off unless you are " +
-                "validating the table.",
+                "Diagnostic. Resolves every support collider through both the lookup table and the game's " +
+                "own walk, acts on the game's answer and logs any disagreement; costs the walk this fix saves.",
                 advanced: true);
         }
 
@@ -106,6 +84,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             owned.Add(colliderId);
         }
 
+        // SetupColliders runs lazily, so colliders seen before it are learned on a miss in ResolveSupport.
         [HarmonyPostfix]
         [HarmonyPatch("SetupColliders")]
         private static void SetupCollidersPostfix(WearNTear __instance) {
@@ -162,8 +141,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                         $"Support lookup verify: DIVERGED on collider '{collider.name}' " +
                         $"(table: {(cachedDead ? "null" : cached.name)}, walk: " +
                         $"{(walkedDead ? "null" : walked.name)}). Vanilla's answer was used. " +
-                        "Please report this - leave 'Fix Support Lookup Cost' off until it is " +
-                        "understood.");
+                        "Please report this - leave 'Verify Support Lookup' on until it is " +
+                        "understood, so every lookup uses the game's own answer.");
                 }
 
                 if (++_comparisonsSinceReport >= VerifyReportInterval) {
@@ -222,7 +201,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // Both replacements are required, so this backs out unless it can make every swap.
+        // Both replacements are required, so this backs out unless it can make every swap. Do not add a
+        // GetSupport prefix: measured, intercepting a method that hot cost more than the walk it saved.
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]

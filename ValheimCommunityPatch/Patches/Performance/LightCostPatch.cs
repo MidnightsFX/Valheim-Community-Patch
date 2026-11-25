@@ -4,39 +4,24 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Light Flicker Overhead: torch flicker stops updating for lights beyond both a configurable
-    // distance and the light's own LOD distance.
-    //
-    // LightFlicker.CustomUpdate runs for every flickering light every frame and is mostly native
-    // calls: an alive-check, get_enabled, set_intensity and a localPosition write. It is also what
-    // gives a light its brightness, because ApplySettings, which runs on enable and on every
-    // graphics-settings change, sets the intensity to zero. LightLod keeps each light switched on
-    // out to its own m_lightDistance (40 m by default, 80 m for torches, 100 m for fires).
-    //
-    // A prefix caches each light's LOD distance and whether it is out of range, re-measured every
-    // ten frames so carried torches stay correct, and skips the update when the light is beyond
-    // both Light Flicker Distance and its LOD distance from LightLod's own reference point (the
-    // player, or the camera in free fly). A light is not skipped until one update has run with it
-    // switched on since its last ApplySettings, so a skipped light holds its last lit intensity
-    // instead of zero. Lights with a TTL always update because they destroy themselves from inside
-    // CustomUpdate. The distance is client-local because it is a per-machine preference.
-    //
-    // Client: lights and flicker are rendering.
+    // Fix Light Flicker Overhead: LightFlicker.CustomUpdate runs every frame for every flickering light, however far.
+    // Prefixes CustomUpdate to skip lights past both 'Light Flicker Distance' and their own LOD distance.
+    // Distant flickering lights stop costing a per-frame update and hold their last lit brightness.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(LightFlicker))]
     internal static class LightCostPatch {
         internal static ConfigEntry<float> FlickerDistance;
 
+        // Client-local, not server-synced: a per-machine preference.
         internal static void BindConfig() {
             FlickerDistance = ValConfig.cfg.Bind(
                 "Client config",
                 "Light Flicker Distance",
                 45f,
                 new ConfigDescription(
-                    "Metres beyond which torch flicker stops updating. A light always keeps updating " +
-                    "inside its own light LOD distance, where the game keeps it switched on (40 m for " +
-                    "most lights, 80 m for torches, 100 m for fires), so this only affects lights past both.",
+                    "Distance in meters beyond which torch flicker stops updating. Lights always update inside " +
+                    "the distance where the game switches them off (40 m, torches 80 m, fires 100 m).",
                     new AcceptableValueRange<float>(10f, 200f),
                     new ConfigurationManagerAttributes { IsAdvanced = true }));
         }
@@ -66,6 +51,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch(nameof(LightFlicker.CustomUpdate))]
         private static bool CustomUpdatePrefix(LightFlicker __instance) {
+            // A light with a TTL destroys itself from inside CustomUpdate, so it always runs.
             if (ApiSwitch.Off || __instance.m_ttl > 0f) { return true; }
 
             Player player = Player.m_localPlayer;
@@ -94,7 +80,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             if (!anchor.m_skip || anchor.m_lit) { return !anchor.m_skip; }
 
-            // Vanilla's update restores the intensity, but only while the light is switched on.
+            // ApplySettings (on enable and on every graphics-settings change) zeroes the intensity and
+            // only vanilla's update restores it, while the light is switched on; so a light is skipped
+            // only after one such update, and holds its last lit intensity instead of zero.
             Light light = __instance.m_light;
             if (light != null && light.enabled) {
                 anchor.m_lit = true;

@@ -1,22 +1,10 @@
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Container Grid Alignment: standard chests (4 or fewer rows) open with their slots
-    // centered instead of pinned to the top of the window after a tall container was opened.
-    //
-    // InventoryGrid.ResetView pins the container grid to the top of the window (pivot 1.0) when
-    // the grid is taller than the window, centers it (0.5) otherwise, and zeroes its scroll
-    // offset. UpdateContainer only calls ResetView while m_firstContainerUpdate is true, and only
-    // CloseContainer (walking out of range with the chest still open) sets it back; Hide never
-    // does. All containers share a single UI grid, so a chest opened after one that was closed
-    // normally skips ResetView and keeps the previous container's pivot and scroll offset.
-    //
-    // A prefix on InventoryGui.Show sets m_firstContainerUpdate back to true when the container
-    // has changed, so the grid recalculates its pivot. Reopening the same container still keeps
-    // its scroll position. A postfix on InventoryGui.CloseContainer clears the tracked container
-    // on auto-close.
-    //
-    // Client: InventoryGui is client-only. Provenance: contributed by Dreamwraith (PR #19).
+    // All chests share one grid, reset only after an auto-close, so a chest opens with the last chest's layout.
+    // Prefixes InventoryGui.Show to set m_firstContainerUpdate when the chest changes, so the grid runs ResetView.
+    // A standard chest opened after a taller one is centered instead of top-aligned and scrolled.
+    // Provenance: contributed by Dreamwraith (PR #19).
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(InventoryGui))]
@@ -29,8 +17,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Container Grid Alignment",
                 true,
-                "Resets the container grid pivot when switching chests, so standard chests open " +
-                "centered instead of keeping the top-aligned layout of a larger container.");
+                "Resets the chest grid's layout when you open a different chest, so a standard chest opens " +
+                "centered after a larger one.");
         }
 
         private static Container _lastContainer;
@@ -40,6 +28,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static void ShowPrefix(InventoryGui __instance, Container container) {
             if (Enabled == null || !Enabled.Value) { return; }
 
+            // Only on a change of chest, so reopening the same one keeps its scroll position.
             if (container != null && container != _lastContainer) {
                 _lastContainer = container;
                 __instance.m_firstContainerUpdate = true;

@@ -4,29 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Fix Terrain Paint Zone Fanout: terrain paint is recorded into every zone it actually
-    // covers, so the two sides of a zone border stop disagreeing.
-    //
-    // TerrainOp.Awake decides which zones an operation touches from GetRadius() alone, but
-    // TerrainComp.PaintCleared shifts the position half a texel and floors it, which snaps the
-    // paint kernel up to a full texel toward -x/-z. An operation near a zone's west or south
-    // border therefore paints that zone's own copy of the shared boundary texel while the
-    // neighbour, never included in the fan-out, keeps the unpainted copy. Only paint is affected:
-    // level, raise and smooth round to nearest and stay symmetric.
-    //
-    // A postfix on Awake finds the extra zones the paint kernel reaches on the -x/-z side and
-    // hands them a paint-only copy of the operation (the settings object is masked around the
-    // call, which is safe because ApplyOperation serialises it synchronously). This changes what
-    // is saved, for operations placed from now on; PaintSeamReconcilePatch repairs borders that
-    // already diverged.
-    //
-    // Zone lookup is horizontal only, so a TerrainOp created inside a dungeon (built at y+5000)
-    // would resolve to the surface heightmaps beneath it. Unreachable today because both TerrainOp
-    // creators refuse inside no-build locations, which every dungeon is; if that gate ever
-    // loosens, compare the operation's y against the heightmap's before extending to it.
-    //
-    // Both, and not gated on side: TerrainOp has no ZNetView, so Awake runs only on the peer that
-    // created it, and the record has to be correct wherever that is.
+    // TerrainOp.Awake picks zones by radius, but paint reaches a texel further west and south, missing the neighbour.
+    // Postfixes TerrainOp.Awake to apply a paint-only copy of the operation to the extra zones the paint reaches.
+    // New edits no longer leave paint stopping dead at zone borders; PaintSeamReconcilePatch repairs older ones.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(TerrainOp))]
@@ -39,10 +19,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 "Fix Terrain Paint Zone Fanout",
                 true,
-                "Sends terrain paint to every zone the paint actually covers. Vanilla measures which " +
-                "zones an edit touches from its radius, but the paint itself reaches about a metre " +
-                "further west and south, so the neighbouring zone never records paint applied to ground " +
-                "it shares - which is what leaves dirt stopping dead along a 64m zone border.");
+                "Sends terrain paint to every zone it covers, so paint no longer stops dead along a zone border " +
+                "for edits made from now on.");
         }
 
         private static readonly List<Heightmap> Reached = new List<Heightmap>();
@@ -74,9 +52,14 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             PaintReached.Clear();
 
             try {
+                // Zone lookup is horizontal only, so an operation inside a dungeon (y+5000) would reach the surface
+                // below. Unreachable while both TerrainOp creators refuse no-build locations, which every dungeon is;
+                // if that loosens, compare the operation's y with the heightmap's before extending to it.
                 Heightmap.FindHeightmap(pos, vanillaRadius, Reached);
                 Heightmap.FindHeightmap(pos, paintReach, PaintReached);
 
+                // Paint only: level, raise and smooth round to nearest, so vanilla's fan-out already fits them.
+                // Masking the shared settings is safe because ApplyOperation serialises them synchronously.
                 bool level = settings.m_level;
                 bool raise = settings.m_raise;
                 bool smooth = settings.m_smooth;

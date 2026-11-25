@@ -6,28 +6,9 @@ using System.Reflection.Emit;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Doubled ZDO Lookups: every read of ZDO data searches the per-type dictionary once
-    // instead of twice.
-    //
-    // The four ZDOHelper helpers behind the whole read path ask the dictionary whether a key is
-    // present and then ask it again for the value, e.g.
-    //
-    //   => !container.ContainsKey(zid) ? defaultValue : container[zid].GetValueOrDefault(hash, defaultValue);
-    //
-    // Both are a full Dictionary.FindEntry over the largest dictionaries in the process, keyed on
-    // a ZDOID whose hash is a bounds-checked list read. This sits under every ZDO.GetInt, GetFloat,
-    // GetVec3 and GetString in the game, under ZSyncAnimation for every remote character every
-    // fixed step, and under ZDO.Serialize, which does sixteen of them per ZDO on every send tick
-    // and every save.
-    //
-    // Four signature-identical replacements answer both questions with one TryGetValue, and a
-    // transpiler swaps the call operand inside each of ZDOExtraData's 19 accessors. Equivalence is
-    // exact, including a present-but-null table throwing the same NullReferenceException. Patched
-    // on the accessors rather than on the generic helpers themselves because Mono compiles one
-    // shared body for all reference-type instantiations of a generic, so a patch aimed at
-    // GetValueOrDefault<string> would land on GetValueOrDefault<byte[]> too.
-    //
-    // Both: hardest on the server, under every ZDO send and every world save.
+    // Fix Doubled ZDO Lookups: ZDOHelper's read helpers look each ZDO up in the data dictionary twice per read.
+    // Transpiles ZDOExtraData's 19 single-value accessors to call replacements that make one TryGetValue.
+    // Every ZDO.GetInt, GetFloat, GetVec3, GetString and similar read costs one dictionary search instead of two.
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class ZdoReadLookupPatch {
@@ -48,6 +29,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private const int ExpectedAccessors = 19;
 
+        // The accessors, not the generic helpers: Mono shares one compiled body across reference-type
+        // instantiations, so a patch on GetValueOrDefault<string> would land on GetValueOrDefault<byte[]> too.
         [HarmonyTargetMethods]
         private static IEnumerable<MethodBase> TargetMethods() {
             int found = 0;
@@ -67,6 +50,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // ---- Single-lookup replacements. Signatures match ZDOHelper's exactly. -------------------
+        // Behavior matches too, down to a present-but-null table throwing the same NullReferenceException.
 
         private static TType GetValueOrDefault<TType>(
             Dictionary<ZDOID, BinarySearchDictionary<int, TType>> container,

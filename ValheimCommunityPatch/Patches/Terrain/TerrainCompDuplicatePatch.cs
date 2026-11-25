@@ -4,36 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Fix Terrain Compiler Duplicates: an edit that reaches a zone before its saved terrain compiler
-    // loads goes into that compiler, and a spare compiler that still appears is removed from its zone
-    // only, which then redraws from the one kept.
-    //
-    // A zone gains a second compiler when an edit reaches it before its saved compiler has been
-    // created: a fire melting snow or a footstep in deep snow right after a portal arrival, or the
-    // edits of another player who arrived first. Heightmap.GetAndCreateTerrainCompiler then makes a new,
-    // empty one, and when the saved one arrives TerrainComp.Awake puts both in the static
-    // s_duplicateInstances. Start's TryCleanInvalidTCs then keeps the single compiler with the most
-    // operations in the whole set and destroys every other one, but the set holds the pairs of every
-    // zone that doubled since the last cleanup. With two zones doubled at once the real compiler of
-    // the less edited zone is destroyed along with both new ones: its height and paint edits are gone
-    // (its ZDO is deleted when this peer owns it or nobody does), and the ground drops back to the
-    // world's own along that zone's borders. Vanilla also never redraws the zone, so a tile that had drawn from the removed compiler keeps
-    // showing it until something else pokes it.
-    //
-    // Even per zone, the edits that went into the spare are lost there, while the zone across the border
-    // kept them: the two sides then disagree on their shared border and the ground cracks along it.
-    //
-    // A prefix replaces TryCleanInvalidTCs with the same rule applied per zone: within each zone of
-    // the set, keep the compiler with the most operations, destroy the others the way vanilla does
-    // (claiming an unowned one first, so its ZDO goes too), then poke the kept compiler's heightmap.
-    // Compilers of different zones are never compared. The set is cleared as vanilla clears it.
-    // A prefix on GetAndCreateTerrainCompiler stops most spares being made: when the zone has a saved
-    // compiler that has not spawned yet, it is spawned there and then (or recovered by Fix Terrain
-    // Compiler Init Race if it spawned before its heightmap), and claimed if nobody owns it, so the
-    // edit goes into it. A client that has not received the zone's saved compiler yet still makes a
-    // spare, which the cleanup handles as before.
-    //
-    // Both: compilers are created and cleaned up on every peer that loads the zone.
+    // An edit before a zone's saved compiler loads makes an empty spare, and the cleanup deletes across zones.
+    // Prefixes GetAndCreateTerrainCompiler to spawn the saved compiler, and TryCleanInvalidTCs to clean per zone.
+    // Edits made right after arriving are kept, and a neighbouring zone's raised ground and paint are never wiped.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(TerrainComp))]
@@ -46,16 +19,15 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 "Fix Terrain Compiler Duplicates",
                 true,
-                "An edit that reaches a zone before its saved terrain compiler has loaded (as just after " +
-                "arriving) goes into the saved one, which is loaded on the spot. Vanilla starts a second, " +
-                "empty compiler that is later deleted, so that zone loses the edit and the ground cracks " +
-                "along its border. A second compiler that still appears is removed from that zone only; " +
-                "vanilla deletes the less edited compilers of every zone that doubled at the same time, " +
-                "wiping a neighbouring zone's terrain edits.");
+                "Keeps terrain edits made just after arriving in a zone, and stops a spare terrain compiler's " +
+                "cleanup wiping a neighbouring zone's edits, both of which cracked the ground along zone borders.");
         }
 
         private static readonly List<TerrainComp> Spares = new List<TerrainComp>();
 
+        // Vanilla keeps the single most edited compiler of the whole set, which holds every zone that doubled
+        // since the last cleanup, and never redraws the zone. Here each zone keeps its own most edited one,
+        // an unowned spare is claimed first so its ZDO goes too, and the kept one's heightmap is poked.
         [HarmonyPrefix]
         [HarmonyPatch("TryCleanInvalidTCs")]
         private static bool TryCleanInvalidTCsPrefix(TerrainComp __instance) {
@@ -127,7 +99,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             return any;
         }
 
-        // Spawns the zone's saved compiler before vanilla would make an empty spare for the edit.
+        // Spawns the zone's saved compiler before vanilla would make an empty spare for the edit. A client that
+        // has not received the saved compiler yet still makes a spare, which the cleanup handles.
         [HarmonyPatch(typeof(Heightmap), nameof(Heightmap.GetAndCreateTerrainCompiler))]
         private static class SpawnSavedCompilerHook {
             private static readonly List<ZDO> Saved = new List<ZDO>();

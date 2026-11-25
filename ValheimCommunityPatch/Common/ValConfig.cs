@@ -101,6 +101,7 @@ namespace ValheimCommunityPatch {
             Patches.Performance.SnowPaintSavePatch.BindConfig();
             Patches.Performance.HourlyAssetUnloadPatch.BindConfig();
             Patches.Performance.ConfigWatcherPollingPatch.BindConfig();
+            Patches.Performance.JotunnCachePrewarmPatch.BindConfig();
             Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
             Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
             Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();

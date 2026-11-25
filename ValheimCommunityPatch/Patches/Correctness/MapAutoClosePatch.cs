@@ -5,23 +5,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Map Auto-Close: keeps an open map open when a world key changes somewhere on the server,
-    // unless a boss is near the player.
-    //
-    // Game.UpdateNoMap re-applies the nomap setting by calling Minimap.SetMapMode(Small), which also
-    // closes an open map. It runs from Game.UpdateWorldRates on every global key change, and each key
-    // change makes the server resend the whole key list to every client, which re-adds each key and
-    // closes the map once per key. A boss sets the activeBosses key the first time it is alerted (a hit
-    // is enough) and again when it dies, alongside its defeated_ key, so each boss fight anywhere on
-    // the server closes every player's open map.
-    //
-    // A transpiler swaps the one SetMapMode call in UpdateNoMap for a guard that skips only an open
-    // map being closed, and still lets it close when a boss is loaded within range, as vanilla would
-    // for the players at the fight. The nomap computation is kept verbatim, as are opening the small
-    // map on spawn and hiding it when nomap turns on. The guard does not check whether the boss is
-    // alerted: the key resend reaches the players who do not own the boss before its alert state does.
-    //
-    // Client: the map only exists on a client, and UpdateNoMap runs there on every key change.
+    // Game.UpdateNoMap closes an open map on every world key change, so any boss woken or killed closes every map.
+    // Transpiles UpdateNoMap's SetMapMode call to skip closing an open map unless a boss is in the configured range.
+    // Players keep their map open through boss fights elsewhere on the server; it still closes for those near the boss.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Game))]
@@ -35,16 +21,15 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Map Auto-Close",
                 true,
-                "Stops the map closing whenever a boss is woken or killed anywhere on the server. Vanilla " +
-                "closes every player's open map on any world key change, and each boss fight makes several. " +
-                "The map still closes as before for a player with a boss nearby.");
+                "Stops the map closing whenever a boss is woken or killed anywhere on the server; it still " +
+                "closes for a player with a boss nearby.");
 
             BossRange = ValConfig.BindServerConfig(
                 ValConfig.SectionCorrectness,
                 "Map Auto-Close Boss Range",
                 100f,
-                "How close a boss must be for a world key change to close your map, as vanilla does, in " +
-                "metres. The default matches the range at which the boss health bar shows. 0 never closes it.",
+                "How close, in metres, a boss must be for a world key change to close your map as vanilla does. " +
+                "The default is the boss health bar's range; 0 never closes it.",
                 false, 0f, 1000f);
         }
 
@@ -68,6 +53,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             minimap.SetMapMode(mode);
         }
 
+        // Any boss in range counts, alerted or not: the key resend reaches players who do not own the boss before its
+        // alert state does.
         private static bool BossNearby() {
             Player localPlayer = Player.m_localPlayer;
             if (localPlayer == null) { return true; }

@@ -4,24 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Evict Dead ZDO Records: the server drops its record of a destroyed object once it is old
-    // enough that no stale copy of it can still be on the wire.
-    //
-    // ZDOMan.m_deadZDOs records the id of every ZDO destroyed on the server, against a game-time
-    // stamp nothing reads. Its one use is in RPC_ZDOData: a create that arrives for a dead id is
-    // destroyed again, so a client whose update for an object crossed the destroy in flight cannot
-    // resurrect it. The dictionary is cleared only when a world loads, so every arrow, dropped
-    // item, felled tree and killed creature adds an entry for the life of the process. The window
-    // it guards is the in-flight time of that client's queued changes: a client drops its own copy
-    // as soon as the routed destroy reaches it and sends nothing more for it.
-    //
-    // A postfix on ZDOMan.HandleDestroyedZDO queues the id with the real time it died; a postfix
-    // on ZDOMan.Update dequeues records older than 'Dead ZDO Retain Seconds' and removes the
-    // entry, provided it still carries the stamp recorded here, so an id destroyed twice keeps its
-    // newer record. Real time rather than the stored stamp, because game time jumps forward when
-    // players sleep. Entries made while the fix was off are left as vanilla leaves them.
-    //
-    // Server: vanilla records dead ids only on the host. Off by default.
+    // ZDOMan.m_deadZDOs keeps every destroyed object's id until the world reloads, so it grows for the server's life.
+    // Postfixes ZDOMan.HandleDestroyedZDO to queue each id and ZDOMan.Update to evict those older than the retain time.
+    // Server memory stops growing with every arrow, dropped item, felled tree and killed creature.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
@@ -35,20 +20,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionServerMemory,
                 "Evict Dead ZDO Records",
                 false,
-                "Drops the server's record of a destroyed object once it is a few minutes old. The " +
-                "server keeps the id of every object destroyed since the world loaded, so a stale " +
-                "copy a player sends back cannot bring it back, and never clears that list while the " +
-                "world is loaded; every arrow, dropped item, felled tree and killed creature adds to " +
-                "it for the life of the process. The stale copies it guards against arrive within " +
-                "seconds of the destroy. Off by default.");
+                "Lets the server forget a destroyed object after a few minutes instead of keeping every one until the world reloads.");
 
             RetainSeconds = ValConfig.BindServerConfig(
                 ValConfig.SectionServerMemory,
                 "Dead ZDO Retain Seconds",
                 600f,
-                "How long the record of a destroyed object is kept. Well above the seconds a stale " +
-                "copy can be in flight; raise it rather than lower it if players ever report a " +
-                "destroyed object coming back.",
+                "Seconds the server remembers a destroyed object, so a stale copy a player sends back cannot " +
+                "restore it. Raise it rather than lower it if a destroyed object ever comes back.",
                 advanced: true,
                 valMin: 60f,
                 valMax: 3600f);
@@ -77,12 +56,14 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPatch(nameof(ZDOMan.HandleDestroyedZDO))]
         private static void HandleDestroyedZdoPostfix(ZDOMan __instance, ZDOID uid) {
             if (Enabled == null || !Enabled.Value) { return; }
+            // Vanilla records dead ids only on the host.
             if (!RunMode.IsServer) { return; }
 
             // Vanilla records only when the ZDO existed; read back what it wrote rather than
             // guess. The stamp lets the eviction tell this record from a later re-destroy.
             if (!__instance.m_deadZDOs.TryGetValue(uid, out long stamp)) { return; }
 
+            // Real time, not the game-time stamp, which jumps forward when players sleep.
             Records.Enqueue(new Record { Uid = uid, DiedAt = Time.realtimeSinceStartup, Stamp = stamp });
         }
 
@@ -91,6 +72,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static void UpdatePostfix(ZDOMan __instance) {
             if (Records.Count == 0) { return; }
 
+            // Turned off, the pending records are forgotten and their entries stay, as vanilla leaves them.
             if (Enabled == null || !Enabled.Value) {
                 Records.Clear();
                 return;
@@ -106,6 +88,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
                 Records.Dequeue();
 
+                // The entry only stops a client's in-flight update resurrecting the object, and a client
+                // drops its copy, and sends nothing more for it, once the routed destroy reaches it.
                 if (dead.TryGetValue(record.Uid, out long stamp) && stamp == record.Stamp) {
                     dead.Remove(record.Uid);
                     _evicted++;

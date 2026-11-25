@@ -4,23 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix ZDO Serialize Allocation: an object's fields are written to a network package straight
-    // from their tables, without copying them into lists first.
-    //
-    // ZDO.Serialize calls ZDOExtraData.GetData, which copies all seven of the object's field
-    // tables into fresh lists (ZDOHelper.GetValuesOrEmpty is a ToList per type, empty or not),
-    // then builds a closure and seven delegates to hand ZDODataHelper.WriteData. That is around
-    // twenty short-lived allocations per object per peer per send tick, on the server's busiest
-    // path. The save path already avoids this with reusable lists; the send path never did.
-    //
-    // A prefix replaces the method with the same flag computation and the same writes, reading
-    // each table's key and value arrays, which BinarySearchDictionary exposes as Keys and Values,
-    // up to its count. The bytes written are identical, field order included, since both read the
-    // tables in their sorted order. Priority.Last and __runOriginal, so a mod that cancels or
-    // steers Serialize keeps its say. If the arrays are not reachable as arrays, which a game
-    // update could change, the prefix stands down to vanilla for the session.
-    //
-    // Server: hottest where every peer's send tick runs. Off by default.
+    // ZDO.Serialize copies all seven field tables into new lists, with seven delegates, per object per peer per send.
+    // Prefixes ZDO.Serialize with the same writes, read straight from each table's key and value arrays.
+    // A busy server makes far less garbage on its send path, and the bytes sent are identical.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZDO))]
@@ -33,14 +19,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionServerMemory,
                 "Fix ZDO Serialize Allocation",
                 false,
-                "Writes an object's fields to the network straight from where they are stored, " +
-                "instead of copying every field list first. Vanilla copies all seven of an object's " +
-                "field tables into fresh lists and allocates seven callbacks each time it serialises " +
-                "one object for one player, which keeps the garbage collector busy on a full server. " +
-                "The bytes sent are identical. Off by default.");
+                "Writes an object's fields to the network straight from storage instead of copying them " +
+                "into new lists for every player on every send, so a full server makes less garbage.");
         }
 
-        // Verified once: the tables' Keys and Values must be the backing arrays themselves.
+        // Verified once: the tables' Keys and Values must be the backing arrays themselves, which a game
+        // update could change; if not, vanilla runs for the session.
         private static readonly bool ArraysReachable = Probe();
 
         private static bool Probe() {
@@ -53,19 +37,22 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
+        // Priority.Last and __runOriginal, so a mod that cancels or steers Serialize keeps its say.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(ZDO.Serialize))]
         private static bool SerializePrefix(ZDO __instance, ZPackage pkg, bool __runOriginal) {
             if (!__runOriginal) { return false; }
             if (Enabled == null || !Enabled.Value) { return true; }
+            // Only the host's send path, which runs for every peer, is hot enough to matter.
             if (!ArraysReachable || !RunMode.IsServer) { return true; }
 
             Write(__instance, pkg);
             return false;
         }
 
-        // Vanilla's Serialize, step for step, over the tables instead of copies of them.
+        // Vanilla's Serialize, step for step, over the tables instead of copies of them. Both read the
+        // tables in their sorted order, so the bytes match, field order included.
         private static void Write(ZDO zdo, ZPackage pkg) {
             ZDOID uid = zdo.m_uid;
 

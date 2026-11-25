@@ -4,19 +4,10 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Projectile Rotation Spam: stops the "Look rotation viewing vector is zero" warning that
-    // every stalled projectile logs on every physics step.
-    //
-    // Projectile.FixedUpdate passes its velocity to Quaternion.LookRotation unchecked. A projectile
-    // whose velocity reaches exactly zero makes Unity log the warning every FixedUpdate, and each
-    // message is formatted, stack-traced and written to disk.
-    //
-    // A transpiler swaps the LookRotation call for one that returns identity for a zero vector,
-    // which is what LookRotation does anyway after logging.
-    //
-    // Both: FixedUpdate runs on whoever owns the projectile. Provenance: the same fix as
-    // ComfyMods/BetterZeeLog (GPL-3.0, redseiko); where both are installed its rewrite lands first
-    // and this one finds nothing to do, which is the intended outcome.
+    // A projectile at zero velocity makes Quaternion.LookRotation log a stack-traced warning every physics step.
+    // Transpiles Projectile.FixedUpdate to return identity for a zero vector, as LookRotation does after logging.
+    // Stalled projectiles no longer flood the log with "Look rotation viewing vector is zero".
+    // Provenance: the same fix as ComfyMods/BetterZeeLog (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(Projectile))]
@@ -29,8 +20,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Projectile Rotation Spam",
                 true,
-                "Stops the 'Look rotation viewing vector is zero' log spam produced every physics step by " +
-                "each projectile whose velocity reaches exactly zero. Changing this requires a game restart.");
+                "Stops the 'Look rotation viewing vector is zero' log spam from projectiles stalled at zero " +
+                "velocity; turning it on needs a game restart.");
         }
 
         private static readonly MethodInfo LookRotationMethod =
@@ -41,7 +32,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static Quaternion SafeLookRotation(Vector3 forward) =>
             forward == Vector3.zero && Enabled.Value ? Quaternion.identity : Quaternion.LookRotation(forward);
 
-        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches. With BetterZeeLog installed its rewrite
+        // lands first and this finds no call to replace, as intended.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("FixedUpdate")]

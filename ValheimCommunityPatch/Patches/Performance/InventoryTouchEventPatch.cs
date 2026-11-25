@@ -1,20 +1,9 @@
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Inventory Touch Subscription: the inventory screen takes its touch long-press handlers
-    // off when it is disabled, so a logout no longer leaves the old inventory screen in memory.
-    //
-    // InventoryGui.OnEnable adds TouchLongPressStarted and TouchLongPressPerformed to the static
-    // TouchLongPress.Started and Performed events, and OnDisable adds them again where it means to
-    // remove them; it removes its PvP toggle listener correctly on the next line. OnDestroy
-    // removes neither. Each enable and disable leaves two more entries on each event, and after a
-    // logout they keep the destroyed InventoryGui, and everything it references, reachable.
-    //
-    // A postfix on OnDisable removes each handler twice: once for the add OnDisable just made and
-    // once for OnEnable's. A removal that finds nothing does nothing, so this stays correct if the
-    // game fixes the typo or another mod rewrites the method.
-    //
-    // Client: InventoryGui is client-only.
+    // Fix Inventory Touch Subscription: InventoryGui.OnDisable re-adds its touch handlers, keeping old screens alive.
+    // Postfixes OnDisable to remove TouchLongPressStarted and TouchLongPressPerformed twice, undoing both adds.
+    // A logout no longer leaves the old inventory screen, and everything it references, in memory.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(InventoryGui), "OnDisable")]
@@ -25,6 +14,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static void Postfix(InventoryGui __instance) {
             if (ApiSwitch.Off) { return; }
 
+            // Once for OnDisable's add and once for OnEnable's. Removing an absent handler does nothing,
+            // so this stays correct if the game turns its add into a removal or another mod rewrites OnDisable.
             for (int i = 0; i < 2; i++) {
                 TouchLongPress.Started -= __instance.TouchLongPressStarted;
                 TouchLongPress.Performed -= __instance.TouchLongPressPerformed;

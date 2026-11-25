@@ -7,26 +7,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Loading Zone Cadence: behind a loading screen, the zones around the player are installed
-    // nearest first, as many per tick as a time budget allows, instead of one per tick.
-    //
-    // ZoneSystem.CreateLocalZones runs every 0.1 s and returns after the first zone it installs,
-    // walking the ring row by row. No object is created until the whole ring is installed, so a
-    // portal, respawn or login waits at least 0.1 s per zone: 2.5 s for the 25 zones of the default
-    // simulation distance and 13.7 s for the 137 zones at the highest setting, however fast the
-    // terrain itself was built.
-    //
-    // A prefix replaces the walk while a loading screen is up (no local player yet, or one that is
-    // teleporting). It pokes every zone of the same ring, built with vanilla's own membership test,
-    // nearest first, through vanilla's PokeLocalZone, so the client or full spawn mode, the
-    // location-prefab gate and every other mod's hook on it are unchanged. New zones are installed
-    // until the budget is spent, checked after each one, so a tick always does at least vanilla's
-    // work; zones already installed are always poked so none ages out mid-load. The result keeps
-    // vanilla's meaning: true when a zone was installed, which skips the host's ghost zones that
-    // tick. Outside a loading screen vanilla's walk runs untouched. Stands down when another mod
-    // transpiles the method or installs zones itself (Fast Loading).
-    //
-    // Client: a dedicated server has no local player, so its walk would always look like a loading screen.
+    // Fix Loading Zone Cadence: CreateLocalZones installs one zone every 0.1 s, so loading screens wait 0.1 s per zone.
+    // During a loading screen, a prefix pokes the same ring nearest first through PokeLocalZone, up to a time budget.
+    // Portal, respawn and login loading screens no longer wait on a fixed one-zone-per-tick pace.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZoneSystem))]
@@ -40,9 +23,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Loading Zone Budget",
                 30,
-                "Milliseconds per zone tick (ten a second) spent installing the zones around you while a " +
-                "loading screen is up. At least one zone is always installed, as in vanilla. 0 restores " +
-                "vanilla's one zone per tick.",
+                "Milliseconds per zone tick (ten a second) spent installing the zones around you behind a " +
+                "loading screen, at least one zone each; 0 is vanilla's one zone per tick.",
                 advanced: true,
                 valMin: 0,
                 valMax: 200);
@@ -89,14 +71,18 @@ namespace ValheimCommunityPatch.Patches.Performance {
             for (int i = 0; i < Ring.Count; i++) {
                 Vector2s zone = Ring[i];
 
-                // An installed zone only has its ttl reset; that one is never skipped.
+                // An installed zone only has its ttl reset; that one is never skipped, so none ages
+                // out mid-load.
                 bool loaded = __instance.m_zones.ContainsKey(zone);
                 if (!loaded && spent) { continue; }
 
+                // Vanilla's PokeLocalZone, so spawn mode, the location-prefab gate and other mods'
+                // hooks on it are unchanged.
                 if (__instance.PokeLocalZone(zone)) { installed++; }
                 if (!loaded) { spent = Stopwatch.GetTimestamp() - start >= budget; }
             }
 
+            // Vanilla's meaning: true when a zone was installed, which skips the host's ghost zones that tick.
             __result = installed > 0;
 
             if (Logger.DebugEnabled) { RecordEpisode(__instance, installed, Stopwatch.GetTimestamp() - start); }
@@ -111,6 +97,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             if (BudgetMs == null || BudgetMs.Value <= 0 || ApiSwitch.Off) { return false; }
             if (StandDown(zoneSystem)) { return false; }
 
+            // A dedicated server has no local player, so it would always look like a loading screen.
             ZNet net = ZNet.instance;
             if (net == null || RunMode.IsDedicated) { return false; }
             if (!InLoadingScreen()) { return false; }

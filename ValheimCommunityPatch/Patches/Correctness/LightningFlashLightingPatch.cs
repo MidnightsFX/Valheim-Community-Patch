@@ -3,27 +3,10 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Lightning Flash Lighting: a lightning flash no longer stays in the lighting for seconds
-    // after it is over.
-    //
-    // Thunder.DoFlash spawns the flash prefab, whose lights last about two seconds. The lighting
-    // comes from realtime reflection probes that ReflectionUpdate re-renders every 3 s, one face per
-    // frame. A render that starts during a flash, or is half-way through when one starts, captures
-    // the lit-up scene, and that capture lights everything until the probe is rendered again, up to
-    // 3 s later.
-    //
-    // A postfix on DoFlash notes when the flash's lights will be gone, from the longest LightFlicker
-    // lifetime in the prefab, and whether a capture was in flight. From the Update hook in
-    // TeleportLightingPatch, a render that would start before then is held until the flash is over,
-    // by keeping the timer one frame short of the interval; a render not due yet is left alone. Once
-    // the flash is over, a capture that caught it is replaced by an immediate render shown at full
-    // size through ReflectionProbeRender. A render forced by Fix Lighting After Teleport during a
-    // flash goes ahead, since the baked light matches the real one while it lasts, and is replaced
-    // the same way. Either order of Thunder.Update and ReflectionUpdate.Update in a frame is covered.
-    // The accessibility flash setting still lights the flash, so nothing changes there.
-    //
-    // Client: the probes exist only where there is a camera. Provenance: ported from Krosshair's
-    // Valheim Wire Patches and reworked.
+    // A reflection probe render that catches a lightning flash keeps the scene lit until the next render, up to 3 s.
+    // Postfixes Thunder.DoFlash to note the flash; ReflectionUpdate.Update then holds renders and redoes a tainted one.
+    // A lightning flash lights the scene only while it lasts.
+    // Provenance: ported from Krosshair's Valheim Wire Patches and reworked.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Thunder), "DoFlash")]
@@ -54,8 +37,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Lightning Flash Lighting",
                 true,
-                "Keeps a lightning flash from staying in the lighting for seconds after it is over. Vanilla " +
-                "can render its lighting probes during the flash and shows that capture until the next one.");
+                "Keeps a lightning flash from staying in the lighting for seconds after it is over.");
 
             Enabled.SettingChanged += (sender, args) => { if (!Enabled.Value) { _rerenderAfterFlash = false; } };
         }
@@ -74,6 +56,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             float length = Mathf.Min(LengthOf(__instance.m_flashEffect), MaxLength);
             _flashEndsAt = Mathf.Max(_flashEndsAt, Time.time + length + Margin);
 
+            // A capture in flight has caught the flash, whichever of Thunder.Update and
+            // ReflectionUpdate.Update ran first this frame. The accessibility flash setting still
+            // spawns the lights, so it needs no check.
             ReflectionUpdate r = ReflectionUpdate.instance;
             if (r != null && r.m_current != null && !r.m_current.IsFinishedRendering(r.m_renderID)) {
                 _rerenderAfterFlash = true;
@@ -85,6 +70,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             if (Enabled == null || !Enabled.Value) { return; }
 
             if (Time.time < _flashEndsAt) {
+                // A render forced by Fix Lighting After Teleport goes ahead, since its capture matches
+                // the real light while the flash lasts, and is redone once it is over.
                 if (ReflectionProbeRender.PendingForce) {
                     _rerenderAfterFlash = true;
                 } else {

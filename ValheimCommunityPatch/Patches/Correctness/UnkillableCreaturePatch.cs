@@ -4,31 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Unkillable Creatures: finishes the death of a creature left alive at zero health, and puts
-    // a creature whose health became NaN back to full.
-    //
-    // Damage only lowers health. The creature's owner decides death afterwards, in the CheckDeath
-    // call that ends Character.CustomFixedUpdate: it sets a local dead flag and calls OnDeath, or,
-    // for the Deep North creatures with a death animation, leaves OnDeath to the clip's Die event.
-    // Once health is zero, RPC_Damage and RPC_Heal both return early, so a death that does not
-    // complete is never retried and the creature stands at an empty health bar for good. It fails
-    // to complete when ownership moves during the death animation (the event fires on the old
-    // owner, which may no longer act, and the new owner's animator is already in its dead state, so
-    // it never fires again), when OnDeath throws before ZNetScene.Destroy, usually in another mod's
-    // death handler, and when something earlier in the owner's update throws every tick so
-    // CheckDeath is never reached. NaN health fails every "at or below zero" test, so no hit kills
-    // it and no heal repairs it.
-    //
-    // A finalizer on OnDeath removes a creature whose OnDeath threw, without running the death
-    // again, since its drops and kill credit may already have happened. A once-a-second scan of the
-    // creatures this peer owns calls CheckDeath for one held at zero for a second, and calls OnDeath
-    // for one still dying 20 s past its animation's start delay; vanilla's latest Die event is
-    // 10.2 s into the Frozen King's last death clip. A prefix on SetHealth refuses a NaN write, and
-    // the scan resets any NaN health it finds to max health, as StarLevelSystem does. A creature
-    // whose death another mod cancelled on purpose is left alone.
-    //
-    // Both: death is decided on the creature's owner, usually the nearest client, and a server owns
-    // some creatures itself.
+    // A creature whose death fails to complete stays at zero health for good, and NaN health makes one unkillable too.
+    // Finalizes OnDeath, prefixes SetHealth against NaN, and a ZDOMan.Update scan finishes stuck deaths and NaN health.
+    // Stuck creatures die properly instead of ignoring every hit, mostly Deep North ones whose owner changed mid-death.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(Character))]
@@ -43,11 +21,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 FixName,
                 true,
-                "Finishes the death of a creature left alive at zero health, which then ignores every " +
-                "hit. Mostly Deep North creatures whose owning player changed during their death " +
-                "animation, which a busy server makes more likely, and creatures whose death another " +
-                "mod's code broke. Also puts a creature whose health another mod made NaN back to full " +
-                "health instead of leaving it unkillable.");
+                "Finishes the death of a creature left alive at zero health, and puts a creature with NaN " +
+                "health back to full, instead of leaving either one unkillable.");
         }
 
         private const float ScanIntervalSeconds = 1f;
@@ -131,6 +106,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             ZNetScene.instance.Destroy(__instance.gameObject);
         }
 
+        // NaN health fails every "at or below zero" test, so no hit kills it and no heal repairs it.
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
@@ -146,6 +122,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             return false;
         }
 
+        // RPC_Damage and RPC_Heal return early at zero health, so a death is never retried once it fails:
+        // when ownership moves mid-animation (the Die event fires only on the old owner), when OnDeath
+        // throws, or when an earlier throw in the owner's update skips CheckDeath every tick.
         private static void Scan() {
             float now = Time.unscaledTime;
             if (now < _nextScan) { return; }
@@ -244,6 +223,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
         }
 
+        // Back to max health, as StarLevelSystem does.
         private static void RepairHealth(Character character) {
             // Max health is a ZDO value too, so it can be broken the same way. SetupMaxHealth is
             // vanilla's base-times-level; its clamp compares against the NaN health, which is false.

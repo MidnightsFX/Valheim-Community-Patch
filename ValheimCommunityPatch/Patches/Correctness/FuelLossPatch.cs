@@ -1,19 +1,10 @@
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Fuel And Ore Loss: takes ownership of a smelter, kiln or fireplace before feeding it, so
-    // the item cannot be lost in flight.
-    //
-    // Vanilla removes the fuel or ore from the inventory first and then sends an RPC to the ZDO's
-    // owner to credit it. The handler drops the call unless it is the owner, so if the owning peer
-    // is lagging, mid-handoff or gone, the item is simply destroyed.
-    //
-    // Prefixes on the four feeding entry points claim ownership when another peer holds it, so the
-    // RPC resolves locally. Fireplace.Interact already claims an unowned ZDO; this covers the
-    // owned-by-someone-else case and the three methods that never claimed at all.
-    //
-    // Client: these are interaction entry points reached from Player.Interact, so the fix protects
-    // whoever does the feeding. Provenance: same root cause as Zen.ModLib's FixFuelLeak.
+    // Vanilla removes fuel or ore before the owner credits it by RPC, so a lagging or departed owner destroys the item.
+    // Prefixes Smelter.OnAddFuel, Smelter.OnAddOre, Fireplace.Interact and Fireplace.UseItem to claim ownership first.
+    // Fuel and ore fed to a smelter, kiln or fireplace are no longer lost to a dropped network message.
+    // Provenance: same root cause as Zen.ModLib's FixFuelLeak.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch]
@@ -26,11 +17,11 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Fuel And Ore Loss",
                 true,
-                "Takes ownership of a smelter, kiln or fireplace before adding fuel or ore. Vanilla removes " +
-                "the item from your inventory and then sends a network message that is silently dropped if " +
-                "the owning player is lagging or has disconnected, destroying the item.");
+                "Takes ownership of a smelter, kiln or fireplace before adding fuel or ore, so the item is not " +
+                "lost when the owning player lags or disconnects.");
         }
 
+        // Fireplace.Interact claims only an unowned ZDO itself, and the other three entry points never claim.
         private static void ClaimBeforeInteract(ZNetView nview) {
             if (Enabled == null || !Enabled.Value) { return; }
             if (nview == null || !nview.IsValid() || nview.IsOwner()) { return; }

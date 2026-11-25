@@ -4,25 +4,16 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Reference Position Send Delay: a client reports its position at once when it jumps two
-    // or more zones (portal, respawn, login) instead of at the next 2 s report.
-    //
-    // A client tells the server where it is only from ZNet.SendPeriodicData, every 2 s. The server
-    // decides from that position which objects to stream to the player and which zones to generate
-    // around them, so after a portal, a respawn at a far bed or a login the server keeps streaming
-    // the old area for up to 2 s while the player waits on a loading screen for the new one.
-    //
-    // A prefix on SendPeriodicData compares the reference position's zone with the zone last
-    // reported. When it has moved two or more zones it sets the timer so vanilla sends this frame;
-    // the report itself is vanilla's. Ordinary movement cannot cover two zones between reports, so
-    // only jumps trigger it.
-    //
-    // Client: only a client reports its position; the host is the server.
+    // Fix Reference Position Send Delay: after a teleport the server streams the old area until the next 2 s report.
+    // Prefixes ZNet.SendPeriodicData to send this frame when the reference position has jumped two or more zones.
+    // After a portal, far respawn or login the server sends the new area at once, shortening the loading screen.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZNet))]
     internal static class RefPosSendDelayPatch {
         private const float VanillaReportInterval = 2f;
+
+        // Ordinary movement cannot cover two zones between reports, so only jumps reach this.
         private const int JumpZones = 2;
 
         private static ZNet _stateFor;
@@ -33,6 +24,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         [HarmonyPrefix]
         [HarmonyPatch("SendPeriodicData")]
         private static void SendPeriodicDataPrefix(ZNet __instance, float dt) {
+            // Only a client reports its position; the host is the server.
             if (ApiSwitch.Off || __instance.IsServer()) { return; }
 
             // Per session. The server starts from the origin, which is what PeerInfo told it.

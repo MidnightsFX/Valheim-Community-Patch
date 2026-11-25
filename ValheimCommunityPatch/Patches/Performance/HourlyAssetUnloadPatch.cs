@@ -6,32 +6,9 @@ using UnityEngine;
 using UnityEngine.Profiling;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Hourly Server Freeze: on a dedicated server, the game's hourly cleanup of unused assets
-    // waits until no players are connected, instead of freezing the server, and everyone on it, for
-    // most of a second.
-    //
-    // Game.Start has CollectResourcesCheckPeriodic run every 3600 s. It calls CollectResources,
-    // which calls Resources.UnloadUnusedAssets, and Unity does that work on the main thread just
-    // after the call returns: a blocking full garbage collection plus its own search for assets
-    // nothing references. The collection walks everything still alive, so its length follows the
-    // heap. On a dedicated server holding 2.3 million ZDOs in a 1.5 GB heap each one froze the
-    // server for 850-990 ms, about 70 times in four days and 18 of them with players connected,
-    // while the managed heap came out of each within a megabyte of where it went in: the
-    // incremental collector had already freed what was garbage, so the freeze is the cost of the
-    // walk, not of a backlog.
-    //
-    // A prefix on CollectResourcesCheckPeriodic lets the call through when nobody is connected and
-    // otherwise records the unload as owed. A Game.Update postfix runs an owed unload, through
-    // vanilla's CollectResources, once the server has had no peers for two minutes, so a player
-    // relogging is not caught by it, or once it has been owed for 'Asset Unload Max Delay' hours,
-    // players or not. Vanilla's one-hour spacing is checked first and left to decide, so the hourly
-    // call after a late unload skips as it would after an on-time one. The unloads at world load,
-    // at shutdown and from the console are untouched. Each unload this fix lets run is logged with
-    // the longest frame that followed it and the memory before and after, which shows what the
-    // cleanup actually gives back on a given server.
-    //
-    // Server: a dedicated server only. A listen host is being played on, so it is never empty, and
-    // it keeps the game's timing.
+    // The hourly Resources.UnloadUnusedAssets runs a blocking full GC that freezes a large server for most of a second.
+    // Prefixes Game.CollectResourcesCheckPeriodic to postpone it while players are on; an Update postfix runs it later.
+    // The cleanup runs once the server is empty, or within 'Asset Unload Max Delay' hours on one that never is.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(Game))]
@@ -45,17 +22,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Fix Hourly Server Freeze",
                 true,
-                "Holds the game's hourly cleanup of unused assets until no players are connected. On a " +
-                "dedicated server with a large world that cleanup freezes the server, and every player on " +
-                "it, for up to a second. On a server that is never empty it still runs within 'Asset Unload " +
-                "Max Delay' hours. Turn it off for the game's own hourly timing.");
+                "Holds the game's hourly cleanup of unused assets, which freezes a large dedicated server for up " +
+                "to a second, until no players are connected.");
 
             MaxDelayHours = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Asset Unload Max Delay",
                 12f,
-                "With Fix Hourly Server Freeze on, the most hours the cleanup waits for an empty server " +
-                "before running anyway, players or not. 0 waits for an empty server however long that takes.",
+                "Hours Fix Hourly Server Freeze waits at most for an empty server before running the cleanup " +
+                "anyway. 0 waits however long that takes.",
                 advanced: true, valMin: 0f, valMax: 168f);
         }
 
@@ -88,12 +63,15 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static Memory _before;
 
         // Priority.Last and __runOriginal: see ValheimCommunityPatch.ApplyPatches. A mod that has
-        // already cancelled the hourly unload keeps it cancelled, and nothing is owed.
+        // already cancelled the hourly unload keeps it cancelled, and nothing is owed. Postponing
+        // builds no backlog: the incremental collector has already freed the garbage, so the freeze
+        // is the cost of walking the live heap.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch(nameof(Game.CollectResourcesCheckPeriodic))]
         private static bool CollectResourcesCheckPeriodicPrefix(Game __instance, bool __runOriginal) {
             if (!__runOriginal) { return false; }
+            // A listen host is being played on, so it is never empty and keeps the game's timing.
             if (!IsOn || !RunMode.IsDedicated) { return true; }
 
             if (!ReferenceEquals(__instance, _game)) {
@@ -101,7 +79,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ClearOwed();
             }
 
-            // Vanilla's own spacing: it skips, and logs that it did.
+            // Vanilla's own spacing decides: it skips, and logs that it did, so the hourly call after
+            // a late unload skips as it would after an on-time one.
             if (!UnloadDue(__instance)) { return true; }
 
             // Empty now: vanilla runs it, and that settles anything still owed from an earlier hour.

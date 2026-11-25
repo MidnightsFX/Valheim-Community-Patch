@@ -3,26 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Destination Terrain Delay: the terrain around a teleport's destination, and around your
-    // bed while you are dead, starts building as soon as the destination is known instead of on
-    // arrival.
-    //
-    // A zone is installed only once the terrain build thread has generated its heightmap, and the
-    // game first asks for that when the player's reference position reaches the zone: after a
-    // teleport's 2 s fade, or after the 10 s death delay. The build thread sits idle through both,
-    // then the whole ring is queued at once while the loading screen is up.
-    //
-    // Postfixes on Player.TeleportTo (the local player's accepted teleport) and Game.RequestRespawn
-    // (after a death, when the profile has a bed spawn point) call HeightmapBuilder.IsTerrainReady
-    // for each zone of the destination's near ring that is not installed yet, nearest first, with
-    // the arguments ZoneSystem.SpawnZone passes. IsTerrainReady only queues a build, and SpawnZone
-    // later finds the result waiting, so no step of the game's own loading is skipped. Finished
-    // results are evicted oldest first past the ready cap, so the request stops short of it, less
-    // what is already queued or finished and the nine distant-terrain tiles a teleport re-requests
-    // on arrival.
-    //
-    // Client: it acts on the local player's teleport or death, and a dedicated server installs no
-    // zones around players.
+    // Fix Destination Terrain Delay: destination terrain is first requested on arrival, so loading screens wait for it.
+    // Postfixes Player.TeleportTo and Game.RequestRespawn to queue the destination's missing zones early.
+    // Loading screens after portals and deaths are shorter, since the ground is often built before arrival.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch]
@@ -76,6 +59,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             int inFlight;
             lock (gate) { inFlight = builder.m_ready.Count + builder.m_toBuild.Count; }
 
+            // Finished results past the ready cap are evicted oldest first, so stop short of it.
             int budget = Mathf.Max(0, HeightmapBuilderThroughputPatch.ReadyCapInForce - DistantTileReserve - inFlight);
 
             Vector2s center = ZoneSystem.GetZone(point);
@@ -90,7 +74,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 missing++;
                 if (queued >= budget) { continue; }
 
-                // True means it was already finished, so nothing new was queued.
+                // Only queues a build, with SpawnZone's own arguments, so SpawnZone later finds the result
+                // waiting. True means it was already finished, so nothing new was queued.
                 if (!builder.IsTerrainReady(
                         ZoneSystem.GetZonePos(Ring[i]), prefab.m_width, prefab.m_scale, prefab.IsDistantLod, worldGen)) {
                     queued++;

@@ -5,22 +5,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Active Area Check Allocation: testing whether a point is inside the loaded area no longer
-    // allocates an array per test.
-    //
-    // Utils.ChebyshevDistance(Vector3, Vector3) passes its three axis distances to
-    // Mathf.Max(params float[]), so every call allocates a three-element array. Its one caller is
-    // ZNetScene.PointInsideActiveArea, which every owned piece's wear update, every static physics
-    // object's settle check and every spawner asks, and which the server asks for each persistent
-    // object near every peer when it releases ownership every two seconds.
-    //
-    // A transpiler removes the array: the three Abs results stay on the stack and go to Max3, which
-    // is Mathf.Max(float[])'s own loop unrolled (keep the first, take a later one only when it is
-    // strictly greater), so the result is identical for NaN and signed zeros too. A transpiler
-    // rather than a prefix so the hottest callers pay no wrapper, and every caller, other mods
-    // included, gets it.
-    //
-    // Both: the server's ownership release is the largest caller.
+    // Fix Active Area Check Allocation: ChebyshevDistance allocates an array for Mathf.Max on every active-area check.
+    // A transpiler removes the array and passes the three distances to Max3, Mathf.Max's own loop unrolled.
+    // Wear updates, physics settling and the server's ownership release check the active area without garbage.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(Utils), nameof(Utils.ChebyshevDistance), typeof(Vector3), typeof(Vector3))]
     internal static class ChebyshevDistanceAllocPatch {
@@ -30,7 +17,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly MethodInfo Max3Method =
             AccessTools.Method(typeof(ChebyshevDistanceAllocPatch), nameof(Max3));
 
-        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // A transpiler rather than a prefix, so the hottest callers pay no wrapper and every caller,
+        // other mods included, gets it. Priority.Last: see ValheimCommunityPatch.ApplyPatches.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) {
@@ -69,7 +57,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return codes;
         }
 
-        // Mathf.Max(params float[]) for three values, branch for branch.
+        // Mathf.Max(params float[]) for three values, branch for branch, so NaN and signed zeros give
+        // the same result.
         private static float Max3(float a, float b, float c) {
             float max = a;
             if (b > max) { max = b; }

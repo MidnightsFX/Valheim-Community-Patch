@@ -3,37 +3,9 @@ using System.Reflection;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Smelter Catch-up Reads: a smelter catching up on missed production time reads its fuel
-    // and ore queue once per changed value instead of once per simulated second.
-    //
-    // Smelter.UpdateSmelter runs on a 1 Hz InvokeRepeating and settles the time a smelter was not
-    // loaded with a catch-up loop, "while (accumulator >= 1f) { accumulator--; ... }", whose
-    // accumulator is clamped to 3600. The first two statements in the loop body are GetFuel() and
-    // GetQueuedOre() - a ZDO float read, and a ZDO int read plus a conditional string read - and
-    // they run *before* the condition that decides whether there is any work to do. So a smelter
-    // that is out of ore, or out of fuel, and has not ticked for an hour performs several
-    // thousand ZDO lookups in a single frame and produces nothing from any of them. That lands as
-    // a frame spike on the tick after a base loads, which is exactly when a spike is least
-    // welcome.
-    //
-    // A transpiler redirects both accessors, inside UpdateSmelter only, to helpers that memoise
-    // per call against the ZDO's own DataRevision. IncreaseDataRevision is raised by exactly the
-    // writes that changed a stored value - ZDO.Set skips it when the new value compares equal to
-    // the old - so an unchanged revision proves no field changed and a cached answer is exact.
-    // The revision counts the whole ZDO rather than one field, which only ever costs an
-    // unnecessary refresh; in the idle case that motivates this fix nothing is written at all, so
-    // one read serves the whole loop. A prefix arms the memo and a postfix clears it, so it never
-    // survives a call and a revision arriving from a peer between calls can never alias a stale
-    // value. Anything reaching the helpers unarmed, or holding an invalid view, falls straight
-    // through to the vanilla accessor.
-    //
-    // This changes no ZDO write, no ordering and no arithmetic, so the simulation and everything
-    // it saves are untouched; it only stops re-reading values that provably did not change. Each
-    // rewrite is counted and stands down on its own if the count is wrong, so a mod that has
-    // already rewritten UpdateSmelter wins the method rather than both breaking it.
-    //
-    // Both: the simulation half is behind m_nview.IsOwner(), so the returning client, a listen
-    // host and a dedicated server can each be the peer that runs it, and they must not disagree.
+    // Fix Smelter Catch-up Reads: an idle smelter catching up an hour re-reads fuel and ore 3,600 times in one frame.
+    // Transpiles Smelter.UpdateSmelter's GetFuel and GetQueuedOre calls into reads memoised on the ZDO's data revision.
+    // A base of idle smelters no longer spikes a frame on the tick after it loads, and smelting is unchanged.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(Smelter))]
@@ -45,7 +17,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly MethodInfo FuelMethod = AccessTools.DeclaredMethod(typeof(SmelterCatchupPatch), nameof(Fuel));
         private static readonly MethodInfo QueuedOreMethod = AccessTools.DeclaredMethod(typeof(SmelterCatchupPatch), nameof(QueuedOre));
 
-        // Armed for the duration of one UpdateSmelter call and cleared afterwards.
+        // Armed for the duration of one UpdateSmelter call and cleared afterwards, so a revision arriving
+        // from a peer between calls can never alias a stale value.
         private static bool _armed;
         private static ZDO _zdo;
         private static uint _revision;
@@ -74,6 +47,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _ore = null;
         }
 
+        // GetFuel and GetQueuedOre run in the catch-up loop before its check for work, once per simulated
+        // second. Two of each, pinned: a mod that already rewrote UpdateSmelter keeps it rather than both breaking.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("UpdateSmelter")]
@@ -83,8 +58,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 GetQueuedOreMethod, QueuedOreMethod, Site, expected: 2);
 
         /// <summary>
-        /// Drops both memos when the ZDO changed identity or revision. Returns false when there is
-        /// nothing safe to memoise against, in which case callers use the vanilla accessor.
+        /// Drops both memos when the ZDO changed identity or revision. ZDO.Set raises the revision only
+        /// when a stored value changes, so an unchanged revision proves the memos exact. Returns false
+        /// when there is nothing safe to memoise against, in which case callers use the vanilla accessor.
         /// </summary>
         private static bool Sync(Smelter smelter) {
             if (!_armed) { return false; }

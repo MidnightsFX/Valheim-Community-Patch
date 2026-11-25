@@ -9,27 +9,9 @@ using SoftReferenceableAssets;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // World generation timings: the 'Log World Generation Timings' diagnostic, a per-phase
-    // breakdown of each slow zone generation and of the locations and dungeons built inside it.
-    //
-    // A zone generated for the first time places its locations, its vegetation and every dungeon
-    // inside a location in one frame. A sampling profiler cannot split that frame: the work is
-    // spread across instantiation, component Awakes, asset loads and terrain, and the game's own
-    // "Placed location ... duration" line gives only one total per location.
-    //
-    // Prefix and finalizer pairs time ZoneSystem.SpawnZone, PlaceLocations, PlaceVegetation,
-    // PlaceZoneCtrl and SpawnLocation; DungeonGenerator.Generate, GenerateRooms, PlaceRoom and
-    // Save; SnapToGround.SnappAll, Heightmap.ForceGenerateAll, HeightmapBuilder.RequestTerrainSync,
-    // synchronous asset loads, room model instantiation and Fix Background Dungeon Generation's
-    // stand-ins. Transpilers route the networked-object instantiation in SpawnLocation and
-    // PlaceRoom and Generate's DestroyImmediate calls through timed wrappers that do exactly the
-    // same call. A zone's lines are written at
-    // the start of the next frame together with the whole frame's length, so cost landing after
-    // the generation returns (end-of-frame destruction of ghost objects, the first render) shows
-    // as the gap. A long wait on the terrain build thread gets a line of its own.
-    //
-    // Both: a dedicated server generates ghost zones the same way. Diagnostic; nothing here
-    // changes behaviour, and with the entry off every hook is a single flag test.
+    // The 'Log World Generation Timings' diagnostic: a per-phase breakdown of each slow zone generation and of the
+    // locations and dungeons built in it, where the game logs one total per location and a profiler cannot split it.
+    // Changes no behavior; with the entry off every hook is a single flag test.
     [PatchSide(Side.Both)]
     internal static class WorldGenTimingStats {
         internal static ConfigEntry<bool> LogTimings;
@@ -39,11 +21,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Log World Generation Timings",
                 false,
-                "Diagnostic. Logs where the time goes each time new land is generated and takes 10 ms " +
-                "or more, or places a location: the locations, dungeons, vegetation and terrain waits " +
-                "inside it, phase by phase, and the length of the frame it happened in. Also logs " +
-                "every wait of 5 ms or more on the terrain build thread. Leave it off unless you are " +
-                "measuring.",
+                "Diagnostic. Logs a phase-by-phase breakdown of each zone generation that takes 10 ms or more or " +
+                "places a location, every wait of 5 ms or more on the terrain build thread, and each nearby zone " +
+                "that took a quarter second or more to appear.",
                 advanced: true);
         }
 
@@ -93,7 +73,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool _inGenerateRooms;
         private static int _forceDepth;
 
-        // Finished this frame, written next frame with the frame's length.
+        // Finished this frame, written next frame with the frame's length, so cost landing after generation
+        // returns (end-of-frame destruction of ghost objects, the first render) shows as the gap.
         private static readonly List<object> Pending = new List<object>();
 
         private static bool Recording => _on && Thread.CurrentThread.ManagedThreadId == _mainThread;

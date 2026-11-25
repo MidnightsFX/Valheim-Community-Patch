@@ -4,27 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Background Zone Pacing: background zone pre-generation waits a tick when the frame is
-    // already struggling.
-    //
-    // ZoneSystem.Update generates one full zone per 100 ms tick, entirely inside one frame, with
-    // no awareness of frame time. Most of those are ghost zones from CreateGhostZones: pre-
-    // generation of the wider ring around the host and each peer, with no same-frame consumer.
-    // Walking into fresh terrain is one full generation burst every 100 ms.
-    //
-    // A prefix on CreateGhostZones skips the tick when the previous frame exceeded the budget or a
-    // cooldown is armed; a postfix times each generation that ran and arms a cooldown of N ticks
-    // when it blew the budget on its own. A starvation guard runs the generation regardless after
-    // a few consecutive skips. The same zones generate identically, only the timing spreads out,
-    // and zones a player actually enters (CreateLocalZones) are never touched.
-    //
-    // Another mod can also pause ghost generation outright through the mod API's SkipGhostZones,
-    // as SteadyFrame does while its loading screen is up. That pause sits outside the pacing: it
-    // neither counts toward the starvation guard nor is overridden by it. A watchdog ignores a
-    // flag left set for longer than any loading screen, so a mod that never clears it cannot
-    // stop world generation for the session.
-    //
-    // Server: only the world owner reaches CreateGhostZones.
+    // Fix Background Zone Pacing: background zone generation builds a whole zone every 100 ms, however slow the frame.
+    // Prefixes CreateGhostZones to skip a tick after a slow frame or a slow generation, with a starvation guard.
+    // Pre-generation spreads out instead of piling onto slow frames; zones players enter are untouched.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZoneSystem))]
@@ -42,10 +24,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ZoneGenPacingPatch));
 
-        // Set and cleared by other mods through the API, from the main thread.
+        // Set and cleared by other mods through the API, from the main thread, as SteadyFrame does
+        // behind its loading screen. Outside the pacing: the starvation guard neither counts nor
+        // overrides it.
         private static volatile bool _skipGhostZones;
 
-        // How long a pause may last before the watchdog ignores it. Loading screens take seconds.
+        // How long a pause may last before the watchdog ignores it, so a mod that never clears it
+        // cannot stop world generation for the session. Loading screens take seconds.
         private const float MaxSkipSeconds = 120f;
 
         private static float _skipSince = -1f;
@@ -65,9 +50,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Zone Generation Frame Budget",
                 30,
-                "Milliseconds: a background zone generation tick is deferred when the previous " +
-                "frame exceeded this, and a generation that itself took longer than this arms " +
-                "the cooldown. Lower spreads generation out more aggressively.",
+                "Milliseconds: background zone generation waits a tick after a frame longer than this, and a " +
+                "generation that takes longer arms the cooldown. Lower spreads generation out more.",
                 advanced: true,
                 valMin: 10,
                 valMax: 100);

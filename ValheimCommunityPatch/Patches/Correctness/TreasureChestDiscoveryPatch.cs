@@ -5,26 +5,9 @@ using System.Reflection.Emit;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Treasure Chest Discovery: counts each treasure chest once per player in their treasure
-    // stats, and only the chests meant to count.
-    //
-    // Container.Interact counts a container with a discover stat toward the player's stat the first
-    // time each player opens it, and asks the container's owner to set a "Discovered_<player>" flag
-    // that marks it as counted. It sends that request as "discovered", but Container.Awake registers
-    // the handler as "RPC_Discovered", so the owner logs "Failed to find rpc method", the flag is
-    // never set and every open counts again. Separately, the containers meant to count nothing (the
-    // plain meadows and heath chests, shipwreck chests, the player-built Grausten chest, wardrobe and
-    // sled, and others) still hold the number None had before the stat list grew. It now reads as
-    // TreeBirch or BuildClusterSeasonal, so opening one counts a felled birch tree and sends the
-    // request too.
-    //
-    // A transpiler on Interact treats any discover stat other than the three treasure stats as
-    // none, and sends the request under the registered name, which a vanilla owner handles too. A
-    // postfix on Awake also registers the sent name, so a request from a player without the mod is
-    // recorded (or ignored, for a container meant to count nothing) when the owner has the mod.
-    // Renaming and registering stay off when the game's two names agree.
-    //
-    // Both: the player who opens the container sends the request, and its owner handles it.
+    // Interact sends "discovered" to a handler named "RPC_Discovered", so chests count every open; plain ones too.
+    // Transpiles Interact to keep only treasure stats and send the registered name; an Awake postfix takes both.
+    // Each treasure chest counts once per player, and chests meant to count nothing count nothing.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(Container))]
@@ -40,11 +23,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Treasure Chest Discovery",
                 true,
-                "Counts each treasure chest once in your treasure stats instead of on every open, and stops " +
-                "chests meant to count nothing, such as the plain meadows chest, the Grausten chest and the " +
-                "wardrobe, from counting a felled birch tree each time they are opened. Also stops the " +
-                "'Failed to find rpc method' warning logged on those opens. Players without the mod are " +
-                "covered on chests owned by a machine that has it.");
+                "Counts each treasure chest once in your stats instead of on every open, and stops chests meant " +
+                "to count nothing, such as the plain meadows chest, from counting a felled birch tree.");
         }
 
         private static readonly FieldInfo DiscoverStatField =
@@ -87,7 +67,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             return false;
         }
 
-        // The stats a container is meant to count. Any other value on a container is a stale None.
+        // The stats a container is meant to count. Any other value on a container is a stale None from
+        // before the stat list grew, which now reads as TreeBirch or BuildClusterSeasonal.
         private static bool IsTreasureStat(PlayerStatType stat) =>
             stat == PlayerStatType.TreasureBuriedFound ||
             stat == PlayerStatType.TreasureDungeonFound ||
@@ -101,7 +82,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             return PlayerStatType.None;
         }
 
-        // The name Interact sends: the registered one, or the game's own again while the fix is off.
+        // The name Interact sends: the registered one, which a vanilla owner handles too, or the game's own
+        // again while the fix is off.
         private static string DiscoveredRpcName() => Enabled != null && Enabled.Value ? RegisteredName : SentName;
 
         // Priority.Last: see ValheimCommunityPatch.ApplyPatches. All or nothing: the stat check without
@@ -133,8 +115,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         // Every container with a discover stat, stale or not: a player without the mod sends the
-        // request from all of them. Registered even while the fix is off, so turning it on later
-        // covers containers that are already loaded.
+        // request from all of them, and it is recorded, or ignored for a stale stat. Registered even
+        // while the fix is off, so turning it on later covers containers that are already loaded.
         [HarmonyPostfix]
         [HarmonyPatch("Awake")]
         private static void AwakePostfix(Container __instance) {

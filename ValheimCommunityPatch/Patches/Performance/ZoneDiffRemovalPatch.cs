@@ -6,35 +6,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Unload Discovery Scan: objects that left the loaded rings are found through the
-    // per-zone instance index instead of by stamping and walking every loaded instance.
-    //
-    // ZNetScene.RemoveObjects discovers what to unload by elimination: stamp an earmark on every
-    // ZDO in the loaded rings, then walk the entire instance dictionary and remove whatever was
-    // not stamped. That is O(all loaded instances) to find a handful of departures.
-    //
-    // A prefix asks the question directly. SectorInstanceIndexPatch keeps every live instance
-    // grouped by its ZDO's zone, so for each zone holding instances (a few hundred keys) the pass
-    // keeps everything within the near ring, removes non-distant instances from the distant band
-    // and removes everything outside both, which is exactly vanilla's keep-set. The one key that
-    // is not a zone is the bucket for sector index 0, where the game files everything outside its
-    // +/-256 zone grid: the dedicated server build pins its reference position at
-    // (1000000,0,1000000), which puts a server's whole loaded set there, so that bucket is decided
-    // as vanilla decides it, by membership of the near and distant lists. The removal sequence per
-    // instance is vanilla's, inside the same orphan-recovery contract as RemoveObjectsNrePatch. An
-    // Object Unload Frame Budget caps how many departures are handed to the engine per pass,
-    // because Unity's end-of-frame destruction flush is what makes a thousands-at-once unload a
-    // visible freeze; the remainder is rediscovered from the index next pass at no cost.
-    //
-    // That keep-set is vanilla's only while the near and distant lists are exactly what
-    // ZDOMan.FindSectorObjects filled, and other mods keep an object loaded by adding its ZDO to
-    // those lists from their own hooks. So the prefix runs at Priority.Last, after every other
-    // mod's prefix; a postfix records each list's mutation counter as it is filled; and a pass
-    // whose lists changed in between uses vanilla's discovery instead. While engaged this prefix
-    // owns every pass and the pacing and NRE prefixes stand down; without the index or the
-    // counter it returns true and that stack runs as before.
-    //
-    // Both: every peer runs this pass.
+    // Fix Unload Discovery Scan: ZNetScene.RemoveObjects stamps and walks every loaded object to find a few departures.
+    // Prefixes RemoveObjects to find departures from the per-zone instance index, and caps destructions per pass.
+    // Unloading costs only the objects leaving, and a mass unload after a portal is a short dip instead of a freeze.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
@@ -47,25 +21,17 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Unload Discovery",
                 false,
-                "Diagnostic. Computes every unload pass both from the zone index and from " +
-                "vanilla's full stamped walk, compares the two removal sets, acts on vanilla's, " +
-                "and logs any disagreement. Costs the walk this fix exists to avoid, so leave " +
-                "it off unless you are validating the index.",
+                "Diagnostic. Computes every unload pass from both the zone index and the game's full walk, " +
+                "acts on the game's result and logs any disagreement; costs the walk this fix saves.",
                 advanced: true);
 
             FrameBudget = ValConfig.BindServerConfig(
                 ValConfig.SectionPerformance,
                 "Object Unload Frame Budget",
                 250,
-                "How many departed objects may be handed to the engine for destruction in a " +
-                "single unload pass. Destroying an object is mostly engine work that happens in " +
-                "one burst at the end of the frame, so a pass that unloads thousands at once - " +
-                "arriving through a portal, respawning, or a world load settling - is a visible " +
-                "freeze no matter how fast the game's own bookkeeping is. Capping the pass turns " +
-                "that freeze into a short, shallow dip. The remainder unloads on the following " +
-                "passes; until then it lingers at the far edge of the loaded distance, where " +
-                "nothing can see it. Raise it to unload faster and hitch harder, lower it for " +
-                "the reverse. 0 unloads everything at once, exactly like vanilla.",
+                "Departing objects one unload pass hands to the engine to destroy; the rest unload on later " +
+                "passes, out of sight at the edge of the loaded area. Higher unloads faster but hitches " +
+                "harder; 0 unloads everything at once, as vanilla does.",
                 advanced: true,
                 valMin: 0,
                 valMax: 20000);
@@ -158,6 +124,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return asFilled;
         }
 
+        // Other mods keep objects loaded by adding ZDOs to the near and distant lists from their own hooks,
+        // so this runs after every other prefix, and a pass whose lists changed since FindSectorObjects
+        // filled them uses vanilla's discovery. Zone by zone, the keep-set is otherwise exactly vanilla's.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("RemoveObjects")]
@@ -373,6 +342,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             long startTicks = timed ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
             int backlog = Removed.Count;
 
+            // Unity destroys objects in one burst at the end of the frame, so a mass unload freezes however
+            // fast this loop is. The rest is rediscovered from the index next pass at no cost.
             int budget = FrameBudget != null ? FrameBudget.Value : 0;
 
             // Vanilla raises its create budget during a loading screen for the same reason this

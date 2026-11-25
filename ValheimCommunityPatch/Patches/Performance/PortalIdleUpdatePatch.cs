@@ -2,34 +2,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Portal Idle Updates: a portal stops re-writing its emission color, light and audio
-    // every frame once the connection fade has reached its endpoint.
-    //
-    // TeleportWorld.Update runs every frame for every loaded portal and is two lines: a
-    // Mathf.MoveTowards on m_colorAlpha, then m_model.material.SetColor("_EmissionColor", ...).
-    // Renderer.material is a native accessor and the string overload of SetColor hashes the
-    // property name, both paid every frame with no early-out once m_colorAlpha has reached 0 or 1
-    // - which is the steady state for every portal, essentially always. EffectFade, which lives
-    // only on the three portal prefabs, has the same shape: its Update writes m_light.intensity,
-    // m_light.enabled and m_audioSource.volume natively every frame whether or not m_intensity
-    // has settled on its target.
-    //
-    // A prefix on each Update skips the body when the fade value already equals its target.
-    // Mathf.MoveTowards returns the target exactly when the remaining distance is within one
-    // step, so the endpoint is reached rather than approached and float equality is the right
-    // test; because the test runs before the MoveTowards, the frame that lands on the endpoint is
-    // never skipped and vanilla writes the final values. The prefix reads only the two inputs
-    // vanilla reads, so when UpdatePortal (twice a second) flips m_hadTarget, or SetActive flips
-    // m_active, the next frame runs vanilla again - no registry, no wake hook, no eviction.
-    // Both components are already converged at birth, though, so a prefix alone would skip
-    // forever and never make the first write: TeleportWorld would never apply m_colorUnconnected,
-    // and EffectFade never clears m_light.enabled (its Awake zeroes the intensity but not the
-    // enabled flag - vanilla's first Update is what turns the light off). An Awake postfix on
-    // each performs exactly the write that first Update would have made, after which the skip is
-    // exact for the component's life. The teleport postfix mirrors vanilla's own null-ZDO gate,
-    // which disables the component so Update never runs.
-    //
-    // Client: emission color, light intensity and audio volume are rendering state.
+    // Fix Portal Idle Updates: portals rewrite their emission color, light and audio every frame, even once settled.
+    // Prefixes TeleportWorld and EffectFade Update to skip at the fade's endpoint; Awake postfixes do the first write.
+    // Idle portals cost nothing per frame and look the same.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(TeleportWorld))]
@@ -38,6 +13,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(PortalIdleUpdatePatch));
 
+        // A portal is already at its endpoint when it wakes, so the Update prefix would skip the first
+        // write too and m_colorUnconnected would never be applied.
         [HarmonyPostfix]
         [HarmonyPatch("Awake")]
         private static void AwakePostfix(TeleportWorld __instance) {
@@ -52,6 +29,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 Color.Lerp(__instance.m_colorUnconnected, __instance.m_colorTargetfound, __instance.m_colorAlpha));
         }
 
+        // Exact float equality is right: MoveTowards lands on the target exactly, and the test runs
+        // before it, so the frame that lands still writes. It reads only vanilla's own inputs, so a
+        // flip of m_hadTarget or m_active runs vanilla again the next frame with no wake hook.
         [HarmonyPrefix]
         [HarmonyPatch("Update")]
         private static bool UpdatePrefix(TeleportWorld __instance) {
@@ -60,6 +40,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         [HarmonyPatch(typeof(EffectFade))]
         internal static class FadeHooks {
+            // EffectFade.Awake zeroes the intensity but leaves the light enabled; vanilla's first
+            // Update is what switches it off.
             [HarmonyPostfix]
             [HarmonyPatch("Awake")]
             private static void AwakePostfix(EffectFade __instance) => WriteEndpoint(__instance);

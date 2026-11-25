@@ -6,32 +6,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Refund Rejected Station Items: an item that a station's network handler would silently discard
-    // is dropped back at the player who sent it.
-    //
-    // Feeding a smelter, kiln, fireplace, cooking station or fermenter removes the item from the
-    // inventory first and then sends an RPC to whichever peer owned the station when the message
-    // was sent. The handler credits the station only if it still owns it and, for a fireplace,
-    // cooking station or fermenter, only if there is still room; otherwise it returns and the item
-    // is gone. Ownership moves whenever a player claims the station or walks away, and two players
-    // feeding the last slot at once both pass their local checks, so either condition can be false
-    // by the time the message arrives.
-    //
-    // Prefixes on the six handlers repeat the guards vanilla applies and, where vanilla would discard
-    // the item, spawn it back and skip the handler: at the sender's feet, inside auto-pickup range,
-    // when their character is loaded on this machine, otherwise beside the station. Only a message
-    // addressed to this peer is refunded. A message to an unowned station is broadcast to every peer,
-    // and one refund per peer would duplicate the item, so a hook on ZNetView.HandleRoutedRPC records
-    // the target of the message being dispatched and a broadcast is left to vanilla. Fix Fuel And Ore
-    // Loss keeps the sender's own smelter and fireplace messages local; this covers the sender running
-    // without it, the fermenter and cooking station, and the full-on-arrival race. Stands down when
-    // Eternal Fire before 1.1.6 or AutomaticFuel is loaded: both send these messages without taking
-    // an item, or send more than the station has room for, so each refund would be an item made from
-    // nothing. Eternal Fire 1.1.6 sends none: an eternal station reports full fuel instead of being
-    // topped up.
-    //
-    // Both: the handler runs on whichever peer the message names, and a listen host or a dedicated
-    // server can own a station.
+    // A station feed RPC that arrives after an owner change or once full is dropped, destroying the item already taken.
+    // Prefixes on six smelter, fireplace, cooking station and fermenter handlers drop the item back and skip vanilla.
+    // Players get a rejected item back at their feet, or beside the station, instead of losing it.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch]
@@ -66,7 +43,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             FixName, () => PatchHelper.HasHook(HandleRoutedRpcMethod, typeof(StationRefundPatch)));
 
         // The peer the message being dispatched was addressed to. Zero between dispatches, which is
-        // also the value of a broadcast, and neither is ever refunded.
+        // also the value of a broadcast, and neither is ever refunded: a message to an unowned
+        // station reaches every peer, and one refund each would duplicate the item.
         private static long _target;
 
         internal static void BindConfig() {
@@ -76,12 +54,13 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 FixName,
                 true,
                 "Drops an item back at the player when a smelter, kiln, fireplace, cooking station or " +
-                "fermenter rejects it on arrival. Vanilla removes the item from your inventory and then " +
-                "sends a network message that is silently discarded if the station changed owner, or " +
-                "filled up, in the meantime, destroying the item. Inactive when AutomaticFuel, or " +
-                "Eternal Fire older than 1.1.6, is installed, which add fuel without taking an item.");
+                "fermenter rejects it on arrival, instead of destroying it; inactive with AutomaticFuel or " +
+                "Eternal Fire older than 1.1.6.");
         }
 
+        // AutomaticFuel and Eternal Fire before 1.1.6 send these messages without taking an item, or
+        // send more than the station has room for, so a refund would be an item made from nothing.
+        // Eternal Fire 1.1.6 sends none: an eternal station reports full fuel instead.
         [HarmonyPrepare]
         private static bool Prepare() {
             List<string> found = new List<string>();

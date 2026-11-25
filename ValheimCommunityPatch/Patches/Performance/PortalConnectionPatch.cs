@@ -4,26 +4,10 @@ using System.Reflection;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Portal Connection Scan: the server pairs portals by tag in one linear pass instead of
-    // rescanning every portal for every unconnected one.
-    //
-    // Game.ConnectPortals runs every 5 s and is quadratic: for each unconnected portal,
-    // FindRandomUnconnectedPortal allocates a list and rescans all portals with a string lookup
-    // per element. An unpaired portal never resolves, so the full scan repeats forever, and
-    // Game.SetConnection defers the write to an RPC round-trip when a client owns the ZDO.
-    //
-    // A prefix replaces it with three O(n) passes over a tag-keyed dictionary with no per-call
-    // allocation: validate existing connections and bucket the rest by tag, pair each bucket two
-    // at a time after seizing ownership, then one force-send union per peer. Pairing is in list
-    // order rather than random and completes in one tick. Stands down to vanilla's pass when
-    // another mod changes the pairing from inside it, which a replacement would silently skip: a
-    // transpiler on ConnectPortals, or any patch on a helper vanilla calls and this pass does not.
-    // ZenPortal is the known case: it keeps untagged portals apart, allows one pair per tag and
-    // can keep wood and stone portals apart.
-    //
-    // Server: vanilla only starts the coroutine inside Game.Start's IsServer branch.
-    // Provenance: ComfyMods/BetterServerPortals (GPL-3.0, redseiko), without its random-portal
-    // gameplay feature.
+    // Fix Portal Connection Scan: Game.ConnectPortals rescans every portal for each unconnected one every 5 s, forever.
+    // Prefixes ConnectPortals with one pass that buckets unconnected portals by tag and pairs each bucket in list order.
+    // Portal pairing costs the server one linear pass, however many portals the world holds.
+    // Provenance: ComfyMods/BetterServerPortals (GPL-3.0, redseiko), without its random-portal feature.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(Game))]
@@ -55,9 +39,11 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // Asked once per Game, on its first pass: every mod has patched by then, and a new
-        // session asks again. Prefixes and postfixes on ConnectPortals itself still run around
-        // this replacement, so only its transpilers count.
+        // A replacement would silently skip another mod's pairing rules (ZenPortal keeps untagged
+        // portals apart and allows one pair per tag), so vanilla's pass runs when any mod patches
+        // a helper vanilla calls and this pass does not. Prefixes and postfixes on ConnectPortals
+        // still run around the replacement, so only its transpilers count. Asked once per Game,
+        // on its first pass, when every mod has patched.
         private static bool StandDown(Game game) {
             if (ReferenceEquals(game, _checkedFor)) { return _standDown; }
             _checkedFor = game;

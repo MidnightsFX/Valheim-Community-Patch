@@ -5,23 +5,10 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Effect Areas: two defects in the component behind fire warmth, wetness and the
-    // no-monster radius around a workbench.
-    //
-    // 1. EffectArea.m_tempColliders is a fixed 128-element buffer, and IsPointInsideArea and
-    //    GetBaseValue feed it to Physics.OverlapSphereNonAlloc, which silently stops writing when
-    //    it is full. In a dense base the area that matters can fall outside the first 128 hits,
-    //    so warmth and wetness checks miss. Transpilers route both calls through a wrapper that
-    //    grows the buffer and retries whenever it came back full.
-    //
-    // 2. OnTriggerEnter adds a Character to m_collidedWithCharacter and only OnTriggerExit removes
-    //    it, but Unity never fires OnTriggerExit for a collider destroyed inside the trigger. A
-    //    character that dies in the area stays in the list, and CustomFixedUpdate dereferences it
-    //    every physics step from then on. A Character.OnDestroy postfix removes the character from
-    //    every area, and a CustomFixedUpdate prefix drops any invalid entries that slipped through.
-    //
-    // Both: CustomFixedUpdate has no owner gate, so the dangling-reference loop runs on a server
-    // too. Provenance: same two defects as ComfyMods/Effectual (GPL-3.0, redseiko).
+    // EffectArea's fixed 128-collider buffer truncates in dense bases, and a character dying in an area stays listed.
+    // Transpilers regrow a full overlap buffer; Character.OnDestroy and CustomFixedUpdate hooks drop dead characters.
+    // Warmth and wetness checks no longer miss in dense builds, and dead characters stop throwing every physics step.
+    // Provenance: same two defects as ComfyMods/Effectual (GPL-3.0, redseiko).
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch]
@@ -34,9 +21,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Effect Areas",
                 true,
-                "Two fixes: grows the fixed 128-collider buffer that made fire warmth and wetness checks " +
-                "silently miss in dense builds, and drops destroyed characters from effect areas instead " +
-                "of throwing every physics step. Changing this requires a game restart.");
+                "Stops fire warmth and wetness checks missing in dense builds, and stops characters that died " +
+                "inside an effect area throwing errors every physics step; turning it on needs a game restart.");
 
             // Switched or turned off, the buffer goes back to the game's size.
             Enabled.SettingChanged += (sender, args) => {
@@ -110,6 +96,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             }
         }
 
+        // Unity never fires OnTriggerExit for a collider destroyed inside the trigger, so vanilla keeps it listed.
         [HarmonyPostfix]
         [HarmonyPatch(typeof(Character), "OnDestroy")]
         private static void CharacterOnDestroyPostfix(Character __instance) {

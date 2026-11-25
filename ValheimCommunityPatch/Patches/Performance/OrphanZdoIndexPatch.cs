@@ -3,24 +3,9 @@ using BepInEx.Configuration;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Disconnect ZDO Sweep: the sweep for objects a departing player left ownerless visits
-    // only that player's own objects instead of every ZDO in the world.
-    //
-    // ZDOMan.RemoveOrphanNonPersistentZDOS runs on every disconnect and walks m_objectsByID in
-    // full, dereferencing every ZDO to test Persistent and HasOwner. On a large world that is
-    // millions of scattered heap reads to find a few dozen objects: a main-thread freeze on every
-    // logout that grows with the size of the world.
-    //
-    // Non-persistent ZDOs are bucketed by owner as ownership changes (ZDO.SetOwnerInternal is the
-    // single choke point; the Persistent setter covers the flag flipping either way;
-    // HandleDestroyedZDO removes; ZDOMan.Load rebuilds; ShutDown clears), so the sweep visits
-    // only the buckets whose owner is no longer connected. Maintenance is gated on RunMode.IsServer
-    // because the hooks are hot and a joined client never runs the sweep; the role is fixed for a
-    // session. The sweep stands down to vanilla if any hook failed to attach. ZDO.Reset is
-    // deliberately not hooked: every ZDOPool.Release site is already covered, and Reset also runs
-    // on millions of save clones carrying the live ZDO's uid.
-    //
-    // Server: the sweep is only reached behind vanilla's IsServer gate.
+    // Fix Disconnect ZDO Sweep: ZDOMan.RemoveOrphanNonPersistentZDOS walks every ZDO in the world on each disconnect.
+    // Indexes non-persistent ZDOs by owner via ownership hooks, and prefixes the sweep to visit only departed owners.
+    // A player leaving no longer freezes the server for a time that grows with the size of the world.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
@@ -32,9 +17,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Orphan Index",
                 false,
-                "Diagnostic. Runs both the indexed sweep and vanilla's full scan on every " +
-                "disconnect, acts on vanilla's result, and logs any disagreement. Costs the full " +
-                "scan this fix exists to avoid, so leave it off unless you are validating the index.",
+                "Diagnostic. Runs vanilla's full scan beside the indexed sweep on every disconnect, uses " +
+                "vanilla's result and logs any disagreement; costs the scan this fix saves.",
                 advanced: true);
         }
 
@@ -66,6 +50,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // ---- index maintenance -------------------------------------------------------------
 
         private static void Track(ZDOID uid, long owner) {
+            // The hooks are hot and a joined client never sweeps; the role is fixed for a session.
             if (!RunMode.IsServer) { return; }
             if (uid == ZDOID.None) { return; }
 
@@ -129,6 +114,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         // ---- hooks -------------------------------------------------------------------------
 
+        // ZDO.Reset is deliberately not hooked: every ZDOPool.Release site is already covered, and Reset also runs on
+        // millions of save clones carrying the live ZDO's uid.
+
+        // The single choke point for ownership changes.
         [HarmonyPatch(typeof(ZDO), nameof(ZDO.SetOwnerInternal))]
         internal static class SetOwnerInternalHook {
             [HarmonyPostfix]

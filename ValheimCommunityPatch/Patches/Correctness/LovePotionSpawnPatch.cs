@@ -3,26 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Love Potion Spawns: makes the Love Potion attract starred trolls again, which the game
-    // stopped doing in the 2026-09-09 update.
-    //
-    // The potion's status effect (Potion_TrollPheromones) names the Troll prefab and carries a spawn
-    // chance, a creature cap, a minimum level and a level-up multiplier. SpawnSystem.UpdateSpawnList
-    // applied them to troll spawners near a drinker until the Deep North rewrite of that method
-    // dropped the code; nothing reads those fields now, and only the hearts above trolls remain.
-    // The old code also replaced the spawn chance rather than raising it, cutting troll raid spawns
-    // to a quarter; its cap never let a second troll spawn, because the group size still read the
-    // spawner's own cap; and it only saw a drinker whose own machine ran the zone's spawning.
-    //
-    // A prefix on UpdateSpawnList raises the fields of each spawner the potion targets for that one
-    // call and a finalizer restores them: spawn chance and cap to at least the potion's, minimum
-    // level to the potion's, and maximum level to one above that, so raid trolls (maximum level 1)
-    // can reach two stars. A postfix on GetLevelUpChance applies the multiplier. The potion counts
-    // in the zone the drinker stands in. Each client writes its own active pheromone effect to its
-    // player ZDO, so whichever client runs the zone's spawning sees a drinker on another machine.
-    //
-    // Client: spawning only runs on a machine with a local player, and only the drinker's own client
-    // knows its status effects. A drinker without the mod counts only where their machine spawns.
+    // The Deep North rewrite of SpawnSystem.UpdateSpawnList dropped the Love Potion's spawn effects on trolls.
+    // Prefixes UpdateSpawnList to raise targeted spawners for one call, then restores them; postfixes GetLevelUpChance.
+    // The Love Potion again draws more, starred trolls to the drinker's zone, for every player who has the mod.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(SpawnSystem))]
@@ -35,14 +18,13 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Love Potion Spawns",
                 true,
-                "Makes the Love Potion attract trolls again: while it lasts, trolls spawn more often in " +
-                "the zone you stand in, a second one can join the first, and they come with at least " +
-                "one star. The game stopped applying it in the Deep North update. Never lowers a troll " +
-                "raid's spawn chance, lets raid trolls reach two stars, and works for every player in " +
-                "multiplayer, not only the one whose machine runs the zone's spawning.");
+                "Makes the Love Potion attract trolls again: more of them, with at least one star, in the zone " +
+                "you stand in.");
         }
 
-        // On a player's ZDO: the name hash of their active spawn-changing pheromone effect, or 0.
+        // On a player's ZDO: the name hash of their active spawn-changing pheromone effect, or 0. Only
+        // the drinker's own client knows its status effects, so this lets whichever machine runs the
+        // zone's spawning see a drinker on another; a drinker without the mod counts only on their own.
         private static readonly int PheromoneKey = "VCP_Pheromone".GetStableHashCode();
 
         private struct Raised {
@@ -162,10 +144,15 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 if (!ReferenceEquals(stats.m_pheromoneTarget, spawner.m_prefab)) { continue; }
 
                 targeted = true;
+
+                // Raised, never replaced: the old game code set the chance outright, cutting troll
+                // raid spawns to a quarter.
                 chance = Mathf.Max(chance, stats.m_pheromoneSpawnChanceOverride);
 
-                // 0 is no cap, which the potion must not turn into one. The cap also bounds how many
-                // missed spawn rounds a zone catches up on, so that rises with it.
+                // On the spawner itself, since the group size reads the spawner's cap; the old code's
+                // separate cap never let a second troll spawn. 0 is no cap, which the potion must not
+                // turn into one. The cap also bounds how many missed spawn rounds a zone catches up
+                // on, so that rises with it.
                 if (cap > 0) { cap = Mathf.Max(cap, stats.m_pheromoneMaxInstanceOverride); }
 
                 minLevel = Mathf.Max(minLevel, stats.m_pheromoneSpawnMinLevel);
@@ -185,6 +172,7 @@ namespace ValheimCommunityPatch.Patches.Correctness {
 
             spawner.m_spawnChance = chance;
             spawner.m_maxSpawned = cap;
+            // One level above the minimum, so raid trolls (maximum level 1) can reach two stars.
             if (minLevel > spawner.m_minLevel) {
                 spawner.m_minLevel = minLevel;
                 spawner.m_maxLevel = Mathf.Max(spawner.m_maxLevel, minLevel + 1);

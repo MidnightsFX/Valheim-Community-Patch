@@ -3,20 +3,10 @@ using System.Reflection;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Tolerate Duplicate ZDOs On Load: a save containing two ZDOs with the same id loads instead
-    // of aborting.
-    //
-    // ZDOMan.Load and ZDOMan.LoadChunks - the single-file and chunked save formats - index every
-    // ZDO with Dictionary.Add, which throws on a duplicate key. A save damaged by a crash
-    // mid-write, a botched world merge or a mod minting its own ids then refuses to load at all.
-    //
-    // A transpiler swaps every such Add for an indexer write that keeps the later entry and logs
-    // a warning. One of the two was already unreachable in vanilla's index, so recovering the
-    // world is strictly better than refusing it. The expected counts are pinned per load path, so
-    // a game update that adds or removes a branch stands the fix down with a log line rather than
-    // silently covering less than it claims.
-    //
-    // Server: neither load path runs off the host. Provenance: ComfyMods/Atlas (GPL-3.0, redseiko).
+    // ZDOMan indexes loaded ZDOs with Dictionary.Add, so a save holding two with the same id refuses to load at all.
+    // Transpiles ZDOMan.Load and ZDOMan.LoadChunks to swap each Add for an indexer write that keeps the later ZDO.
+    // A world damaged by a crash mid-write, a botched merge or a mod minting its own ids loads with a warning.
+    // Provenance: ComfyMods/Atlas (GPL-3.0, redseiko).
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
@@ -29,8 +19,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Tolerate Duplicate ZDOs On Load",
                 true,
-                "Recovers a world whose save contains duplicate ZDO ids instead of aborting the load with " +
-                "an exception. Changing this requires a game restart.");
+                "Loads a world whose save contains duplicate object ids, keeping the later copy, instead of " +
+                "failing to load; turning it on needs a game restart.");
         }
 
         private static readonly MethodInfo DictionaryAddMethod =
@@ -38,7 +28,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly MethodInfo AddOrReplaceMethod =
             AccessTools.Method(typeof(ZdoLoadDuplicatePatch), nameof(AddOrReplace));
 
-        // Same stack as the instance Add it replaces: (dictionary, key, value).
+        // Same stack as the instance Add it replaces: (dictionary, key, value). One of two duplicates was
+        // already unreachable in vanilla's index, so keeping the later one beats refusing the world.
         private static void AddOrReplace(Dictionary<ZDOID, ZDO> objectsById, ZDOID uid, ZDO zdo) {
             if (!Enabled.Value) {
                 objectsById.Add(uid, zdo);
@@ -54,7 +45,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             objectsById[uid] = zdo;
         }
 
-        // Priority.Last: see ValheimCommunityPatch.ApplyPatches.
+        // Priority.Last: see ValheimCommunityPatch.ApplyPatches. The expected counts are pinned, so a game
+        // update that adds or drops a branch stands the fix down with a log line instead of covering less.
         // Three sites: the pre-chunk format's two per-ZDO branches and the bulk index pass.
         [HarmonyTranspiler]
         [HarmonyPriority(Priority.Last)]

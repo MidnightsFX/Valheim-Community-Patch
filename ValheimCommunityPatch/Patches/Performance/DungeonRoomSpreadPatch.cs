@@ -7,45 +7,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Dungeon Spawn Hitch: a dungeon or camp loading in near the player places its rooms over a
-    // few frames within a time budget instead of all in one frame.
-    //
-    // A DungeonGenerator that arrives from the network loads its room prefabs asynchronously and,
-    // when the last one is in, OnRoomLoaded calls Spawn, which instantiates every room (often 15 to
-    // 45, each a large hierarchy) and then releases the held prefab references, which also clears
-    // the zone's "loading" flag. When the prefabs are already resident the callbacks fire at once,
-    // inside the generator's Awake, so the whole dungeon lands in the frame that created it.
-    //
-    // A transpiler routes OnRoomLoaded's Spawn and ReleaseHeldReferences calls through this fix.
-    // Outside a loading screen the rooms are placed against a per-frame budget shared by every
-    // dungeon, the first room of a frame always going, so a small dungeon still finishes at once;
-    // the rest are placed from a MonoUpdaters.LateUpdate finalizer in arrival order. Until the last
-    // room is in, the generator keeps its prefab references and its zone stays flagged as loading,
-    // which holds back the objects inside it exactly as during vanilla's asynchronous load. Then
-    // vanilla's own ending runs in vanilla's order: SnapToGround.SnappAll, the room list cleared, the
-    // references released. Each room is placed exactly once with vanilla's PlaceRoom, which saves and
-    // restores the global random state itself, so the layout is the same. Behind a loading screen,
-    // with a budget of 0, or when another mod hooks OnRoomLoaded or Spawn, both calls go straight
-    // to vanilla. This paces work rather than checking it, but repeats nothing: what remains is a
-    // cursor into the generator's own room array, and with no dungeon pending the driver is a
-    // count check.
-    //
-    // A flagged zone fails ZNetScene.IsAreaReady, and Player.UpdateTeleport waits on that with no
-    // timeout, so a job that never finishes keeps a door, portal or respawn into its zone on the
-    // loading screen for good. Every job therefore ends with its references released. The driver
-    // is a finalizer because a postfix is skipped on every frame some object's late update
-    // throws, and nothing paces without it attached. A room that throws ends the job early, and an
-    // ending that throws still releases, where vanilla would have left the zone stuck; either way
-    // the dungeon is left as far as it got and a warning says so.
-    //
-    // A pending generator can go away three ways, and each releases exactly once. Unloaded or
-    // destroyed, its own OnDestroy releases, so the job is just dropped. Deleted outright (a
-    // location reset), its ZDO goes back to the pool before OnDestroy runs, and vanilla would then
-    // clear the loading flag of the wrong zone, so a ZNetScene.OnZDODestroyed postfix releases while
-    // the ZDO is still intact and OnDestroy finds nothing left to release. World shutdown clears the
-    // queue without releasing, since shutdown destroys the generators.
-    //
-    // Client: a server generates its own dungeons through Generate, which this does not touch.
+    // Fix Dungeon Spawn Hitch: a dungeon or camp loading in near the player instantiates all its rooms in one frame.
+    // Transpiles OnRoomLoaded to queue the rooms and place them under a per-frame budget from MonoUpdaters.LateUpdate.
+    // Dungeons arrive over a few frames with the same layout, and their zone is always released when they finish.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(DungeonGenerator), "OnRoomLoaded")]
@@ -59,10 +23,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Dungeon Room Budget",
                 4,
-                "Milliseconds per frame spent placing the rooms of dungeons and camps loading in near " +
-                "you; the rest are placed over the next frames. The first room in a frame always goes, " +
-                "and nothing is spread behind a loading screen. 0 restores vanilla, which places a whole " +
-                "dungeon in one frame.",
+                "Milliseconds per frame spent placing the rooms of dungeons and camps loading in near you; " +
+                "the rest wait for the next frames. 0 is vanilla, which places a whole dungeon in one frame.",
                 advanced: true,
                 valMin: 0,
                 valMax: 50);
@@ -81,6 +43,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             public long WorstFrame;
         }
 
+        // Every job must end with its references released: a zone left flagged as loading fails
+        // ZNetScene.IsAreaReady, which Player.UpdateTeleport waits on with no timeout, so a door, portal or
+        // respawn into it would hang on the loading screen for good.
         private static readonly List<Job> Jobs = new List<Job>();
 
         // Room placement time in the frame _frame, in Stopwatch ticks, shared by every job.
@@ -167,7 +132,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // Vanilla's release, unless the rooms are still being placed: then the job releases them.
+        // Vanilla's release, unless the rooms are still being placed: then the job releases them. Until then the zone
+        // stays flagged as loading, holding back the objects inside it as during vanilla's asynchronous load.
         private static void ReleaseUnlessQueued(DungeonGenerator gen) {
             if (FindJob(gen) != null) { return; }
 
@@ -227,6 +193,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 DungeonGenerator.RoomPlacementData room = job.Rooms[job.Next];
                 job.Next++;
 
+                // PlaceRoom saves and restores the global random state itself, so the layout matches vanilla's.
                 long start = Stopwatch.GetTimestamp();
                 job.Gen.PlaceRoom(room.m_roomData, room.m_position, room.m_rotation, null, ZoneSystem.SpawnMode.Client);
                 _spent += Stopwatch.GetTimestamp() - start;
@@ -297,7 +264,12 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static class DriverHook {
             // A finalizer, so it runs on frames where an object's late update throws, which skip
             // postfixes. It leaves that exception as it was.
+            //
+            // After Valheim AVX's batched collider bakes: tiles rebuilt in this LateUpdate keep their
+            // old collider until its finalizer assigns the new ones, and the snap at a dungeon's end
+            // raycasts the terrain.
             [HarmonyFinalizer]
+            [HarmonyAfter("com.kewb.valheimavx.terrain")]
             private static void Finalizer() {
                 if (Jobs.Count == 0) { return; }
 
@@ -342,8 +314,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        // Runs before ZDOMan returns the destroyed ZDO to its pool, so the zone it flagged is still
-        // readable when the release clears that flag.
+        // A generator deleted outright (a location reset) has its ZDO pooled before its OnDestroy runs, and vanilla's
+        // release there would clear the wrong zone's flag. This runs before ZDOMan returns the destroyed ZDO to its
+        // pool, so the zone it flagged is still readable, and OnDestroy then finds nothing left to release.
         [HarmonyPatch(typeof(ZNetScene), "OnZDODestroyed")]
         internal static class DeletedHook {
             [HarmonyPostfix]
@@ -360,6 +333,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
+        // Cleared without releasing: shutdown destroys the generators, and each releases in its OnDestroy.
         [HarmonyPatch(typeof(ZNetScene), "Shutdown")]
         internal static class ShutdownHook {
             [HarmonyPostfix]

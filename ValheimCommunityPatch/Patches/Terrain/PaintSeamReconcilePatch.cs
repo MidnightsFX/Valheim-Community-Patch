@@ -3,31 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Fix Terrain Paint Seams: makes the paint on either side of a zone boundary agree, so dirt
-    // no longer stops in a hard line along the 64 m grid.
-    //
-    // Adjacent zones each keep their own copy of the shared boundary texel, in separate
-    // TerrainComp data with nothing keeping them in step. TerrainOpPaintFanoutPatch explains why
-    // they diverge; this repairs terrain already recorded that way. It has to be more than a
-    // per-channel minimum: forcing the shared texel down to the unpainted side turns the last
-    // metre into a dirt-to-grass gradient along the line, and the next regeneration knocks it
-    // back down again.
-    //
-    // A postfix on Heightmap.ApplyModifiers reconciles the shared texels in the render texture,
-    // per color channel, from the two boundary texels a and b and the texels sa and sb one step
-    // inward on each side:
-    //
-    //     result = Clamp(Max(sa, sb), Min(a, b), Max(a, b))
-    //
-    // Paint with interior behind it continues across the line; an isolated one-texel stripe is
-    // removed; sides that already agree are unchanged, so regeneration cannot drift. Corners are
-    // shared by four zones and get one pass over all four so the value cannot flip between two
-    // pairwise answers. Alpha (the cleared-vegetation mask) is world-generated, already
-    // consistent, and left alone.
-    //
-    // Client: only Heightmap.m_paintMask, a render texture that is never saved, is written. The
-    // saved paint is unchanged, though a later paint op near the border will seed from the
-    // reconciled value. Runtime IsDedicated guard because a server builds these textures too.
+    // Neighboring zones keep separate copies of their shared border paint, which can diverge into a hard dirt line.
+    // Postfixes Heightmap.ApplyModifiers to merge each shared edge and corner texel from both sides and one step inward.
+    // Dirt carries across zone borders instead of stopping in a straight line, and lone border stripes disappear.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(Heightmap))]
@@ -40,10 +18,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 "Fix Terrain Paint Seams",
                 true,
-                "Makes terrain paint agree along zone boundaries. Vanilla can end up with dirt painted on " +
-                "only one side of a 64m zone border, which draws a hard straight line across the ground. " +
-                "Paint that the ground next to the border already carries is carried across the boundary; " +
-                "a lone stripe sitting on the border with nothing behind it on either side is removed.");
+                "Makes terrain paint agree along zone borders, so dirt painted next to a border carries across " +
+                "instead of stopping in a hard straight line.");
         }
 
         // Neighbour textures touched during one pass, uploaded once at the end.
@@ -52,12 +28,15 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         // The up-to-four zones that meet at a corner.
         private static readonly Corner[] CornerBuffer = new Corner[4];
 
+        // Writes only the render texture, never the saved paint, though a later paint op near the
+        // border seeds from the merged value. TerrainOpPaintFanoutPatch covers why the copies diverge.
         [HarmonyPostfix]
         [HarmonyPatch("ApplyModifiers")]
         private static void ApplyModifiersPostfix(Heightmap __instance) {
             if (Enabled == null || !Enabled.Value) { return; }
 
-            // IsDedicated rather than IsServer: a listen host draws its own terrain.
+            // A dedicated server builds these textures too but draws nothing. IsDedicated rather than
+            // IsServer: a listen host draws its own terrain.
             if (RunMode.IsDedicated) { return; }
 
             if (__instance.IsDistantLod) { return; }
@@ -160,7 +139,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
         }
 
         // highX / highZ pick which of this zone's four corners to reconcile. Each participating
-        // zone contributes its copy of the corner texel plus the texel diagonally inward from it.
+        // zone contributes its copy of the corner texel plus the texel diagonally inward from it, in
+        // one pass over all four, so the value cannot flip between two pairwise answers.
         private static bool ReconcileCorner(Heightmap ours, float zoneSize, bool highX, bool highZ, int width) {
             float dx = highX ? zoneSize : -zoneSize;
             float dz = highZ ? zoneSize : -zoneSize;
@@ -225,12 +205,16 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             return count + 1;
         }
 
-        // Alpha is not part of the merge; callers reattach each side's own.
+        // Alpha, the cleared-vegetation mask, is world-generated and already consistent, so it is not
+        // part of the merge; callers reattach each side's own.
         private static Color Merge(Color a, Color b, Color supportA, Color supportB) => new Color(
             MergeChannel(a.r, b.r, supportA.r, supportB.r),
             MergeChannel(a.g, b.g, supportA.g, supportB.g),
             MergeChannel(a.b, b.b, supportA.b, supportB.b));
 
+        // Paint with interior behind it continues across the line, a lone one-texel stripe goes, and
+        // sides that already agree stay unchanged, so regeneration cannot drift. A plain minimum would
+        // turn the last meter into a gradient that the next regeneration knocks down again.
         private static float MergeChannel(float a, float b, float supportA, float supportB) =>
             Mathf.Clamp(Mathf.Max(supportA, supportB), Mathf.Min(a, b), Mathf.Max(a, b));
 

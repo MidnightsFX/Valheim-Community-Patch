@@ -4,23 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Pathfinding Link Churn: path-finding reads the ground under each tile edge top to bottom,
-    // so floors that have not moved get the same navigation links on every rebuild.
-    //
-    // Pathfinding joins neighbouring tiles with links placed by FindGround, which casts one ray down
-    // through everything at that spot and keeps each hit at least one agent height from the last one
-    // kept. It walks the hits in the order PhysX returns them, which is unsorted and changes as nearby
-    // colliders move. Where floors are closer together than the agent height, a different floor wins
-    // from one rebuild to the next, and even the same floors can come back in a different list order.
-    // ConnectAlongEdge compares that list by index, so either way it removes and re-adds every link on
-    // the edge each time the tile rebuilds, every few seconds while creatures path there.
-    //
-    // A transpiler swaps FindGround's RaycastNonAlloc call for one that sorts the hits nearest first,
-    // which for this downward ray is top to bottom, with equal distances ordered by collider. The
-    // filter and the water adjustment run unchanged on the sorted hits, so the result is the one
-    // vanilla gives whenever PhysX happens to return them in order.
-    //
-    // Both: path-finding runs wherever a creature's owner is, a dedicated server included.
+    // FindGround takes raycast hits in PhysX's shifting order, so on stacked floors tile edges re-link each rebuild.
+    // Transpiles Pathfinding.FindGround's RaycastNonAlloc call to sort hits nearest first, ties ordered by collider.
+    // Creatures' navigation links on stacked floors stay put instead of being replaced every few seconds.
     // Provenance: the cause and the sort were found by Warp (issue #27).
     [PatchSide(Side.Both)]
     [ModDisableable]
@@ -36,10 +22,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 FixName,
                 true,
-                "Reads the ground under path-finding tile edges top to bottom, so creatures' navigation " +
-                "links land on the same floor every time. Where floors are stacked closer than a creature " +
-                "is tall, vanilla took whichever the physics engine listed first, which changes, and " +
-                "replaced every link along that edge every few seconds. Changing this requires a game restart.");
+                "Keeps creatures' navigation links on closely stacked floors stable instead of replacing them " +
+                "every few seconds; turning it on needs a game restart.");
         }
 
         private static readonly MethodInfo RaycastNonAllocMethod =
@@ -48,6 +32,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly MethodInfo SortedRaycastMethod =
             AccessTools.Method(typeof(PathfindingGroundOrderPatch), nameof(SortedRaycastNonAlloc));
 
+        // FindGround keeps each hit at least one agent height from the last one kept, and ConnectAlongEdge
+        // compares its result by index, so hit order alone decides whether an edge's links are replaced.
+        // Sorted top to bottom, the filter and water adjustment give what vanilla gives for in-order hits.
         private static int SortedRaycastNonAlloc(Vector3 origin, Vector3 direction, RaycastHit[] results, float maxDistance, int layerMask) {
             int count = Physics.RaycastNonAlloc(origin, direction, results, maxDistance, layerMask);
             if (Enabled.Value) { SortNearestFirst(results, count); }

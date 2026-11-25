@@ -3,23 +3,9 @@ using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Fix Terrain Compiler Init Race: a terrain compiler that loaded before its zone's heightmap
-    // existed recovers once the heightmap appears, instead of throwing every frame.
-    //
-    // TerrainComp.Awake gives up when Heightmap.FindHeightmap returns null: no Initialize, no
-    // RPC_ApplyOperation registration, no entry in s_instances. Update then calls CheckLoad every
-    // frame regardless, which dereferences the null heightmap. The zone's terrain edits are inert
-    // from then on because nothing can find or drive the compiler.
-    //
-    // A prefix on Update skips the frame while the compiler is unusable and, once a heightmap
-    // exists, re-runs the branch Awake skipped in Awake's order: find and destroy any rival
-    // compiler for the zone (the deduplication Awake would have done, without which two compilers
-    // hold diverging edits for one zone), register in s_instances, register the RPC, Initialize,
-    // CheckLoad. A compiler whose recovery throws is abandoned rather than retried every frame.
-    // The RPC name must match the string Awake registers, which the Deep North update renamed.
-    //
-    // Both: the race is more likely on a loaded server, and the RPC it re-registers is what lets
-    // that zone accept edits at all.
+    // TerrainComp.Awake gives up while its heightmap is missing; Update then throws every frame and edits are ignored.
+    // Prefixes TerrainComp.Update to wait for the heightmap, then re-runs the setup Awake skipped, in Awake's order.
+    // The zone's terrain compiler recovers and accepts terrain edits instead of throwing errors.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(TerrainComp))]
@@ -32,9 +18,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 "Fix Terrain Compiler Init Race",
                 true,
-                "Recovers a terrain compiler that loaded before its zone's heightmap existed. In vanilla " +
-                "it throws a NullReferenceException every frame from then on and that zone stops " +
-                "accepting terrain edits entirely.");
+                "Recovers a terrain compiler that loaded before its zone's heightmap existed, which otherwise " +
+                "throws errors every frame and ignores all terrain edits in that zone.");
         }
 
         // Compilers whose recovery threw. An abandoned compiler stays inert rather than half-live:
@@ -95,6 +80,7 @@ namespace ValheimCommunityPatch.Patches.Terrain {
 
                     if (!TerrainComp.s_instances.Contains(comp)) { TerrainComp.s_instances.Add(comp); }
 
+                    // Must match the name Awake registers, which the Deep North update changed.
                     comp.m_nview.Register<ZPackage>(
                         "RPC_ApplyOperation", new Action<long, ZPackage>(comp.RPC_ApplyOperation));
                     comp.Initialize();

@@ -123,6 +123,26 @@ namespace ValheimCommunityPatch {
             }
         }
 
+        /// <summary>
+        /// Turns off a fix whose hooks another mod removed, when it can hand back to the game
+        /// cleanly. False for one that cannot be turned off while the game runs.
+        /// </summary>
+        internal static bool TurnOffForMissingHooks(Type fix) {
+            Entry entry = Get(fix);
+            if (entry == null || !IsDisableable(entry.Fix)) { return false; }
+
+            entry.StoodDown = true;
+            entry.Switch.TurnOff();
+            return true;
+        }
+
+        /// <summary>The config key admins know a fix by, or its id when it has no toggle.</summary>
+        internal static string DisplayName(Type fix) {
+            Entry entry = Get(fix);
+            ConfigEntry<bool> toggle = entry?.Toggle;
+            return toggle != null ? toggle.Definition.Key : fix.Name;
+        }
+
         /// <summary>True when the fix is marked <see cref="ModDisableableAttribute"/>.</summary>
         internal static bool CanDisable(string fixId) {
             if (string.IsNullOrEmpty(fixId)) { return false; }

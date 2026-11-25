@@ -5,32 +5,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Creature Crowd Slowdown: holds creature updates to a time budget per physics step, so a
-    // crowd of hundreds no longer takes longer to simulate than the game has.
-    //
-    // Every owned creature runs Character.CustomFixedUpdate on each 20 ms physics step, at about
-    // 12 microseconds a creature, and its AI every 50 ms. Around 700 of them that and the physics
-    // take longer than the step they simulate, so the game runs its maximum of ten steps per
-    // rendered frame and drops to single-digit FPS. A creature at rest spends nearly all of that
-    // re-applying a zero velocity, which also keeps its rigidbody from ever sleeping. In a packed
-    // crowd nearly every creature also counts as walking, because a wander target it cannot reach
-    // keeps it pushing against the others until the 30 to 45 second wander timer ends.
-    //
-    // Hooks on the loop helpers time both loops. While they fit Creature Update Budget nothing else
-    // changes. Once they have cost more for about a second, each step updates every character that
-    // is not resting as usual and gives the resting ones what is left of the budget, in turns, with
-    // their delta time scaled to how long a full turn took so their timers keep real time. No
-    // creature waits longer than MaxPeriod steps, even if that goes over budget. Resting AI takes
-    // turns the same way. A resting creature standing on the terrain is put to sleep after its
-    // update, and the next update checks the ground is still there. Resting means the owner's AI
-    // creature is not asked to move, is on the ground, is barely moving, and has no target, recent
-    // hit, status effect, attack, rider or player within RestMinPlayerDistance; a creature stops
-    // resting on the first step any of that changes. A prefix on BaseAI.RandomMovement ends a wander
-    // that a crowd is holding still. Collision layers and the ZDO format are unchanged, so fences
-    // hold and other players need nothing. Stands down when another mod can skip creature updates
-    // (Valheim AVX's benchmark hooks, which skip only its parked player, do not count).
-    //
-    // Both: creatures are simulated wherever they are owned, usually on a client.
+    // About 700 owned creatures take longer to update than the 20 ms step they simulate, dropping FPS to single digits.
+    // Over budget, MonoUpdatersExtra prefixes update resting creatures in turns, and RandomMovement ends stuck wanders.
+    // Hundreds of loaded creatures, such as a huge breeding pen, no longer drag the game down to single-digit FPS.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch]
@@ -86,18 +63,16 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 FixName,
                 true,
-                "Keeps the game playable with hundreds of creatures loaded, such as a huge breeding pen. " +
-                "When creature updates take longer than Creature Update Budget, creatures standing around " +
-                "take turns updating a few times a second instead of fifty and their bodies sleep, and one " +
-                "a crowd has stopped gives up walking. Fights, falls, hits and anything within 10 m of a " +
-                "player run in full, and collisions are unchanged. While they fit the budget nothing changes.");
+                "Keeps the game playable with hundreds of creatures loaded: past Creature Update Budget, " +
+                "creatures standing around update in turns and sleep, while anything active or near a player " +
+                "updates in full.");
 
             UpdateBudget = ValConfig.BindClientConfig(
                 "Creature Update Budget",
                 4f,
-                "Milliseconds per physics step creature updates may take on this machine before Fix " +
-                "Creature Crowd Slowdown starts, and what it then holds them to. Lower gives a higher " +
-                "frame rate with a crowd, at the cost of resting creatures reacting a little later.",
+                "Milliseconds per physics step creature updates may take on this machine before Fix Creature " +
+                "Crowd Slowdown holds them to it. Lower gives more FPS with a crowd, but resting creatures react " +
+                "a little later.",
                 1f,
                 20f);
         }
@@ -247,8 +222,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             _everyAiMs += (spentMs - _everyAiMs) * SmoothingPerAiUpdate;
         }
 
-        // Runs before RandomMovement decides, so a wander ended here stops the creature in the same
-        // call, through the game's own "reached it" path.
+        // In a packed crowd a wander target a creature cannot reach keeps it pushing for the whole 30 to
+        // 45 s wander timer, so it never rests. Runs before RandomMovement decides, so a wander ended
+        // here stops the creature in the same call, through the game's own "reached it" path.
         [HarmonyPrefix]
         [HarmonyPatch(typeof(BaseAI), "RandomMovement")]
         private static void RandomMovementPrefix(BaseAI __instance, float dt) {
@@ -346,6 +322,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return EveryStep;
         }
 
+        // A resting creature's update re-applies a zero velocity, which in vanilla keeps its body from
+        // ever sleeping.
         private static void UpdateResting(Character creature, float delta) {
             // A sleeping body reports no ground contact, and this update wakes it for the rest of the
             // update, where the game would then read it as having left the ground.

@@ -326,10 +326,16 @@ namespace ValheimCommunityPatch {
                 _healthy = _allAttached();
                 if (!_healthy) {
                     FixRegistry.MarkStoodDown(_fix);
-                    Logger.LogError(
-                        $"{_fixName}: a maintenance hook is not attached, so this fix stands down to " +
-                        "vanilla for this session. A Valheim update has most likely changed one of the " +
-                        "patched methods - look for the patch failure logged at startup.");
+                    if (HookAudit.AnyRemoved) {
+                        Logger.LogWarning(
+                            $"{_fixName}: a maintenance hook is not attached, so this fix stands down to " +
+                            "vanilla for this session. Another mod removed hooks of this mod after they attached.");
+                    } else {
+                        Logger.LogError(
+                            $"{_fixName}: a maintenance hook is not attached, so this fix stands down to " +
+                            "vanilla for this session. A Valheim update has most likely changed one of the " +
+                            "patched methods - look for the patch failure logged at startup.");
+                    }
                 }
 
                 return _healthy;

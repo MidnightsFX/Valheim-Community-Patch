@@ -2,29 +2,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Grass Ground Raycasts: grass placement reads the ground height, normal and biome from
-    // heightmap data instead of casting a physics ray per blade.
-    //
-    // ClutterSystem.GetGroundInfo answers with a 1 km Physics.Raycast, and GenerateVegPatch calls
-    // it for every clutter candidate: up to 80 per clutter type per 8 m patch, one patch per frame
-    // while moving and a burst when zones load. The ray mask is exactly the terrain layer and the
-    // handler dereferences the hit's Heightmap, so the only thing it can hit is a zone heightmap's
-    // collision mesh, and everything it returns is a function of heightmap data.
-    //
-    // A prefix answers from that data: the heightmap from HeightmapLookupPatch, the height and
-    // triangle normal from HeightmapSampling (the same triangulation the collider bakes), and the
-    // biome from the same GetBiome call. The ray's +/-500 m vertical window is kept as an explicit
-    // check. Clutter is cosmetic, never saved, and regenerated constantly. Stands down while
-    // HearthBelow is loaded, because ground dug out with it exists only in colliders and the
-    // heightmap data still describes the surface before digging.
-    //
-    // Also stands down, to the game's raycast, when another mod can skip or rewrite GetGroundInfo,
-    // and keeps the answer of a prefix that ran first. The results are taken by ref so that a call
-    // this fix does not answer leaves them untouched. Valheim AVX's ground sampling writes them
-    // before it checks whether to run, so next to this fix every blade lost its heightmap and no
-    // grass grew.
-    //
-    // Client: ClutterSystem needs a camera.
+    // Fix Grass Ground Raycasts: grass placement casts a 1 km physics ray for every candidate blade.
+    // Prefixes ClutterSystem.GetGroundInfo to answer height, normal and biome from the zone's heightmap data.
+    // Building grass patches no longer pays a physics raycast per blade, and the grass lands where it did.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ClutterSystem))]
@@ -76,6 +56,10 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
+        // The ray's mask is only the terrain layer and vanilla dereferences the hit's Heightmap, so it can only
+        // hit a heightmap's collider, whose triangles HeightmapSampling reproduces; its +/-500 m reach is kept.
+        // Results are by ref so a call passed on keeps what an earlier prefix wrote: Valheim AVX writes them
+        // before deciding whether to run, and otherwise every blade lost its heightmap and no grass grew.
         [HarmonyPrefix]
         [HarmonyPatch(nameof(ClutterSystem.GetGroundInfo))]
         private static bool GetGroundInfoPrefix(

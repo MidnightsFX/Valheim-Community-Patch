@@ -1,25 +1,17 @@
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Main Menu Popup Subscription: leaving the main menu no longer keeps it in memory for the
-    // rest of the session, along with every character profile it loaded.
-    //
-    // FejdStartup.Start removes OnUGCPopupShown from the static CensorShittyWords.UGCPopupShown
-    // and adds it again. The removal is bound to the new menu, so it never takes off the previous
-    // one, and OnDestroy, which removes the menu's ZInput and Localization handlers, leaves this
-    // one. Nothing ever invokes the delegate, so its only effect is that every main menu the game
-    // has shown, at start and after each logout, stays reachable with its m_profiles: every
-    // character's PlayerProfile with each world's explored map data.
-    //
-    // A postfix on OnDestroy removes the menu's handler, as the game does with its other two.
-    //
-    // Client: the main menu. A dedicated server shows it once and never returns to it.
+    // Fix Main Menu Popup Subscription: every main menu stays in memory through a static popup event it never leaves.
+    // Postfixes FejdStartup.OnDestroy to remove OnUGCPopupShown from CensorShittyWords.UGCPopupShown.
+    // Each logout no longer leaks the old menu with every character profile and explored map it loaded.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(FejdStartup), "OnDestroy")]
     internal static class MainMenuPopupEventPatch {
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(MainMenuPopupEventPatch));
 
+        // Start's own removal is bound to the new menu, so it never takes off the old one, and OnDestroy
+        // removes the menu's ZInput and Localization handlers but not this one. Nothing raises the event.
         [HarmonyPostfix]
         private static void Postfix(FejdStartup __instance) {
             if (ApiSwitch.Off) { return; }

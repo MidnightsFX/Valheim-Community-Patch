@@ -2,24 +2,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Fence Gate Rain Damage: stops the wood fence gate wearing down in the rain, as the wood
-    // fence it is built into does not.
-    //
-    // WearNTear wears a piece left in the open down to half health while it rains, or while it sits
-    // under water, when its m_noRoofWear is on, which is the field's default. The wood fence and the
-    // stave gate have it turned off, but the wood fence gate added in the Deep North update kept the
-    // default, so a gate in a fence loses health every rainy minute while the fence beside it stays
-    // whole. Its other wear settings already match the fence's.
-    //
-    // A ZNetScene.Awake postfix turns m_noRoofWear off on the gate's prefab as each world loads, and
-    // keeps the value it found there. Every gate is created from that prefab, whether loaded from the
-    // world, sent by another player or placed with the hammer, whose piece table holds the same
-    // object, so each one starts without rain wear. When the fix is turned on or off mid-session the
-    // prefab gets its new value and every loaded gate still holding the old value is changed to match;
-    // turning it off puts back the value the prefab had. The prefab object outlives the world, so it
-    // is kept between worlds and a turn-off from the main menu still reaches it.
-    //
-    // Both: rain wear is run by the game that owns the gate, a player's client or a listen host.
+    // The Deep North wood fence gate kept m_noRoofWear on, so it wears to half health in rain while its fence does not.
+    // A ZNetScene.Awake postfix turns m_noRoofWear off on the gate prefab, and on loaded gates when the toggle changes.
+    // Wood fence gates no longer take rain or underwater damage, like the fence they are built into.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
@@ -32,17 +17,18 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Fence Gate Rain Damage",
                 true,
-                "Stops the wood fence gate taking damage in the rain, as the wood fence it is built into " +
-                "does not. Rain damage is worked out by the game that owns the gate, so every player " +
-                "should have the mod.");
+                "Stops the wood fence gate taking damage in the rain, as its fence does not; every player " +
+                "should have the mod, since the game that owns the gate works out rain damage.");
 
             Enabled.SettingChanged += (sender, args) => Apply();
         }
 
         private static readonly int GateHash = "wood_fence_gate".GetStableHashCode();
 
-        // The gate prefab's WearNTear and the m_noRoofWear it had before the fix changed it. Unity
-        // null once the prefab is unloaded; the next world's Awake then finds the reloaded one.
+        // The gate prefab's WearNTear and the m_noRoofWear it had before the fix changed it. Every gate,
+        // loaded, received or placed with the hammer, is created from this prefab. It outlives the
+        // world, so a turn-off from the main menu still reaches it; Unity null once the prefab is
+        // unloaded, and the next world's Awake then finds the reloaded one.
         private static WearNTear _prefab;
         private static bool _prefabValue;
 

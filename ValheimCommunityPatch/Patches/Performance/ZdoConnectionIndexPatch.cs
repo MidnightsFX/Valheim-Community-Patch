@@ -2,34 +2,10 @@ using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix World Load Connection Scan: the three world-load routines that pair portals, spawners
-    // and sync transforms with their targets use a hash index instead of nested loops.
-    //
-    // ZDOMan.ConnectPortals, ConnectSpawners and ConnectSyncTransforms each match a source list
-    // against a target list by comparing ZDOConnectionHashData.m_hash one pair at a time. On a
-    // mature world that is O(n*m) on the critical path of every server start.
-    //
-    // Prefixes index the target list by hash once and resolve each source with one lookup,
-    // reproducing vanilla's pairing decisions exactly. The three differ, so each follows its own
-    // original:
-    // - ConnectPortals consumes each target at most once (vanilla re-tests the target's live
-    //   connection on every inner iteration, and only a pairing in this loop changes it).
-    // - ConnectSpawners consumes each target at most once (vanilla removes the matched target
-    //   from its list), marks a spawner with no match "done", then strips the hash data from
-    //   every target left unclaimed, in list order, and logs the same three counts.
-    // - ConnectSyncTransforms keeps the first match per hash and never consumes (vanilla breaks
-    //   on the first match), and works purely through the static ZDOExtraData maps with no ZDO
-    //   lookup or null check, so a connection whose ZDO is gone is still paired, as in vanilla.
-    // Nothing in these loops writes ZDOExtraData's hash data until ConnectSpawners' orphan pass,
-    // so hashes read up front are the ones vanilla reads live. A ZDOID holds one hash entry, so
-    // no id is in both a source and a target list; vanilla's skip of the source's own id never
-    // fires, and the prefixes keep it only as a guard. Priority.Last and __runOriginal, so a mod
-    // that replaces the pairing (XPortalNetworks restores portals from its own targets) keeps its
-    // say instead of gaining vanilla's two-way links on top.
-    //
-    // Server: all three are private and only reached from ZDOMan.Load on the host.
-    // Provenance: ComfyMods/Atlas's ConnectSpawners rewrite (GPL-3.0, redseiko), extended here
-    // to the other two.
+    // Fix World Load Connection Scan: world load pairs portals, spawners and sync transforms by comparing every pair.
+    // Prefixes ZDOMan's ConnectPortals, ConnectSpawners and ConnectSyncTransforms with hash-indexed copies of each.
+    // Server start stops slowing quadratically with portals and spawners, and every pairing matches vanilla's.
+    // Provenance: ComfyMods/Atlas's ConnectSpawners rewrite (GPL-3.0, redseiko), extended here to the other two.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZDOMan))]
@@ -43,6 +19,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly FixSwitch ApiSwitch = FixRegistry.SwitchOf(typeof(ZdoConnectionIndexPatch));
 
+        // All three prefixes read every hash up front, which is safe: nothing in these loops writes hash data until
+        // ConnectSpawners' orphan pass. A ZDOID holds one hash entry, so vanilla's skip of the source's own id never
+        // fires; it is kept only as a guard. Priority.Last and __runOriginal, so a mod that replaces the pairing
+        // (XPortalNetworks restores portals from its own targets) keeps its say instead of gaining vanilla's links.
+
+        // Each target is consumed at most once: vanilla re-tests its live connection on every inner iteration, and only
+        // a pairing in this loop changes it.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("ConnectPortals")]
@@ -190,6 +173,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
+        // Keeps the first match per hash and never consumes, as vanilla breaks on the first match. Works
+        // only through the static ZDOExtraData maps with no ZDO lookup, so a connection whose ZDO is gone
+        // is still paired, as in vanilla.
         [HarmonyPrefix]
         [HarmonyPriority(Priority.Last)]
         [HarmonyPatch("ConnectSyncTransforms")]

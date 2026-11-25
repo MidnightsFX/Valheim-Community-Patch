@@ -1,31 +1,9 @@
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Clear Patrol Point On Taming: clears the patrol point a spawner stamped on a creature at the
-    // moment it is tamed, so it settles where you keep it instead of walking back to where it spawned.
-    //
-    // SpawnArea, CreatureSpawner and TriggerSpawner call BaseAI.SetPatrolPoint on the creatures they
-    // instantiate, which persists the spawn position and a patrol flag into the creature's ZDO for
-    // life. Taming never clears it: Tameable.Tame calls MonsterAI.MakeTame, which sets the tame flag
-    // and drops alert and targets but leaves patrol state alone. BaseAI.IdleMovement then overwrites
-    // the tamed "roam around where I am" centre with the patrol point unconditionally, and
-    // RandomMovement runs the animal home whenever it drifts past twice its roam range.
-    // MonsterAI.UpdateTarget also gives up on a target by its distance from the patrol point rather
-    // than from whoever the creature is following, so it will not defend you away from that spot.
-    // Boars show it worst: they are not commandable, so the follow command that would otherwise call
-    // ResetPatrolPoint is unreachable and the point is theirs permanently.
-    //
-    // A postfix on MakeTame calls vanilla's own ResetPatrolPoint, on the owner only, since that
-    // writes the ZDO unguarded. Clearing at the moment of taming rather than ignoring patrol in the
-    // idle path is deliberate: a patrol point is also how the "stay" command is implemented, in
-    // Tameable.RPC_Command, so suppressing it for tamed creatures would stop wolves and lox staying
-    // put. Not covered: creatures already tamed before this fix, which keep the stale point, and
-    // m_startsTamed prefabs, which reach Character.SetTamed from Tameable.Awake without passing
-    // through MakeTame, where a patrol point is plausibly what the prefab intended.
-    //
-    // Both: MakeTame runs on the ZDO owner, usually the taming player's client, but a dedicated
-    // server owns the creatures in its own active area and reaches the same path through the tame
-    // console command.
+    // Taming never clears the patrol point a spawner stamped on a creature, so a tame keeps running back to its spawn.
+    // Postfixes MonsterAI.MakeTame to call vanilla's ResetPatrolPoint on the creature's owner.
+    // A newly tamed creature stays where you keep it, boars above all, which cannot be told to follow or stay.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(MonsterAI))]
@@ -38,12 +16,11 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Clear Patrol Point On Taming",
                 true,
-                "Clears the patrol point a spawner stamped on a creature when you tame it, so it stays " +
-                "where you keep it instead of running back to where it spawned. Mostly affects boars, " +
-                "which cannot be told to follow or stay and so have no way to clear it. Telling a tamed " +
-                "creature to stay still sets a patrol point as normal.");
+                "Makes a newly tamed creature stay where you keep it instead of running back to where it spawned.");
         }
 
+        // Cleared at taming rather than ignored in the idle path, because the "stay" command is a patrol point too.
+        // Creatures tamed before this fix keep theirs, as do prefabs that start tamed and never pass through MakeTame.
         [HarmonyPostfix]
         [HarmonyPatch(nameof(MonsterAI.MakeTame))]
         private static void MakeTamePostfix(MonsterAI __instance) {

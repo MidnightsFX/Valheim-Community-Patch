@@ -6,24 +6,9 @@ using HarmonyLib;
 using Unity.Collections;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Tar Pit Buffer Disposal: tar pit raycast buffers are disposed safely.
-    //
-    // LiquidVolume.OnDestroy calls Dispose on its two NativeArrays unguarded, and Awake allocates
-    // them in its last few lines, after the mesh build and the save load. A tar pit whose Awake
-    // did not reach them - because something above threw - throws again out of OnDestroy, during
-    // scene teardown, where it takes the rest of the destroy chain with it.
-    //
-    // A transpiler rewrites each Dispose call to an IsCreated-guarded one, anchored on the calls
-    // rather than replacing the method.
-    //
-    // This fix used to have a second half, rewriting Awake's Allocator.TempJob constants to
-    // Allocator.Persistent: vanilla kept a four-frame allocation for the object's whole life,
-    // leaking the block and logging "JobTempAlloc has allocations that are more than 4 frames old"
-    // on every tar pit load. Valheim now allocates both arrays Persistent itself, so that half is
-    // gone. Persistent memory is reclaimed only by an explicit Dispose, which is what makes the
-    // guard below matter more than it did, not less.
-    //
-    // Client: tar pits are Plains-only and never inside a dedicated server's active area.
+    // Fix Tar Pit Buffer Disposal: a tar pit whose Awake failed throws from OnDestroy, cutting short scene teardown.
+    // Transpiles LiquidVolume.OnDestroy so each NativeArray.Dispose call runs only when the array was created.
+    // A tar pit that failed to load unloads cleanly instead of throwing during scene teardown.
     // Provenance: Azumatt's MyPitsDontLeak (MIT), which replaces both methods wholesale.
     [PatchSide(Side.Client)]
     [HarmonyPatch(typeof(LiquidVolume))]
@@ -31,6 +16,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static readonly MethodInfo SafeDisposeMethod =
             AccessTools.Method(typeof(LiquidVolumeLeakPatch), nameof(SafeDispose));
 
+        // Awake allocates the arrays in its last lines, so one that threw earlier leaves them uncreated.
         private static void SafeDispose<T>(ref NativeArray<T> array) where T : struct {
             if (array.IsCreated) { array.Dispose(); }
         }

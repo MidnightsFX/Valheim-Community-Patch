@@ -8,26 +8,9 @@ using UnityEngine;
 using Object = UnityEngine.Object;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Background Dungeon Generation: a dungeon or camp generated ahead of the players, in a
-    // zone nobody has reached yet, is laid out with lightweight stand-ins for its room models.
-    //
-    // The world owner pre-generates zones in a ring ahead of each player, in ghost mode: every
-    // object is created only so its saved data exists, and destroyed again. A dungeon generated
-    // that way still instantiates each room's full model (walls, decoration, lights, often
-    // thousands of objects) because the layout reads placed rooms, then destroys them all before
-    // the frame ends. That build and teardown is most of a Deep North hall's or village's hitch.
-    //
-    // A transpiler routes PlaceRoom's room model instantiation through this fix. In ghost mode it
-    // builds a stand-in instead: an object with a copy of the room's Room component and, mirrored
-    // in the same order, active state and pose, the chain of objects down to each of its room
-    // connections. That is everything the layout, the door and end-cap passes and the saved room
-    // list read from a placed room, so the dungeon and its networked contents come out the same;
-    // when players arrive the rooms load from the saved list as before. The full model is still
-    // used outside ghost mode, for a room with colliders on the terrain layer (the camp layouts'
-    // ground probes would hit those), and when another mod hooks PlaceRoom. 'Verify Background
-    // Dungeon Stand-ins' builds both, uses the model, and logs any difference.
-    //
-    // Server: only the world owner generates zones.
+    // Fix Background Dungeon Generation: dungeons generated ahead of players build each room model only to destroy it.
+    // Transpiles DungeonGenerator.PlaceRoom to build ghost-mode rooms as stand-ins of just Room and its connections.
+    // Dungeons and camps in zones nobody has reached generate with a far smaller hitch and the same saved result.
     [PatchSide(Side.Server)]
     [ModDisableable]
     [HarmonyPatch(typeof(DungeonGenerator), "PlaceRoom",
@@ -42,10 +25,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionDebug,
                 "Verify Background Dungeon Stand-ins",
                 false,
-                "Diagnostic. For every room of a dungeon generated ahead of the players, builds both the " +
-                "stand-in and the full room model, uses the model, and logs a line per dungeon plus any " +
-                "difference in the room connections the layout reads. Costs the model this fix exists to avoid, so leave it off " +
-                "unless you are validating the stand-ins.",
+                "Diagnostic. Builds both the stand-in and the full model for every room generated ahead of the " +
+                "players, uses the model, and logs any difference; costs what the fix saves.",
                 advanced: true);
         }
 
@@ -138,6 +119,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
         private static readonly Dictionary<Transform, Transform> Mirrored = new Dictionary<Transform, Transform>();
 
+        // Everything the layout, the door and end-cap passes and the saved room list read from a placed room.
         // Internal so 'Log World Generation Timings' can time it.
         internal static GameObject BuildStandIn(GameObject asset, Vector3 position, Quaternion rotation, Transform parent) {
             Transform source = asset.transform;

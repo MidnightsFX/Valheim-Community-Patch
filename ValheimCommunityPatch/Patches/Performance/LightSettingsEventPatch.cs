@@ -2,24 +2,9 @@ using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Light Settings Subscription: lights register for graphics-setting changes in a lookup
-    // table instead of a static event whose unsubscribe scans every other subscriber.
-    //
-    // LightFlicker.OnEnable subscribes ApplySettings to the static
-    // GraphicsSettingsManager.GraphicsSettingsChanged event and OnDisable unsubscribes. Removing
-    // from a multicast delegate allocates a delegate as the search key and walks the whole
-    // invocation list comparing with MulticastDelegate.Equals, and the list is as long as the
-    // number of lit lights, so unloading N lights is O(N^2), synchronously inside Object.Destroy.
-    //
-    // OnEnable is replaced with a copy that registers the light in a dictionary keyed on instance
-    // id instead of subscribing; an OnDisable postfix removes it; and a postfix on the one method
-    // that raises the event calls ApplySettings on every registered light. Only LightFlicker is
-    // patched: the other three vanilla subscribers are singletons or one-per-zone, and taking the
-    // hundreds of lights out of the list makes their unsubscribes cheap too. The event stays fully
-    // functional for everyone else. A light whose OnEnable ran before the hooks were healthy is
-    // event-subscribed and served by vanilla, so the postfix and the removal are unconditional.
-    //
-    // Client: lights and graphics settings are rendering.
+    // Fix Light Settings Subscription: each LightFlicker leaving a static settings event scans every other subscriber.
+    // Prefixes LightFlicker.OnEnable to register in a dictionary that a GraphicsSettingsManager postfix serves instead.
+    // Unloading many lights no longer stalls on event removal, whose cost grew with the square of the light count.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(LightFlicker))]
@@ -39,7 +24,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                && PatchHelper.HasHook(AccessTools.DeclaredMethod(typeof(GraphicsSettingsManager), "ApplyGraphicsSettingsToCurrentSession"), typeof(SettingsHook)));
 
         // Vanilla's OnEnable with the event subscribe replaced by a registry add, including its
-        // early return for a LightFlicker with no Light.
+        // early return for a LightFlicker with no Light. Only LightFlicker: the other vanilla
+        // subscribers are few, and their unsubscribes get cheap once the lights are off the list.
         [HarmonyPrefix]
         [HarmonyPatch("OnEnable")]
         private static bool OnEnablePrefix(LightFlicker __instance) {
@@ -53,6 +39,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
+        // Unconditional, like the settings postfix: a light that subscribed to the event instead is
+        // not in the registry, and vanilla serves it.
         [HarmonyPostfix]
         [HarmonyPatch("OnDisable")]
         private static void OnDisablePostfix(LightFlicker __instance) =>

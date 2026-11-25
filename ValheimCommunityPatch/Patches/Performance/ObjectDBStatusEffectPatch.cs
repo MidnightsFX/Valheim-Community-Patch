@@ -3,21 +3,10 @@ using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Status Effect Lookup Scan: ObjectDB.GetStatusEffect answers from a map keyed by name hash
-    // instead of walking every status effect in the game.
-    //
-    // GetStatusEffect compares the hash with NameHash() of each entry in m_StatusEffects, front to
-    // back. The game asks it each time a character gains an effect it does not already have, and mods
-    // ask it for their own effects; large mod packs register hundreds.
-    //
-    // A prefix returns the same effect, the first in list order with that hash, from a map built on
-    // first use. The map is rebuilt whenever m_StatusEffects is replaced or its contents change, read
-    // from the list's own mutation counter, so effects mods add, remove or swap while playing are
-    // found. A list holding an entry vanilla's loop would throw on is left to vanilla. It runs after
-    // other mods' prefixes and respects one that already replaced the call, and stands down for the
-    // session when another mod transpiles the method.
-    //
-    // Client: the callers are characters' owners. Provenance: contributed by searica (PR #22).
+    // Fix Status Effect Lookup Scan: ObjectDB.GetStatusEffect walks every status effect, hundreds in large mod packs.
+    // Prefixes GetStatusEffect to answer from a hash map, rebuilt whenever the list is replaced or changes.
+    // Gaining a status effect no longer scans the whole list, and effects mods add mid-game are still found.
+    // Provenance: contributed by searica (PR #22).
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.GetStatusEffect))]

@@ -8,25 +8,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Idle Creature Sync: an idle creature's owner stops re-sending it to every player each
-    // frame over physics jitter.
-    //
-    // The owner writes a creature's position and velocity (ZSyncTransform.OwnerSync), its body
-    // velocity (Character.SyncVelocity) and its ground tilt (Character.UpdateGroundTilt) whenever
-    // the value differs at all from the last one it saw. A character's rigidbody never sleeps, so
-    // float noise changes all four every frame, each change bumps the ZDO's data revision, and a
-    // changed ZDO is re-sent whole to every peer. A base of idle tamed animals fills its owner's
-    // upload and every other player's download.
-    //
-    // Transpilers route those four writes through deadbands that compare against the value already
-    // stored in the ZDO, so the error stays bounded and slow drift is still written once it crosses
-    // the band: 2 cm of position, 0.05 m/s of velocity (below which velocity is written as zero)
-    // and 1 degree of tilt. Vanilla's own change checks around each write are kept verbatim. Only
-    // non-player characters are affected, and a moving creature crosses every band each frame.
-    // Stands down when Network Performance System 1.9.1 or later is loaded, which applies the same
-    // deadband.
-    //
-    // Both: the writes happen wherever the creature is owned, usually on a client.
+    // A creature's rigidbody never sleeps, so float noise re-sends every idle creature whole to every peer each frame.
+    // Transpiles ZSyncTransform.OwnerSync, Character.SyncVelocity and UpdateGroundTilt to write through deadbands.
+    // Bases full of idle tames stop filling their owner's upload and every other player's download.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch]
@@ -46,13 +30,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 FixName,
                 true,
-                "Stops an idle creature being re-sent to every player many times a second over tiny " +
-                "physics jitter. Vanilla re-sends a creature whenever its position, velocity or ground " +
-                "tilt changes at all, and a standing creature's change every frame, so a base full of " +
-                "tamed animals can fill its owner's upload and every other player's download. Changes " +
-                "smaller than 2 cm, 0.05 m/s or 1 degree from what was last sent are no longer sent on " +
-                "their own. Players, ships, carts and items are unaffected. Inactive when Network " +
-                "Performance System 1.9.1 or later is installed, which does the same.");
+                "Stops idle creatures being re-sent to every player each frame over tiny physics jitter " +
+                "(inactive with Network Performance System 1.9.1 or later, which does the same).");
         }
 
         private static readonly MethodInfo SetPositionMethod =
@@ -215,6 +194,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         // exercised outside the game. Each skips a write only when the value is provably inside its
         // band, so NaN and the like are still written, as vanilla would.
         internal static class Deadband {
+            // Measured from the value stored in the ZDO, not the last frame's, so the error stays bounded and
+            // slow drift is still written once it crosses a band.
             internal const float PositionBand = 0.02f;
             internal const float VelocityBand = 0.05f;
             internal const float TiltBandDegrees = 1f;

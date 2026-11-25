@@ -2,23 +2,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Grass Camera Lookups: each grass renderer's per-frame visibility check and fade distance
-    // read the camera, its view planes and its position from one lookup per frame instead of asking
-    // the engine again for every renderer.
-    //
-    // ClutterSystem gives every instanced clutter type in every grass patch its own InstanceRenderer,
-    // a few hundred around the player and well over a thousand with a raised grass distance, and
-    // MonoUpdaters calls CustomUpdate on each one every frame. Each call asks the engine for the frame
-    // number up to three times to find the camera and its cached view planes, and each one in view
-    // reads the camera's transform and position again for its fade distance. Two thirds of them are
-    // out of view and draw nothing, so most of that is the lookup alone.
-    //
-    // A MonoUpdaters.Update prefix reads the camera, Utils' view planes and the camera position once
-    // per pass, and a CustomUpdate prefix runs vanilla's body against them: the same sphere-against-
-    // planes test, fade thinning and draw call, in the same order. Calls from outside that pass, and
-    // a CustomUpdate another mod can skip or rewrite, keep vanilla's own lookups.
-    //
-    // Client: grass is only drawn where there is a camera.
+    // Fix Grass Camera Lookups: hundreds of grass renderers each look up the camera and its view planes every frame.
+    // A MonoUpdaters.Update prefix reads them once per pass; a CustomUpdate prefix runs vanilla's body against them.
+    // Grass costs less to update each frame and draws exactly as the game's does.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(InstanceRenderer))]

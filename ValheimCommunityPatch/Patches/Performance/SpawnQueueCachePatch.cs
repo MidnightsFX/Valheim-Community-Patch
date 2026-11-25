@@ -4,30 +4,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Spawn Queue Churn: the sorted spawn backlog persists between passes instead of being
-    // rebuilt and re-sorted thirty times a second.
-    //
-    // While any object-creation backlog exists, every CreateDestroyObjects pass rebuilds the
-    // pending list (a Created check and a distance per near ZDO) and sorts the entire backlog,
-    // only to consume its head. Streaming a large base keeps the backlog in the tens of thousands
-    // for minutes.
-    //
-    // A prefix on CreateObjectsSorted keeps the filtered, sorted list in vanilla's own
-    // m_tempCurrentObjects2 and consumes it with a cursor across passes, rebuilding it with
-    // vanilla's exact filter and sort only every third pass or when the player's zone changes.
-    // Creation itself is unchanged: same per-pass budget, same order. A cached entry is guarded at
-    // consume time against having been created meanwhile and against its pooled ZDO having been
-    // recycled into a different object (the captured id no longer matches). Re-check the copied
-    // filter against the game source on updates. Between rebuilds the list is not the current
-    // pass's candidates, so nothing may read it as that: SceneIdleSkipPatch decides from the near
-    // list instead.
-    //
-    // The prefix runs after every other mod's. When one of them has already replaced the pass
-    // (ValheimOptimized does outside loading screens, Fast Loading behind them), this one creates
-    // nothing, since a second batch would double the pass, and drops its cached list, which that
-    // pass has made stale, so it is rebuilt the next time this one runs.
-    //
-    // Both: a dedicated server streams objects for connected players through this path.
+    // Fix Spawn Queue Churn: every spawn pass rebuilds and re-sorts the whole pending backlog just to take its head.
+    // Prefixes CreateObjectsSorted to keep the sorted list across passes, rebuilt every third pass or on a new zone.
+    // Loading into a large base no longer re-sorts tens of thousands of pending objects thirty times a second.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZNetScene))]
@@ -39,10 +18,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Spawn Burst Divisor",
                 100,
-                "The per-frame object spawn budget is the spawn backlog divided by this " +
-                "(minimum 10 for near objects, exactly like vanilla). 100 is vanilla's " +
-                "hardcoded value. Higher spawns fewer objects per frame when entering a " +
-                "built-up area - smaller frame hits, slower pop-in.",
+                "The per-frame object spawn budget is the spawn backlog divided by this; 100 is vanilla's " +
+                "value. Higher spawns fewer objects per frame in a built-up area: smaller hitches, slower pop-in.",
                 advanced: true,
                 valMin: 10,
                 valMax: 2000);
@@ -71,6 +48,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static bool CreateObjectsSortedPrefix(
             ZNetScene __instance, List<ZDO> currentNearObjects, int maxCreatedPerFrame, ref int created,
             bool __runOriginal) {
+            // Another mod has replaced the pass (ValheimOptimized outside loading screens, Fast
+            // Loading behind them): a second batch would double it, and the cached list is stale.
             if (!__runOriginal) {
                 Invalidate();
                 return false;
@@ -84,6 +63,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             if (!ZoneSystem.instance.IsActiveAreaLoaded()) { return false; }
 
+            // Between rebuilds this is not the current pass's candidates, so nothing may read it as
+            // that: SceneIdleSkipPatch decides from the near list instead.
             List<ZDO> pending = __instance.m_tempCurrentObjects2;
             Vector3 referencePosition = ZNet.instance.GetReferencePosition();
             Vector2s referenceZone = ZoneSystem.GetZone(referencePosition);
@@ -96,7 +77,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 _rebuildZone = referenceZone;
                 _cursor = 0;
 
-                // Vanilla's filter and sort.
+                // Vanilla's filter and sort; re-check the copy against the game source on updates.
                 pending.Clear();
                 for (int i = 0; i < currentNearObjects.Count; i++) {
                     ZDO zdo = currentNearObjects[i];

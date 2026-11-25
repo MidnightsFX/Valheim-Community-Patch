@@ -3,21 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Grass Rebuild Burst: a whole-area grass rebuild is spread over a few frames, nearest
-    // patches first.
-    //
-    // Grass generation is normally one patch per frame, but ClutterSystem.GeneratePatches'
-    // rebuildAll path skips that limiter. TerrainComp.CheckLoad triggers it with a whole-zone
-    // radius whenever a zone with saved terrain edits loads, regenerating up to ~64 patches at
-    // hundreds of raycasts each in one frame: a reliable stutter entering built-up areas.
-    //
-    // A prefix replaces the unbudgeted sweep with one pass of vanilla's own ring walk that builds up
-    // to Budget patches, nearest first: GeneratePatch's one-per-pass limiter is reopened after each
-    // build until the budget is spent. It then re-arms m_forceRebuild so LateUpdate resumes next frame
-    // until nothing is left. No placement logic is copied; every build is vanilla's. Patches beyond the
-    // budget keep their old grass for a few frames.
-    //
-    // Client: ClutterSystem needs a camera.
+    // Fix Grass Rebuild Burst: loading a zone with terrain edits regenerates up to ~64 grass patches in one frame.
+    // Prefixes ClutterSystem.GeneratePatches' rebuildAll path to build a few patches per frame in vanilla's ring order.
+    // Entering built-up areas no longer stutters; the farther patches keep their old grass for a few frames.
     [PatchSide(Side.Client)]
     [ModDisableable]
     [HarmonyPatch(typeof(ClutterSystem))]
@@ -31,8 +19,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
                 ValConfig.SectionPerformance,
                 "Grass Rebuild Budget",
                 8,
-                "How many grass patches a full rebuild may regenerate per frame. Higher finishes the " +
-                "rebuild sooner but hitches more; 64 is effectively vanilla.",
+                "Grass patches a full rebuild may regenerate per frame. Higher finishes sooner but hitches " +
+                "more; 64 is effectively vanilla.",
                 advanced: true,
                 valMin: 1,
                 valMax: 64);

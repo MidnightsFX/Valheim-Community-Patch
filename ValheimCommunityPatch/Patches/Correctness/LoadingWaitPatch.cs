@@ -7,30 +7,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Loading Screen Wait: a portal, respawn or login ends its loading screen once the server
-    // confirms it has sent the destination, instead of after a fixed 8 seconds.
-    //
-    // Vanilla holds a distant teleport and a respawn for a fixed 8 s, then asks IsAreaReady, which
-    // only checks that the objects the client already knows about have been built. A client of a
-    // dedicated server only knows what the server has streamed so far, and the server streams a
-    // player's whole area through one queue, every building piece before any item, so a large base
-    // can take longer than that: the player lands on bare terrain under floors that have not
-    // arrived, and a respawn that finds no bed in a still-empty area wipes the bed spawn point. On
-    // a quick server the same 8 s is spent waiting for an area that was ready long before.
-    //
-    // A client asks the server, over three peer RPCs, to confirm the destination's 3x3 zones. The
-    // server answers once its per-peer sent table holds every Solid and Terrain object there, and
-    // because it answers on the same connection right after the send pass, the answer always
-    // arrives behind those objects. Transpilers swap the 8 s constant in Player.UpdateTeleport and
-    // both reads of m_respawnLoadDuration in Game.FindSpawnPoint for a helper, and every
-    // IsAreaReady call in the two for one that also waits for the answer, up to a timeout after
-    // which vanilla's checks decide alone. Where another mod has already replaced the portal's 8 s,
-    // its timing stays and only the IsAreaReady call is swapped. A host holds every object itself,
-    // so it drops the fixed wait and lets IsAreaReady decide. A client of a server without this
-    // fix, or of one that has it switched off, never gets a hello back and keeps vanilla's timings
-    // exactly; a server that switches it off mid-session sends its clients a hello with no protocol.
-    //
-    // Both: the server half answers on a dedicated server; the client half needs a local player.
+    // A fixed 8 s teleport and respawn wait lands players under unsent floors on busy servers and idles on quick ones.
+    // Transpiles UpdateTeleport and FindSpawnPoint to wait until the server confirms by RPC that it sent the area.
+    // Loading screens end as soon as the destination's buildings have arrived, with vanilla's timings as the fallback.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(ZNet))]
@@ -44,19 +23,15 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Loading Screen Wait",
                 true,
-                "Portals, respawns and joining end their loading screen once the server has sent the " +
-                "buildings at the destination, instead of after a fixed 8 seconds, so you neither land " +
-                "under floors that have not arrived nor wait for an area that already has. A client of " +
-                "a dedicated server needs this fix on the server too; without it the game's own timings " +
-                "apply. A host or single-player game waits only for the area to be built.");
+                "Ends portal, respawn and login loading screens once the server (which needs this fix too) " +
+                "has sent the buildings at the destination, instead of after a fixed 8 seconds.");
 
             ConfirmationTimeout = ValConfig.BindServerConfig(
                 ValConfig.SectionCorrectness,
                 "Loading Confirmation Timeout",
                 20,
-                "How long, in seconds, a loading screen waits for the server to confirm the destination " +
-                "before the game's own checks decide alone. Only reached when the server is struggling " +
-                "to send the area.",
+                "Seconds a loading screen waits for the server's confirmation before the game's own checks " +
+                "decide alone. Only reached when the server is struggling to send the area.",
                 advanced: true, valMin: 8, valMax: 60);
 
             Enabled.SettingChanged += (sender, args) => {

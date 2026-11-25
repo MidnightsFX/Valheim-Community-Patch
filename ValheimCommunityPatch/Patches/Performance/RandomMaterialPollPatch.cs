@@ -3,23 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Performance {
-    // Fix Piece Material Polling: pieces with material variation wait for their random seed on
-    // one shared ticker and stop polling once the values are applied.
-    //
-    // RandomMaterialValues.Start schedules five polls through InvokeRepeating and CancelInvoke,
-    // Unity's string-based invoke machinery. The polls only exist to wait for the piece's random
-    // seed to arrive over the network, and once it has, the remaining polls re-derive and
-    // re-write the same deterministic values, allocating a System.Random per property and
-    // re-hashing every shader property name each time.
-    //
-    // Start is replaced with a copy that adds the piece to a queue pumped from ZNetScene.Update,
-    // and the poll body is copied with two changes that preserve every value: polling stops once
-    // m_isSet (the values are a pure function of the seed, which is written once), and
-    // Shader.PropertyToID results are cached by name. The retry schedule, the owner-side seed
-    // write and the m_checks bookkeeping are vanilla's. A piece destroyed mid-queue drops out on
-    // its next due poll.
-    //
-    // Both: a dedicated server polls every piece it instantiates.
+    // Fix Piece Material Polling: RandomMaterialValues polls five times by string invoke, rewriting the same values.
+    // Prefixes Start to queue the piece on a ZNetScene.Update pump that stops polling once the values are set.
+    // Pieces with material variation load with one shared ticker and no repeated allocations.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(RandomMaterialValues))]
@@ -62,7 +48,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         }
 
         // Vanilla's CheckMaterial minus the invoke bookkeeping. Returns true when this piece is
-        // finished polling.
+        // finished polling. Stopping once m_isSet changes nothing: the values are a pure function of
+        // the seed, which is written once, so vanilla's later polls rewrite the same values.
         private static bool Poll(RandomMaterialValues rmv) {
             if ((!rmv.m_isSet && rmv.m_randomSeed < 0
                     || rmv.m_isSet && (!(bool)(Object)rmv.m_piece || !Player.IsPlacementGhost(rmv.m_piece.gameObject)))

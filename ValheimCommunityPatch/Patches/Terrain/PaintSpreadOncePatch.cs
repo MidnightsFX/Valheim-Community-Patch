@@ -6,27 +6,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Terrain {
-    // Fix Terrain Paint Doubling: an edit that reaches two zones paints the ground they share
-    // once, so Deep North snow no longer piles up or digs out twice as fast along a zone border.
-    //
-    // A zone's border texels also exist in the neighbouring zone's paint data. When
-    // TerrainComp.PaintCleared paints one, its local function spread copies the result into the
-    // neighbour's compiler and pokes that heightmap. If the same edit also reaches the neighbour,
-    // the neighbour's own PaintCleared then starts from the copied value, because a poked
-    // heightmap is read from the compiler's array, and paints it again. Lerped paint only
-    // saturates faster, but snow depth is added, so the border gets double the change and a corner
-    // shared by four zones up to four times.
-    //
-    // A transpiler on spread records each texel it is about to overwrite, with the value
-    // PaintCleared would have read there before the write. A transpiler on PaintCleared sends its
-    // reads (the getMask local function) through ReadPaint, which returns the recorded value for
-    // those texels and is getMask verbatim otherwise. Each zone then paints from the value before
-    // the edit, and its own spread still syncs the neighbours, so every copy ends one application
-    // deep. Records belong to one edit (same position, settings object and frame, each zone
-    // visited once) and are dropped when the next begins. With either hook missing nothing is
-    // recorded or read, and PaintCleared behaves as vanilla.
-    //
-    // Both: PaintCleared runs on whichever peer owns the zone's terrain compiler.
+    // An edit reaching two zones paints their shared border twice (four times at a corner), doubling added snow depth.
+    // Transpiles TerrainComp.PaintCleared's spread to record texels before writing, and its getMask to read them back.
+    // Deep North snow no longer piles up or digs out twice as fast along a zone border.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(TerrainComp))]
@@ -39,10 +21,8 @@ namespace ValheimCommunityPatch.Patches.Terrain {
                 ValConfig.SectionTerrain,
                 "Fix Terrain Paint Doubling",
                 true,
-                "Applies a terrain edit once to the ground two zones share. When an edit reaches both " +
-                "sides of a 64m zone border, vanilla applies it twice along the border (up to four " +
-                "times at a corner). Normal paint barely shows it, but Deep North snow is added, so " +
-                "piling or clearing snow leaves a ridge or trench along the zone line.");
+                "Applies a terrain edit once to the ground two zones share, so piling or clearing Deep North " +
+                "snow no longer leaves a ridge or trench along zone lines.");
         }
 
         private struct Record {
@@ -106,6 +86,9 @@ namespace ValheimCommunityPatch.Patches.Terrain {
             return PatchHelper.ReplaceCalls(instructions, FindGetMask(readPaint), readPaint, "TerrainComp.PaintCleared");
         }
 
+        // spread copies a painted border texel into the neighbour's compiler and pokes its heightmap, which
+        // then reads that array, so the neighbour would paint over the copy. Recorded texels return their value
+        // from before the edit; spread still syncs the neighbours, so every copy ends one application deep.
         private static Color ReadPaint(Heightmap hmap, TerrainComp tc, int x, int y, int index) {
             for (int i = 0; i < Records.Count; i++) {
                 if (Records[i].Index == index && ReferenceEquals(Records[i].Comp, tc)) { return Records[i].Before; }

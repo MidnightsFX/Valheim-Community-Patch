@@ -3,25 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Cloth Wind Shelter Errors: stops the "MagicaCloth component not found" error the Root Crown
-    // logs each time one is created.
-    //
-    // PlayerClothWindShelter, new in the Deep North update, turns off the wind on a cape, hair or hat's
-    // cloth simulation while its wearer is in shelter. Its Awake looks for the cloth component on its
-    // own object; when there is none it logs an error with a stack trace and skips the line that
-    // disables it, so its Update then runs every frame with nothing to do. 1.0.21 added the root
-    // object's name to that error but still logs it and still leaves the component on. The Root
-    // Crown's hat model carries the component without the cloth, while the 59 other vanilla prefabs
-    // that carry it are authored correctly. A crown is created whenever one is dropped, put on a
-    // stand, or worn by a player coming into range.
-    //
-    // A prefix on Awake disables the component and skips vanilla's Awake when its object has no cloth
-    // component, writing the object's name to the debug log instead. It tests for the component rather
-    // than naming the prefab, so a mod's copy of the crown and any later stray are caught too. Nothing
-    // is lost: VisEquipment only gives the wearer to a shelter it found on a cloth component.
-    //
-    // Both: the error fires wherever the item is created, and a dedicated server creates the objects
-    // around its own reference point too.
+    // The Root Crown's hat has a cloth wind shelter but no cloth, so it logs an error each time a crown is created.
+    // Prefixes PlayerClothWindShelter.Awake to disable the component and skip Awake when no cloth component is present.
+    // Root Crowns no longer log "MagicaCloth component not found"; the object's name goes to the debug log instead.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(PlayerClothWindShelter))]
@@ -34,10 +18,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Cloth Wind Shelter Errors",
                 true,
-                "Stops the 'MagicaCloth component not found' error logged each time a Root Crown is " +
-                "created: dropped, put on a stand, or worn by a player coming into range. Its hat model " +
-                "carries the wind shelter component without the cloth it controls. The messages are " +
-                "still visible with EnableDebugMode on.");
+                "Stops the 'MagicaCloth component not found' error a Root Crown logs each time one is created; " +
+                "the messages still show with EnableDebugMode on.");
         }
 
         // The component Awake looks for, read off the field it stores it in, so VCP needs no
@@ -46,6 +28,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         private static readonly Type ClothType =
             AccessTools.Field(typeof(PlayerClothWindShelter), "m_cloth")?.FieldType;
 
+        // Tests for the component rather than naming the crown, so a mod's copy and any later stray are caught too.
+        // Vanilla logs and leaves the shelter on, updating every frame with nothing to do (1.0.21 only named the object
+        // in the error). Disabling loses nothing: VisEquipment only hands the wearer to a shelter on a cloth component.
         [HarmonyPrefix]
         [HarmonyPatch("Awake")]
         private static bool AwakePrefix(PlayerClothWindShelter __instance) {

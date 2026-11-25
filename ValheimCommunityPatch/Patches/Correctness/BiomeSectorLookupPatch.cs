@@ -7,44 +7,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Biome Sector Lookup: near biome borders, the player's biome, the weather, the map's biome
-    // name and spawn level-ups follow the biome actually there, and the "GetBiome error" warning no
-    // longer fills the log.
-    //
-    // AltBiomeWorldData samples GetBiome on a 12 m grid and flood-fills the samples into
-    // BiomeSectors, which carry the alt-biome modifiers. GetBiomeSector reads that grid with
-    // (int)((x - 6) / 12 + 1024), which rounds down to the sample at or below the point, so up to
-    // 12 m from a border it returns the neighbouring biome's sector. Player.UpdateBiome notices
-    // every second and logs a warning.
-    //
-    // Transpilers point those gameplay readers at a corrected lookup: the sector of the 2x2
-    // samples around the point when all four agree, which is almost everywhere and costs no
-    // GetBiome call. Near a border it calls GetBiome and takes the nearest sample of that biome
-    // within two cells, or a shared sector of that biome with no alt biomes when the biome is a
-    // sliver the grid never sampled. A sliver passing between four agreeing samples is still
-    // missed. Another transpiler points UpdateBiome's warning at the debug sink.
-    //
-    // GetBiomeSector itself stays vanilla, so world generation and terrain keep vanilla's lookup.
-    // Terrain paint and vegetation follow the sectors at each terrain patch's corners; vegetation
-    // is saved when land generates but paint is worked out on every load, so a corrected corner
-    // repaints existing land around its old vegetation and disagrees with peers without the fix.
-    // Do not point terrain, vegetation or location placement at the corrected lookup.
-    //
-    // The grid's size and spacing are not fixed: Expand World Size scales them with the world
-    // radius and stretch by transpiling AltBiomeWorldData's conversions. The lookup reads the
-    // grid's placement back through MapSpaceToWorldSpace and its bounds from the array, so it
-    // follows whatever grid the game built rather than vanilla's 2048 samples at 12 m.
-    //
-    // Other mods answer GetBiomeSector themselves for land they add. Eternal Hall's boss islands
-    // lie past 10,500 m, where the grid is Ocean by fiat, many of them past the grid's edge, and
-    // appear while the world runs; it prefixes GetBiomeSector with a sector of its own built
-    // without world data. So the corrected lookup asks the game's GetBiomeSector first, prefixes
-    // and all, and corrects only an answer that is one of the grid's own sectors. Anything else
-    // came from a mod that knows the place better than the grid and stands as given. This has to
-    // live here: writing such land into the grid cannot work, because the grid is rebuilt on
-    // every load and has no cell at all past its edge.
-    //
-    // Both: servers roll spawn levels through the same lookup.
+    // Vanilla reads its 12 m biome grid rounded down, so up to 12 m from a border it returns the neighbouring biome.
+    // Transpiles GetBiomeSector's gameplay readers (player, weather, map, spawn levels) onto a 2x2-sample lookup.
+    // Near borders the player's biome, weather, map name and spawn levels follow the real biome, without log warnings.
     [PatchSide(Side.Both)]
     [ModDisableable]
     [HarmonyPatch(typeof(Player), "UpdateBiome")]
@@ -59,13 +24,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 FixName,
                 true,
-                "Makes the player's biome agree with the actual biome near biome borders. Vanilla " +
-                "reads a 12 m grid rounded down, so within about 12 m of a border the player's biome, " +
-                "weather, spawn levels and the map's biome name follow the neighbouring biome, and a " +
-                "'GetBiome error' warning is logged every second. Terrain coloring, vegetation and " +
-                "locations keep vanilla's lookup, so the world generates and looks as it does without " +
-                "the fix. The warning is still visible with EnableDebugMode on. Changing this requires " +
-                "a game restart.");
+                "Makes the player's biome, weather, spawn levels and map biome name match the actual biome " +
+                "near borders, and silences the 'GetBiome error' warning; turning it on needs a game restart.");
         }
 
         private static readonly MethodInfo GetBiomeSectorMethod = AccessTools.Method(
@@ -80,7 +40,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         // Takes the place of the instance call, so the generator arrives as the first argument.
         // The game's answer stands when the fix is off, when the grid is missing or unfinished
         // (vanilla returns its placeholder sectors then), and when another mod answered with a
-        // sector of its own.
+        // sector of its own: Eternal Hall prefixes GetBiomeSector for boss islands past the grid's
+        // edge, land the grid cannot hold because it is rebuilt on every load.
         private static BiomeSector CorrectedSector(WorldGenerator gen, Vector3 worldPos, bool clamp) {
             BiomeSector answer = gen.GetBiomeSector(worldPos, clamp);
             if (!Enabled.Value) { return answer; }
@@ -109,7 +70,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             int z0 = Mathf.Clamp(Mathf.FloorToInt(fz), 0, lastZ - 1);
 
             // Four samples of one sector around the point: a 2x2 block of one biome is always a
-            // single sector, since the flood fill joins 4-connected samples.
+            // single sector, since the flood fill joins 4-connected samples. A biome sliver passing
+            // between four agreeing samples is still missed.
             BiomeSector sector = sectors[x0, z0];
             if (sector != null && sectors[x0 + 1, z0] == sector && sectors[x0, z0 + 1] == sector
                 && sectors[x0 + 1, z0 + 1] == sector) {
@@ -140,8 +102,8 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         }
 
         // Vanilla places sample j at MapSpaceToWorldSpace(j), (j - 1024) * 12 + 6. Reading the
-        // origin and spacing back through that method, which a mod that resizes the grid patches,
-        // gives coordinates in which every sample sits on an integer. The spacing is measured
+        // origin and spacing back through that method, which Expand World Size patches to resize
+        // the grid, gives coordinates in which every sample sits on an integer. The spacing is measured
         // across the whole vanilla width so float rounding at large distances stays out of it.
         // A spacing that is not positive can only come from a broken patch; vanilla answers then.
         private const float SpacingSpan = AltBiomeWorldData.c_textureSize;
@@ -168,6 +130,9 @@ namespace ValheimCommunityPatch.Patches.Correctness {
             return new BiomeSector(null, biome);
         }
 
+        // Gameplay readers only, never terrain, vegetation or location placement: paint is worked out
+        // on every load but vegetation is saved when land generates, so a corrected lookup there
+        // repaints land around its old vegetation and disagrees with peers without the fix.
         private static IEnumerable<CodeInstruction> CorrectLookups(IEnumerable<CodeInstruction> instructions, string site) {
             if (Enabled == null || !Enabled.Value) { return instructions; }
 
@@ -247,6 +212,10 @@ namespace ValheimCommunityPatch.Patches.Correctness {
         // Diagnostic only: vanilla rebuilds the grid from scratch on every world load and join.
         [HarmonyPatch(typeof(AltBiomeWorldData), nameof(AltBiomeWorldData.VerifyBiomeData))]
         internal static class GridBuildHook {
+            // Only with debug logging on at startup: any hook on world generation turns off Valheim
+            // AVX's parallel terrain build and noise kernels.
+            private static bool Prepare() => Logger.DebugEnabled;
+
             [HarmonyPrefix]
             private static void Prefix(out Stopwatch __state) => __state = Stopwatch.StartNew();
 

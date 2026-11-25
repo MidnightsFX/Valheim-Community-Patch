@@ -16,12 +16,13 @@ namespace ValheimCommunityPatch
     [BepInDependency(Patches.Correctness.StationRefundPatch.AutomaticFuelGuid, BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency(HearthBelowCompat.Guid, BepInDependency.DependencyFlags.SoftDependency)]
     [BepInDependency(Patches.Correctness.RareDropPityPatch.SaveYourLuckGuid, BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency(Patches.Performance.ServerMapCachePatch.ExpandWorldSizeGuid, BepInDependency.DependencyFlags.SoftDependency)]
     [NetworkCompatibility(CompatibilityLevel.VersionCheckOnly, VersionStrictness.Minor)]
     internal class ValheimCommunityPatch : BaseUnityPlugin
     {
         public const string PluginGUID = "MidnightsFX.ValheimCommunityPatch";
         public const string PluginName = "ValheimCommunityPatch";
-        public const string PluginVersion = "0.46.0";
+        public const string PluginVersion = "0.47.0";
 
         internal static ManualLogSource Log;
 
@@ -99,6 +100,8 @@ namespace ValheimCommunityPatch
                     Log.LogError($"Could not apply {type.Name}: {ex}");
                 }
             }
+
+            HookAudit.Snapshot(harmony);
 
             // Broken down by side so a one-sided install can see what it actually got.
             Log.LogInfo($"{applied} fix(es) applied: {server} server, {both} both, {client} client.");

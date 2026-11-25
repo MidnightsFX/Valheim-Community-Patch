@@ -3,20 +3,9 @@ using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimCommunityPatch.Patches.Correctness {
-    // Fix Non-Item ObjectDB Entries: removes prefabs that are not items from the game's item list.
-    //
-    // ObjectDB.m_items is the item list, and mods read an ItemDrop off every entry. The 2026-09-09 update
-    // also lists three prefabs with no ItemDrop: PropFeastDeepNorth, SnowRoller and FrozenKing_Summon.
-    // Vanilla only needs the component for its by-data lookup, but GetItemPrefab still resolves their
-    // names, so a mod that walks the list, or takes a non-null GetItemPrefab to mean "this is an item",
-    // throws or logs errors.
-    //
-    // A prefix on ObjectDB.UpdateRegisters, which Awake and CopyOtherDB both run, removes null entries and
-    // entries without an ItemDrop before the lookups are built. It tests the component rather than naming
-    // prefabs, so strays from a later update are caught too. Every vanilla GetItemPrefab caller resolves a
-    // name or hash taken from an item, and the prefabs stay registered in ZNetScene, so they still spawn.
-    //
-    // Both: a dedicated server builds an ObjectDB too, and server-side mods read it.
+    // Since the 2026-09-09 update ObjectDB.m_items holds three non-items, which break mods that read each entry as one.
+    // Prefixes ObjectDB.UpdateRegisters to drop null entries and entries without an ItemDrop before lookups are built.
+    // Mods can walk the item list safely, and the prefabs stay registered in ZNetScene, so they still spawn.
     [PatchSide(Side.Both)]
     [HarmonyPatch(typeof(ObjectDB))]
     internal static class ObjectDbNonItemPatch {
@@ -28,12 +17,13 @@ namespace ValheimCommunityPatch.Patches.Correctness {
                 ValConfig.SectionCorrectness,
                 "Fix Non-Item ObjectDB Entries",
                 true,
-                "Removes prefabs that are not items (no ItemDrop component) from the game's item list, ObjectDB, " +
-                "when it is built. The 2026-09-09 update lists three - PropFeastDeepNorth, SnowRoller and " +
-                "FrozenKing_Summon - and mods that treat every entry as an item throw or log errors on them. " +
-                "They can still be spawned. Applies from the next world load.");
+                "From the next world load, removes prefabs that are not items from the game's item list, " +
+                "where they break mods that treat every entry as an item.");
         }
 
+        // Awake and CopyOtherDB both run UpdateRegisters. Tests the component rather than naming the three
+        // (PropFeastDeepNorth, SnowRoller, FrozenKing_Summon), so strays from later updates go too. Safe for
+        // vanilla: every GetItemPrefab caller resolves a name or hash taken from an item.
         [HarmonyPrefix]
         [HarmonyPatch("UpdateRegisters")]
         private static void UpdateRegistersPrefix(ObjectDB __instance) {
