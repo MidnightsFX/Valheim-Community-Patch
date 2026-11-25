@@ -123,7 +123,7 @@ These cannot be turned off while the game runs, and `CanDisableFix` returns fals
 
 | Fix id | Why |
 |---|---|
-| `ChebyshevDistanceAllocPatch`, `CollisionContactsAllocPatch`, `HotbarKeyAllocPatch`, `ZdoReadLookupPatch`, `ZdoValueWriteAllocPatch` | They rewrite the game's code as it starts, with no switch inside, and give exactly the game's own results, only without its allocations or repeated lookups. There is nothing to hand back. |
+| `ChebyshevDistanceAllocPatch`, `CollisionContactsAllocPatch`, `HotbarKeyAllocPatch`, `ZdoReadLookupPatch` | They rewrite the game's code as it starts, with no switch inside, and give exactly the game's own results, only without its allocations or repeated lookups. There is nothing to hand back. |
 | `LiquidVolumeLeakPatch` | Rewrites the game's code as it starts, and only stops an error when a tar pit unloads. |
 | `ObjectDbNonItemPatch` | Acts once, when the item list is built; the entries it removed stay removed until the game restarts. Switch it off in the config and restart instead. |
 | `WorldGenTimingStats`, `ZdoMemoryStats` | Diagnostics rather than fixes: off unless the admin turns them on, and they change nothing in the game. |

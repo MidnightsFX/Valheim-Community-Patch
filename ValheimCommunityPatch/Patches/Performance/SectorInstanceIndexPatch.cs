@@ -140,8 +140,8 @@ namespace ValheimCommunityPatch.Patches.Performance {
         internal static class SectorMoveHooks {
             [HarmonyPostfix]
             [HarmonyPatch("AddToSector")]
-            // The parameter name has to stay 'sectorIndex' for Harmony to bind it. It arrives
-            // before ZDO.m_position is updated, so the ZDO cannot be asked for the new zone here.
+            // The parameter name has to stay 'sectorIndex' for Harmony to bind it. An invalidated
+            // ZDO arrives in sector 0 with its position unchanged, so the zone comes from here.
             private static void AddToSectorPostfix(ZDO zdo, ZoneSystem.SectorIndex sectorIndex) {
                 ZNetScene scene = ZNetScene.instance;
                 if (ReferenceEquals(scene, null)) { return; }

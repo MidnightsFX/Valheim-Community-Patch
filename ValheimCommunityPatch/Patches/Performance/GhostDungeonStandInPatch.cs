@@ -62,7 +62,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) =>
             PatchHelper.ReplaceCalls(
                 instructions,
-                AccessTools.Method(typeof(SoftReferenceableAssets.Utils), nameof(SoftReferenceableAssets.Utils.Instantiate),
+                AccessTools.Method(typeof(SoftReferenceUtility), nameof(SoftReferenceUtility.Instantiate),
                     new[] { typeof(SoftReference<GameObject>), typeof(Vector3), typeof(Quaternion), typeof(Transform) }),
                 AccessTools.DeclaredMethod(typeof(GhostDungeonStandInPatch), nameof(RoomModel)),
                 $"{FixName} (DungeonGenerator.PlaceRoom)", expected: 1);
@@ -80,7 +80,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             if (Verify == null || !Verify.Value) { return BuildStandIn(asset, position, rotation, parent); }
 
-            GameObject model = SoftReferenceableAssets.Utils.Instantiate(prefab, position, rotation, parent);
+            GameObject model = prefab.Instantiate(position, rotation, parent);
             GameObject standIn = BuildStandIn(asset, position, rotation, parent);
             Compare(asset.name, model, standIn);
             Object.DestroyImmediate(standIn);

@@ -70,8 +70,6 @@ fix under [Credit and sources](#credit-and-sources).
   world grew.
 - **Fix Tar Pit Buffer Disposal** *(client)* — disposes tar pit raycast buffers only when they were
   allocated, so a tar pit whose load failed cannot throw out of scene teardown.
-- **Fix ZDO Packet Allocation** *(both)* — writes one network package into another straight from its
-  buffer instead of copying the whole payload onto the heap first.
 - **Fix Mist Query Overhead** *(client)* — makes the Mistlands' mist checks read a cached list of nearby
   mist volumes and the terrain height instead of scanning every mist volume and casting rays for each
   particle.
@@ -117,8 +115,6 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Idle Support Checks** *(both)* — lets a building piece skip its structural support re-check
   until a neighbour is built, destroyed or changed, or the terrain is edited. "Support Change Threshold"
   and "Settled Piece Patience" tune how a neighbour's small drift wakes it.
-- **Fix Smoke Overhead** *(client)* — cuts the engine work each smoke puff costs per frame, with no
-  visible change.
 - **Fix Unload Discovery Scan** *(both)* — finds objects that left the loaded area from a per-zone index
   instead of checking every loaded object, and spreads a mass unload, such as after a portal, over
   several frames instead of one freeze. "Object Unload Frame Budget" sets how many objects one unload
@@ -126,8 +122,6 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Idle Wear Visits** *(both)* — skips a building piece's whole wear update while nothing could
   change it: support settled, dry or roofed, above the waterline, outside the Ashlands and undamaged
   since the last check.
-- **Fix ZDO Value Write Allocation** *(both)* — stops every write to an object's network data from
-  allocating garbage just to check whether the value changed.
 - **Fix Doubled ZDO Lookups** *(both)* — reads ZDO data with one dictionary lookup instead of two.
 - **Fix Collision Contact Allocation** *(both)* — reads a collision's contact points into a reused
   buffer instead of allocating an array per collision callback.
@@ -218,9 +212,6 @@ fix under [Credit and sources](#credit-and-sources).
   cleanup, which freezes a large world's server for most of a second, until nobody has been connected
   for two minutes. A server that is never empty still runs it within `Asset Unload Max Delay` hours
   (default 12), and each run is logged.
-- **Fix Build Menu Language Subscription** *(client)* — refreshes the hammer menu's search terms through
-  one language-change handler instead of adding every piece button again each time the menu shows it, a
-  list that in vanilla grew all session and kept destroyed buttons in memory.
 - **Fix Main Menu Popup Subscription** *(client)* — stops each return to the main menu from keeping the
   old menu in memory for the rest of the session, along with every character profile and explored map it
   loaded.
@@ -236,9 +227,6 @@ fix under [Credit and sources](#credit-and-sources).
 - **Fix Active Status Effect Lookup** *(client)* — finds one of a character's active status effects by
   name from a map instead of searching its list, which every new effect and the player's own update
   every frame do.
-- **Fix Grass Camera Lookups** *(client)* — looks up the camera once per frame for all grass instead of
-  once for every grass renderer, most of which are out of view and draw nothing; the grass drawn is
-  exactly the game's.
 - **Fix Grass Instance Memory** *(client)* — starts each grass renderer's blade list small and grows it
   as needed instead of reserving room for 1,024 blades, so grass takes a fraction of the memory and
   leaves far less garbage, most of all with a raised grass distance.
@@ -341,12 +329,6 @@ is also what everything stands on, so it runs on every side too.
   longer exists, instead of breaking every inventory, tooltip and crafting panel that shows it.
 - **Fix Negative Stamina** *(client)* — keeps player stamina from going below zero or getting stuck
   after another mod changes it badly, and repairs a character that loads in that way.
-- **Fix Teleport Ghost Players** *(server)* — tells a client to drop a player who teleported out of its
-  loaded area, instead of leaving them standing frozen where they left (and still in local chat range).
-- **Fix Teleport Ghost From Client** *(client)* — stops other players seeing you frozen where you left
-  after you teleport far away on a server without this mod. Other travellers need the mod too, or Fix
-  Teleport Ghost Players on the server. Inactive when Network Performance System 1.18.3 or later is
-  installed, which does the same.
 - **Fix Unsaved Client Changes** *(server)* — marks remote player changes (building, chest storage) for
   the next world save, so they survive a server restart.
 - **Fix Water Color Seams** *(client)* — blends sea color smoothly across zone borders instead of
@@ -430,9 +412,6 @@ is also what everything stands on, so it runs on every side too.
 - **Fix Switch Button Glyphs** *(client)* — with Switch button glyphs, the A, B, X and Y hints name the
   button the action is really on; vanilla's named the opposite button, so the X shown for Use was on the
   button labelled Y.
-- **Fix Layout Switch Focus** *(client)* — switching the keyboard layout while typing keeps the text
-  field focused, so the next keys go on into chat, the console, a sign, a search field or another mod's
-  field instead of running game actions.
 - **Fix Scythe Harvest** *(client)* — lets the scythe cut every plant the game marks as harvestable,
   including Magecaps, Jotun Puffs, mushrooms, dandelions, thistles, fiddleheads and smoke puffs; berry
   bushes are not marked and stay hand-picked.
@@ -450,14 +429,11 @@ is also what everything stands on, so it runs on every side too.
   workbenches and fires are not loaded yet, which happens at the lowest Simulation Distance while moving
   through a base. Spawning elsewhere, at higher settings, and from spawners allowed inside a base is
   unchanged.
-- **Fix Saved Rotations** *(server)* — saves every object's rotation exactly, so building pieces, above
-  all those turned or tilted with a building mod such as MasterBuilderHeeler or Gizmo, no longer load
-  slightly turned with gaps between walls. A world saved with the fix loads the same without it, to the
-  nearest half degree.
-- **Repair Saved Rotations** *(server, off by default)* — turns building pieces that a save without Fix
-  Saved Rotations left half a degree short back to where they were placed, when the world loads. A
+- **Repair Saved Rotations** *(server, off by default)* — turns building pieces that a save before
+  Valheim 1.0.30 left half a degree short back to where they were placed, when the world loads. A
   building mod's 1 degree steps can land on the same angles, so the admin decides; loading the world
-  logs how many pieces sit there.
+  logs how many pieces sit there. Pieces that this mod's old Fix Saved Rotations saved as placed are
+  left alone.
 - **Fix Fence Gate Rain Damage** *(both)* — stops the wood fence gate taking damage in the rain or under
   water, as the wood fence it is built into does not. The game that owns the gate, usually the closest
   player's, works out rain damage, so every player should have the mod. Damage a gate already took stays
@@ -493,10 +469,7 @@ sizes involved, so the effect can be seen before and after turning one on.
 - **Trim ZDO Data Pool** *(server)* — caps the pools that recycle objects' field tables at `ZDO Data
   Pool Max Depth` per type and clears the strings and byte arrays a recycled table still holds, so
   memory can come back down from the busiest moment since the world loaded. A plateau rather than a
-  climb, and the smallest of the three.
-- **Fix ZDO Serialize Allocation** *(server)* — writes an object's data to the network straight from
-  where it is stored instead of copying it into new lists for every player on every send, cutting
-  garbage on a busy server; the bytes sent are identical.
+  climb, and the smaller of the two.
 
 ### Server garbage collector
 
@@ -519,8 +492,8 @@ patch file.
 The mods involved:
 
 - **[ComfyMods](https://github.com/redseiko/ComfyMods)** — redseiko (GPL-3.0), the same licence as
-  this project. Eight of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Compress,
-  Effectual, Atlas and ComfyAutoRepair — account for twelve of the entries below.
+  this project. Seven of its mods — BetterZeeLog, LetMePlay, BetterServerPortals, Scenic, Effectual,
+  Atlas and ComfyAutoRepair — account for eleven of the entries below.
 - **[ValheimPerformanceOptimizations](https://github.com/ontrigger/ValheimPerformanceOptimizations)**
   — ontrigger (MIT). Independent corroboration of one of the performance entries below.
 - **[MyPitsDontLeak](https://github.com/AzumattDev/MyPitsDontLeak)** — Azumatt (MIT).
@@ -536,7 +509,6 @@ The mods involved:
 | Fix World Load Connection Scan | ComfyMods — Atlas | Its `ConnectSpawners` approach, extended here to portals and sync transforms |
 | Fix Disconnect ZDO Sweep | MidnightsFX | — |
 | Fix Tar Pit Buffer Disposal | MyPitsDontLeak — Azumatt | The root cause; our implementation is a transpiler rather than wholesale method replacement |
-| Fix ZDO Packet Allocation | ComfyMods — Compress | The technique, taken on its own without that mod's GZip protocol change |
 | Fix Mist Query Overhead | MidnightsFX | — |
 | Fix Heightmap Lookup Scan | MidnightsFX | — |
 | Fix Static Object Ground Checks | MidnightsFX | — |
@@ -557,10 +529,8 @@ The mods involved:
 | Fix Zone Occupancy Scan | MidnightsFX | — |
 | Fix Piece Material Polling | MidnightsFX | — |
 | Fix Idle Support Checks | MidnightsFX | — |
-| Fix Smoke Overhead | MidnightsFX | — |
 | Fix Unload Discovery Scan | MidnightsFX | — |
 | Fix Idle Wear Visits | MidnightsFX | — |
-| Fix ZDO Value Write Allocation | MidnightsFX | — |
 | Fix Doubled ZDO Lookups | MidnightsFX | — |
 | Fix Collision Contact Allocation | MidnightsFX | — |
 | Fix Collision Callback Allocation | MidnightsFX | — |
@@ -592,13 +562,11 @@ The mods involved:
 | Fix Paint-Only Terrain Rebuilds | MidnightsFX | — |
 | Fix Snow Paint Saves | MidnightsFX | — |
 | Fix Hourly Server Freeze | MidnightsFX | — |
-| Fix Build Menu Language Subscription | MidnightsFX | — |
 | Fix Main Menu Popup Subscription | MidnightsFX | — |
 | Fix Inventory Touch Subscription | MidnightsFX | — |
 | Fix Recipe Lookup Scan | ComfyMods — ComfyAutoRepair | The recipe cache; change detection added here |
 | Fix Status Effect Lookup Scan | searica | Contributed the fix ([#22](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/22)) |
 | Fix Active Status Effect Lookup | searica | Contributed the fix ([#22](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/22)) |
-| Fix Grass Camera Lookups | MidnightsFX | — |
 | Fix Grass Instance Memory | MidnightsFX | — |
 | Fix GUI Pixel Snap Writes | MidnightsFX | — |
 | Fix Config Watcher Polling | MidnightsFX | — |
@@ -642,8 +610,6 @@ The mods involved:
 | Fix Container Grid Alignment | Dreamwraith | Contributed the fix ([#19](https://github.com/MidnightsFX/Valheim-Community-Patch/pull/19)) |
 | Fix Item Icon Crash | ComfyMods — LetMePlay | The defect; a smaller fix here that leaves the shared item data alone |
 | Fix Negative Stamina | MidnightsFX | — |
-| Fix Teleport Ghost Players | MidnightsFX | — |
-| Fix Teleport Ghost From Client | MidnightsFX | — |
 | Fix Unsaved Client Changes | MidnightsFX | — |
 | Fix Water Color Seams | MidnightsFX | — |
 | Fix Unbuilt Water Depth | MidnightsFX | — |
@@ -670,13 +636,11 @@ The mods involved:
 | Fix Shield Skill Credit | MidnightsFX | — |
 | Fix Shield Tool Damage | MidnightsFX | — |
 | Fix Switch Button Glyphs | rgeraskin | Contributed the fix |
-| Fix Layout Switch Focus | rgeraskin | Contributed the fix |
 | Fix Scythe Harvest | MidnightsFX | — |
 | Fix Rare Drop Pity | MidnightsFX | — |
 | Fix Anti-Sting Concoction | MidnightsFX | — |
 | Fix Ruin Item Despawn | MidnightsFX | — |
 | Fix Spawns Inside Bases | MidnightsFX | — |
-| Fix Saved Rotations | MidnightsFX | — |
 | Repair Saved Rotations | MidnightsFX | — |
 | Fix Fence Gate Rain Damage | MidnightsFX | — |
 | Fix Recipe Discovery | MidnightsFX | — |
@@ -690,12 +654,12 @@ The mods involved:
 | --- | --- | --- |
 | Evict Dead ZDO Records | MidnightsFX | — |
 | Trim ZDO Data Pool | MidnightsFX | — |
-| Fix ZDO Serialize Allocation | MidnightsFX | — |
 
 ## Fixed in the game by Iron Gate
 
-These fixes used to ship in this mod. Iron Gate then made the same fix in Valheim itself, so this
-mod's copy was removed, or cut down to the part the game does not cover yet. Thank you, Iron Gate,
+These fixes used to ship in this mod. Iron Gate then made the same fix in Valheim itself, or rewrote
+the code so the cost is gone, so this mod's copy was removed, or cut down to the part the game does not
+cover yet. Thank you, Iron Gate,
 for adding them: a fix in the game helps every player, with or without mods.
 
 | Former fix | Game update | What the game does now | What is left in this mod |
@@ -705,6 +669,15 @@ for adding them: a fix in the game helps every player, with or without mods.
 | Fix Tar Pit Memory Leak | Deep North (September 2026) | Allocates tar pit raycast buffers for the tar pit's whole life, ending the native memory leak and the `JobTempAlloc` log spam | Fix Tar Pit Buffer Disposal, the safe-disposal half |
 | Fix Support Lookup Cost (in part) | 1.0.21 (October 2026) | Remembers the building piece behind each cached support collider, so checking a piece's cached support no longer searches the object hierarchy | The lookup table for the two searches the game still makes when support is recalculated |
 | Fix Summons Eating And Breeding | 1.0.21 (October 2026) | The Spirit Caller's wolves no longer carry the real wolf's breeding, so two of them can no longer have a cub that grows into a permanent wolf | Nothing; removed |
+| Fix Teleport Ghost Players, Fix Teleport Ghost From Client | 1.0.30 (November 2026) | Tells other players that a teleporting player has left, so nobody stays standing frozen where they set off | Nothing; removed |
+| Fix Saved Rotations | 1.0.30 (November 2026) | Saves rotations to the nearest half degree instead of rounding them down, so pieces at the building steps load where they were placed | Repair Saved Rotations, for pieces older saves left half a degree off |
+| Fix ZDO Packet Allocation | 1.0.30 (November 2026) | Writes one network package into another straight from its buffer | Nothing; removed. The technique came from ComfyMods' Compress (redseiko) |
+| Fix ZDO Serialize Allocation | 1.0.30 (November 2026) | Writes an object's data to the network straight from where it is stored | Nothing; removed |
+| Fix ZDO Value Write Allocation | 1.0.30 (November 2026) | Checks whether a written value changed without boxing it, so writes to an object's network data make no garbage | Nothing; removed |
+| Fix Build Menu Language Subscription | 1.0.30 (November 2026) | Each hammer menu button subscribes to language changes once | Nothing; removed |
+| Fix Layout Switch Focus | 1.0.30 (November 2026) | Keeps a text field focused when the keyboard layout switches | Nothing; removed. It was contributed by rgeraskin |
+| Fix Grass Camera Lookups | 1.0.30 (November 2026) | No longer checks each grass patch against the camera, the work this fix shared out | Nothing; removed |
+| Fix Smoke Overhead | 1.0.30 (November 2026) | Draws smoke a new way and no longer changes each puff's physics every frame | Nothing; removed |
 
 ## Installation
 
@@ -857,13 +830,6 @@ Static Object Ground Checks replaces the ground check that HearthBelow hooks to 
 ground being pushed up out of it. While HearthBelow is installed, both fixes stand down and say so
 once in the log with *"HearthBelow is loaded, so '...' stands down"*. Grass placement and the ground
 check then run as they do in the game, with HearthBelow's changes applied.
-
-Known overlap: **Valheim Performance Overhaul** replaces each smoke puff's update with its own, as Fix
-Smoke Overhead does. Before 0.34.2 both ran on every puff, so smoke aged twice as fast and rose in
-shorter columns. Fix Smoke Overhead now leaves a puff's update to a mod that has already replaced it,
-and says so once in the log with *"Smoke puff updates are replaced by ..."*. Its smoke rendering
-change stays on. With Valheim Performance Overhaul's smoke option off, this mod's version applies as
-before.
 
 Known overlap: **ValheimPerformanceOptimizations** replaces several of the game's methods outright. It
 reads equipment fields the same way Fix Equipment Visual Refresh does, so that half of the fix leaves

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Logging;
@@ -22,7 +23,7 @@ namespace ValheimCommunityPatch
     {
         public const string PluginGUID = "MidnightsFX.ValheimCommunityPatch";
         public const string PluginName = "ValheimCommunityPatch";
-        public const string PluginVersion = "0.47.0";
+        public const string PluginVersion = "0.48.0";
 
         internal static ManualLogSource Log;
 
@@ -46,7 +47,8 @@ namespace ValheimCommunityPatch
             ApplyPatches();
         }
 
-        // Each patch class is applied on its own rather than through Harmony.PatchAllg.
+        // Each patch class is applied on its own rather than through Harmony.PatchAll, so one that a
+        // game update broke fails alone.
         //
         // Three rules every patch class follows:
         //
@@ -64,23 +66,32 @@ namespace ValheimCommunityPatch
 
             bool patchEverySide = ValConfig.PatchEverySide != null && ValConfig.PatchEverySide.Value;
 
-            foreach (Type type in Assembly.GetExecutingAssembly().GetTypes()) {
-                if (type.GetCustomAttributes(typeof(HarmonyPatch), true).Length == 0) { continue; }
-
-                Side side = PatchSideAttribute.Of(type);
-
+            foreach (Type type in LoadableTypes()) {
                 // A fix is one top-level patch class. Nested hook classes are patched too, but
                 // counting them would inflate the totals past what the README lists.
                 bool isFix = type.DeclaringType == null;
 
-                if (side == Side.Client && RunMode.IsHeadless && !patchEverySide) {
-                    if (isFix) { skipped++; }
-                    FixRegistry.RecordSkipped(type);
-                    Log.LogDebug($"Skipped {type.Name}: client-only, and this process is headless.");
-                    continue;
-                }
-
                 try {
+                    // Reading the attributes resolves the types they name, which throws for a type
+                    // a game update removed, so it belongs inside the try.
+                    if (type.GetCustomAttributes(typeof(HarmonyPatch), true).Length == 0) { continue; }
+
+                    // Its settings did not bind (logged then), so its hooks would read empty entries.
+                    if (ValConfig.FailedToBind(type)) {
+                        failed++;
+                        FixRegistry.RecordFailed(type);
+                        continue;
+                    }
+
+                    Side side = PatchSideAttribute.Of(type);
+
+                    if (side == Side.Client && RunMode.IsHeadless && !patchEverySide) {
+                        if (isFix) { skipped++; }
+                        FixRegistry.RecordSkipped(type);
+                        Log.LogDebug($"Skipped {type.Name}: client-only, and this process is headless.");
+                        continue;
+                    }
+
                     // Empty when the class's Prepare declined, which is how fixes stand down at
                     // startup for a mod they know (HearthBelow, NPS).
                     List<MethodInfo> patched = harmony.CreateClassProcessor(type).Patch();
@@ -117,6 +128,20 @@ namespace ValheimCommunityPatch
                 Log.LogWarning(
                     $"{failed} fix(es) failed. The failures above are usually caused by a Valheim " +
                     "update changing a patched method; the remaining fixes are unaffected.");
+            }
+        }
+
+        // GetTypes throws when any one type cannot load, for one whose base type a game update
+        // removed, say; the rest are still in the exception.
+        private static IEnumerable<Type> LoadableTypes() {
+            try {
+                return Assembly.GetExecutingAssembly().GetTypes();
+            } catch (ReflectionTypeLoadException ex) {
+                foreach (Exception loader in ex.LoaderExceptions) {
+                    if (loader != null) { Log.LogError($"A patch class could not be loaded: {loader.Message}"); }
+                }
+
+                return ex.Types.Where(type => type != null);
             }
         }
 

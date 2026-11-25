@@ -1,5 +1,6 @@
 using BepInEx.Configuration;
 using System;
+using System.Collections.Generic;
 
 #pragma warning disable IDE0130
 namespace ValheimCommunityPatch {
@@ -63,114 +64,128 @@ namespace ValheimCommunityPatch {
         // Each fix binds its own entries here: correctness and terrain fixes their toggle,
         // performance fixes their tuning and Verify entries. Fixes with nothing to configure
         // bind nothing.
+        private static readonly Action[] FixBinders = {
+            TeardownHooks.BindConfig,
+            Patches.Performance.OrphanZdoIndexPatch.BindConfig,
+            Patches.Performance.ZdoPrefabIndexPatch.BindConfig,
+            Patches.Performance.HeightmapLookupPatch.BindConfig,
+            Patches.Performance.StaticPhysicsCachePatch.BindConfig,
+            Patches.Performance.ClutterRebuildCapPatch.BindConfig,
+            Patches.Performance.GrassBuildThreadPatch.BindConfig,
+            Patches.Performance.HeightmapBuilderThroughputPatch.BindConfig,
+            Patches.Performance.ZoneGenPacingPatch.BindConfig,
+            Patches.Performance.LoadingZoneCadencePatch.BindConfig,
+            Patches.Performance.LocationSpawnPacingPatch.BindConfig,
+            Patches.Performance.DungeonRoomSpreadPatch.BindConfig,
+            Patches.Performance.GhostDungeonStandInPatch.BindConfig,
+            Patches.Performance.LocationRoomPreloadPatch.BindConfig,
+            Patches.Performance.ModelTemplatePatch.BindConfig,
+            Patches.Performance.MinimapFogUploadPatch.BindConfig,
+            Patches.Performance.TerrainLodSpreadPatch.BindConfig,
+            Patches.Performance.WearSupportLookupPatch.BindConfig,
+            Patches.Performance.SceneIdleSkipPatch.BindConfig,
+            Patches.Performance.LightCostPatch.BindConfig,
+            Patches.Performance.PieceRenderBatchPatch.BindConfig,
+            Patches.Performance.RemoveSweepPacingPatch.BindConfig,
+            Patches.Performance.SpawnQueueCachePatch.BindConfig,
+            Patches.Performance.SectorInstanceIndexPatch.BindConfig,
+            Patches.Performance.SupportSleepPatch.BindConfig,
+            Patches.Performance.ZoneDiffRemovalPatch.BindConfig,
+            Patches.Performance.DeadZdoEvictPatch.BindConfig,
+            Patches.Performance.ZdoDataPoolTrimPatch.BindConfig,
+            Patches.Performance.ZdoMemoryStats.BindConfig,
+            Patches.Performance.WorldGenTimingStats.BindConfig,
+            Patches.Performance.CreatureSyncDeadbandPatch.BindConfig,
+            Patches.Performance.CreatureCrowdPatch.BindConfig,
+            Patches.Performance.PortalPrefetchPatch.BindConfig,
+            Patches.Performance.SnowPaintSavePatch.BindConfig,
+            Patches.Performance.HourlyAssetUnloadPatch.BindConfig,
+            Patches.Performance.ConfigWatcherPollingPatch.BindConfig,
+            Patches.Performance.JotunnCachePrewarmPatch.BindConfig,
+            Patches.Correctness.RecipeGetAmountNrePatch.BindConfig,
+            Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig,
+            Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig,
+            Patches.Correctness.ZdoLoadDuplicatePatch.BindConfig,
+            Patches.Correctness.RemoveObjectsNrePatch.BindConfig,
+            Patches.Correctness.EffectAreaPatch.BindConfig,
+            Patches.Correctness.FuelLossPatch.BindConfig,
+            Patches.Correctness.StationRefundPatch.BindConfig,
+            Patches.Correctness.BossKeySharePatch.BindConfig,
+            Patches.Correctness.ItemIconVariantPatch.BindConfig,
+            Patches.Correctness.SendFailureLogSpamPatch.BindConfig,
+            Patches.Correctness.ContainerLogSpamPatch.BindConfig,
+            Patches.Correctness.MissingPrefabLogSpamPatch.BindConfig,
+            Patches.Correctness.ContainerGridAlignmentPatch.BindConfig,
+            Patches.Correctness.NegativeStaminaPatch.BindConfig,
+            Patches.Correctness.ReceivedZdoDirtyPatch.BindConfig,
+            Patches.Correctness.WaterColorSeamPatch.BindConfig,
+            Patches.Correctness.WaterDepthRefreshPatch.BindConfig,
+            Patches.Correctness.ObjectDbNonItemPatch.BindConfig,
+            Patches.Correctness.TamedPatrolPointPatch.BindConfig,
+            Patches.Correctness.MapAutoClosePatch.BindConfig,
+            Patches.Correctness.BiomeSectorLookupPatch.BindConfig,
+            Patches.Correctness.DeadInstancePatch.BindConfig,
+            Patches.Correctness.EquipmentTextureErrorPatch.BindConfig,
+            Patches.Correctness.UnkillableCreaturePatch.BindConfig,
+            Patches.Correctness.ClothWindShelterPatch.BindConfig,
+            Patches.Correctness.LoadingWaitPatch.BindConfig,
+            Patches.Correctness.LostBedSpawnPointPatch.BindConfig,
+            Patches.Correctness.LovePotionSpawnPatch.BindConfig,
+            Patches.Correctness.PathfindingLinkLimitPatch.BindConfig,
+            Patches.Correctness.PathfindingGroundOrderPatch.BindConfig,
+            Patches.Correctness.GraphicsSettingsEventPatch.BindConfig,
+            Patches.Correctness.LoopingSoundConcurrencyPatch.BindConfig,
+            Patches.Correctness.GetAttackerGetZDOIDPatch.BindConfig,
+            Patches.Correctness.DamageReactionOrderPatch.BindConfig,
+            Patches.Correctness.StatusEffectRegenApplicationOrderPatch.BindConfig,
+            Patches.Correctness.DoubleClickSoundPatch.BindConfig,
+            Patches.Correctness.TeleportLightingPatch.BindConfig,
+            Patches.Correctness.LightningFlashLightingPatch.BindConfig,
+            Patches.Correctness.ShieldSkillCreditPatch.BindConfig,
+            Patches.Correctness.ShieldToolDamagePatch.BindConfig,
+            Patches.Correctness.SwitchFaceButtonGlyphPatch.BindConfig,
+            Patches.Correctness.ScytheHarvestPatch.BindConfig,
+            Patches.Correctness.RareDropPityPatch.BindConfig,
+            Patches.Correctness.AntiStingPatch.BindConfig,
+            Patches.Correctness.AoeLogSpamPatch.BindConfig,
+            Patches.Correctness.RuinItemDespawnPatch.BindConfig,
+            Patches.Correctness.SpawnInsideBasePatch.BindConfig,
+            Patches.Correctness.SavedRotationRepairPatch.BindConfig,
+            Patches.Correctness.FenceGateRainWearPatch.BindConfig,
+            Patches.Correctness.RecipeDiscoveryPatch.BindConfig,
+            Patches.Correctness.TreasureChestDiscoveryPatch.BindConfig,
+            Patches.Correctness.ArmorStandCapeCrashPatch.BindConfig,
+            Patches.Correctness.OldArmorStandSlotPatch.BindConfig,
+            Patches.Terrain.SeamlessNormalsPatch.BindConfig,
+            Patches.Terrain.PaintSeamReconcilePatch.BindConfig,
+            Patches.Terrain.HeightSeamReconcilePatch.BindConfig,
+            Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig,
+            Patches.Terrain.PaintSpreadOncePatch.BindConfig,
+            Patches.Terrain.BiomeColorAliasPatch.BindConfig,
+            Patches.Terrain.PlainsBorderShinePatch.BindConfig,
+            Patches.Terrain.PaintMaskStridePatch.BindConfig,
+            Patches.Terrain.TerrainCompNullHmapPatch.BindConfig,
+            Patches.Terrain.TerrainCompDuplicatePatch.BindConfig,
+        };
+
+        private static readonly HashSet<Type> Unbound = new HashSet<Type>();
+
+        // One at a time, so a fix whose settings a game update broke (a static field naming a removed
+        // type, say) fails alone; ApplyPatches then leaves it unpatched.
         private static void BindFixConfig() {
-            TeardownHooks.BindConfig();
-            Patches.Performance.OrphanZdoIndexPatch.BindConfig();
-            Patches.Performance.ZdoPrefabIndexPatch.BindConfig();
-            Patches.Performance.HeightmapLookupPatch.BindConfig();
-            Patches.Performance.StaticPhysicsCachePatch.BindConfig();
-            Patches.Performance.ClutterRebuildCapPatch.BindConfig();
-            Patches.Performance.GrassBuildThreadPatch.BindConfig();
-            Patches.Performance.HeightmapBuilderThroughputPatch.BindConfig();
-            Patches.Performance.ZoneGenPacingPatch.BindConfig();
-            Patches.Performance.LoadingZoneCadencePatch.BindConfig();
-            Patches.Performance.LocationSpawnPacingPatch.BindConfig();
-            Patches.Performance.DungeonRoomSpreadPatch.BindConfig();
-            Patches.Performance.GhostDungeonStandInPatch.BindConfig();
-            Patches.Performance.LocationRoomPreloadPatch.BindConfig();
-            Patches.Performance.ModelTemplatePatch.BindConfig();
-            Patches.Performance.MinimapFogUploadPatch.BindConfig();
-            Patches.Performance.TerrainLodSpreadPatch.BindConfig();
-            Patches.Performance.WearSupportLookupPatch.BindConfig();
-            Patches.Performance.SceneIdleSkipPatch.BindConfig();
-            Patches.Performance.LightCostPatch.BindConfig();
-            Patches.Performance.PieceRenderBatchPatch.BindConfig();
-            Patches.Performance.RemoveSweepPacingPatch.BindConfig();
-            Patches.Performance.SpawnQueueCachePatch.BindConfig();
-            Patches.Performance.SectorInstanceIndexPatch.BindConfig();
-            Patches.Performance.SupportSleepPatch.BindConfig();
-            Patches.Performance.ZoneDiffRemovalPatch.BindConfig();
-            Patches.Performance.DeadZdoEvictPatch.BindConfig();
-            Patches.Performance.ZdoDataPoolTrimPatch.BindConfig();
-            Patches.Performance.ZdoSerializeAllocPatch.BindConfig();
-            Patches.Performance.ZdoMemoryStats.BindConfig();
-            Patches.Performance.WorldGenTimingStats.BindConfig();
-            Patches.Performance.CreatureSyncDeadbandPatch.BindConfig();
-            Patches.Performance.CreatureCrowdPatch.BindConfig();
-            Patches.Performance.PortalPrefetchPatch.BindConfig();
-            Patches.Performance.SnowPaintSavePatch.BindConfig();
-            Patches.Performance.HourlyAssetUnloadPatch.BindConfig();
-            Patches.Performance.ConfigWatcherPollingPatch.BindConfig();
-            Patches.Performance.JotunnCachePrewarmPatch.BindConfig();
-            Patches.Correctness.RecipeGetAmountNrePatch.BindConfig();
-            Patches.Correctness.ProjectileZeroVelocityPatch.BindConfig();
-            Patches.Correctness.SpawnAreaNullPrefabPatch.BindConfig();
-            Patches.Correctness.ZdoLoadDuplicatePatch.BindConfig();
-            Patches.Correctness.RemoveObjectsNrePatch.BindConfig();
-            Patches.Correctness.EffectAreaPatch.BindConfig();
-            Patches.Correctness.FuelLossPatch.BindConfig();
-            Patches.Correctness.StationRefundPatch.BindConfig();
-            Patches.Correctness.BossKeySharePatch.BindConfig();
-            Patches.Correctness.ItemIconVariantPatch.BindConfig();
-            Patches.Correctness.SendFailureLogSpamPatch.BindConfig();
-            Patches.Correctness.ContainerLogSpamPatch.BindConfig();
-            Patches.Correctness.MissingPrefabLogSpamPatch.BindConfig();
-            Patches.Correctness.ContainerGridAlignmentPatch.BindConfig();
-            Patches.Correctness.NegativeStaminaPatch.BindConfig();
-            Patches.Correctness.SectorJumpInvalidatePatch.BindConfig();
-            Patches.Correctness.TeleportGhostClientPatch.BindConfig();
-            Patches.Correctness.ReceivedZdoDirtyPatch.BindConfig();
-            Patches.Correctness.WaterColorSeamPatch.BindConfig();
-            Patches.Correctness.WaterDepthRefreshPatch.BindConfig();
-            Patches.Correctness.ObjectDbNonItemPatch.BindConfig();
-            Patches.Correctness.TamedPatrolPointPatch.BindConfig();
-            Patches.Correctness.MapAutoClosePatch.BindConfig();
-            Patches.Correctness.BiomeSectorLookupPatch.BindConfig();
-            Patches.Correctness.DeadInstancePatch.BindConfig();
-            Patches.Correctness.EquipmentTextureErrorPatch.BindConfig();
-            Patches.Correctness.UnkillableCreaturePatch.BindConfig();
-            Patches.Correctness.ClothWindShelterPatch.BindConfig();
-            Patches.Correctness.LoadingWaitPatch.BindConfig();
-            Patches.Correctness.LostBedSpawnPointPatch.BindConfig();
-            Patches.Correctness.LovePotionSpawnPatch.BindConfig();
-            Patches.Correctness.PathfindingLinkLimitPatch.BindConfig();
-            Patches.Correctness.PathfindingGroundOrderPatch.BindConfig();
-            Patches.Correctness.GraphicsSettingsEventPatch.BindConfig();
-            Patches.Correctness.LoopingSoundConcurrencyPatch.BindConfig();
-            Patches.Correctness.GetAttackerGetZDOIDPatch.BindConfig();
-            Patches.Correctness.DamageReactionOrderPatch.BindConfig();
-            Patches.Correctness.StatusEffectRegenApplicationOrderPatch.BindConfig();
-            Patches.Correctness.DoubleClickSoundPatch.BindConfig();
-            Patches.Correctness.TeleportLightingPatch.BindConfig();
-            Patches.Correctness.LightningFlashLightingPatch.BindConfig();
-            Patches.Correctness.ShieldSkillCreditPatch.BindConfig();
-            Patches.Correctness.ShieldToolDamagePatch.BindConfig();
-            Patches.Correctness.SwitchFaceButtonGlyphPatch.BindConfig();
-            Patches.Correctness.LayoutSwitchFocusPatch.BindConfig();
-            Patches.Correctness.ScytheHarvestPatch.BindConfig();
-            Patches.Correctness.RareDropPityPatch.BindConfig();
-            Patches.Correctness.AntiStingPatch.BindConfig();
-            Patches.Correctness.AoeLogSpamPatch.BindConfig();
-            Patches.Correctness.RuinItemDespawnPatch.BindConfig();
-            Patches.Correctness.SpawnInsideBasePatch.BindConfig();
-            Patches.Correctness.SavedRotationPatch.BindConfig();
-            Patches.Correctness.SavedRotationRepairPatch.BindConfig();
-            Patches.Correctness.FenceGateRainWearPatch.BindConfig();
-            Patches.Correctness.RecipeDiscoveryPatch.BindConfig();
-            Patches.Correctness.TreasureChestDiscoveryPatch.BindConfig();
-            Patches.Correctness.ArmorStandCapeCrashPatch.BindConfig();
-            Patches.Correctness.OldArmorStandSlotPatch.BindConfig();
-            Patches.Terrain.SeamlessNormalsPatch.BindConfig();
-            Patches.Terrain.PaintSeamReconcilePatch.BindConfig();
-            Patches.Terrain.HeightSeamReconcilePatch.BindConfig();
-            Patches.Terrain.TerrainOpPaintFanoutPatch.BindConfig();
-            Patches.Terrain.PaintSpreadOncePatch.BindConfig();
-            Patches.Terrain.BiomeColorAliasPatch.BindConfig();
-            Patches.Terrain.PlainsBorderShinePatch.BindConfig();
-            Patches.Terrain.PaintMaskStridePatch.BindConfig();
-            Patches.Terrain.TerrainCompNullHmapPatch.BindConfig();
-            Patches.Terrain.TerrainCompDuplicatePatch.BindConfig();
+            foreach (Action bind in FixBinders) {
+                try {
+                    bind();
+                } catch (Exception ex) {
+                    Unbound.Add(bind.Method.DeclaringType);
+                    Logger.LogError($"Could not bind the settings of {bind.Method.DeclaringType?.Name}: {ex}");
+                }
+            }
         }
+
+        /// <summary>True when the settings of the fix this patch class belongs to did not bind.</summary>
+        internal static bool FailedToBind(Type patchClass) =>
+            Unbound.Count > 0 && Unbound.Contains(FixRegistry.FixOf(patchClass) ?? patchClass);
 
         /// <summary>
         /// Binds a fix's on/off toggle. The description is prefixed with the side the fix runs on,

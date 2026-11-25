@@ -442,7 +442,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
             }
         }
 
-        [HarmonyPatch(typeof(SoftReferenceableAssets.Utils), nameof(SoftReferenceableAssets.Utils.Instantiate),
+        [HarmonyPatch(typeof(SoftReferenceUtility), nameof(SoftReferenceUtility.Instantiate),
             typeof(SoftReference<GameObject>), typeof(Vector3), typeof(Quaternion), typeof(Transform))]
         internal static class RoomModelHook {
             [HarmonyPrefix]

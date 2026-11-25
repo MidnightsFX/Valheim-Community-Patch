@@ -398,7 +398,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
                     GrassInstanceMemoryPatch.Grow(renderer, count);
                     Array.Copy(job.Matrices, job.Start[i], renderer.m_instances, 0, count);
                     renderer.m_instanceCount = count;
-                    renderer.m_dirtyBounds = true;
 
                     objects.Add(gameObject);
                 }

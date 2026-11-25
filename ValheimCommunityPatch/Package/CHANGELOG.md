@@ -1,5 +1,16 @@
 # Changelog
 
+**0.48.0**
+```
+- Updated for Valheim 1.0.30
+- Removes the fixes Valheim 1.0.30 added
+    - players positions ghosting when teleporting
+    - building pieces loading slightly turned
+    - grass camera culling and performance changes
+    - Smoke performance & allocation fixes
+- Improved resiliance of other fixes when one breaks
+```
+
 **0.47.0**
 ```
 - Joining a server reuses the world map from your last visit instead of building it again

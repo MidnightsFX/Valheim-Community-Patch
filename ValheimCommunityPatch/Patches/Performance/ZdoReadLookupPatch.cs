@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using HarmonyLib;
@@ -12,15 +11,9 @@ namespace ValheimCommunityPatch.Patches.Performance {
     [PatchSide(Side.Both)]
     [HarmonyPatch]
     internal static class ZdoReadLookupPatch {
-        // Every accessor on ZDOExtraData that reaches one of the four helpers with exactly one
+        // Every accessor on ZDOExtraData that reaches one of the three helpers with exactly one
         // call, which is what the transpiler below requires. The seven scalar getters each have an
         // out-parameter and a default-value overload, so 12 names cover 19 methods.
-        //
-        // The plural accessors this list used to carry (GetFloats, GetSaveFloats and their
-        // siblings) no longer exist: the game folded them into ZDOExtraData.GetData and
-        // GetSaveData, which make seven and eight helper calls respectively and so fall outside
-        // the one-call contract below. The save and serialise paths that went through them keep
-        // vanilla's doubled lookup.
         private static readonly HashSet<string> AccessorNames = new HashSet<string> {
             "GetFloat", "GetVec3", "GetQuaternion", "GetInt", "GetLong", "GetString", "GetByteArray",
             "GetBool",
@@ -71,14 +64,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
             return false;
         }
 
-        // Same Enumerable.ToList vanilla calls, and on a miss the same fresh zero-capacity list.
-        private static List<KeyValuePair<int, TType>> GetValuesOrEmpty<TType>(
-            Dictionary<ZDOID, BinarySearchDictionary<int, TType>> container, ZDOID zid) {
-            return container.TryGetValue(zid, out BinarySearchDictionary<int, TType> table)
-                ? table.ToList()
-                : new List<KeyValuePair<int, TType>>();
-        }
-
         // Named after vanilla's helper so Pair() can match it by name. Keeps the IDictionary
         // parameter so the swap is a pure operand replacement.
         private static TValue GetValueOrDefaultPiktiv<TKey, TValue>(
@@ -95,7 +80,6 @@ namespace ValheimCommunityPatch.Patches.Performance {
 
             Pair(map, nameof(ZDOHelper.GetValueOrDefault));
             Pair(map, nameof(ZDOHelper.GetValue));
-            Pair(map, nameof(ZDOHelper.GetValuesOrEmpty));
             Pair(map, nameof(ZDOHelper.GetValueOrDefaultPiktiv));
 
             return map;

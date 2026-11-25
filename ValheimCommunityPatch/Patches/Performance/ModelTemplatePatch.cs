@@ -63,7 +63,7 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) =>
             PatchHelper.ReplaceCalls(
                 instructions,
-                AccessTools.Method(typeof(SoftReferenceableAssets.Utils), nameof(SoftReferenceableAssets.Utils.Instantiate),
+                AccessTools.Method(typeof(SoftReferenceUtility), nameof(SoftReferenceUtility.Instantiate),
                     new[] { typeof(SoftReference<GameObject>), typeof(Vector3), typeof(Quaternion) }),
                 AccessTools.DeclaredMethod(typeof(ModelTemplatePatch), nameof(LocationModel)),
                 $"{FixName} (ZoneSystem.SpawnLocation)", expected: 1);
@@ -71,14 +71,13 @@ namespace ValheimCommunityPatch.Patches.Performance {
         private static GameObject LocationModel(SoftReference<GameObject> prefab, Vector3 position, Quaternion rotation) =>
             Model(prefab, position, rotation, null, LocationTakeover);
 
-        /// <summary>A dungeon room's model, as SoftReferenceableAssets.Utils.Instantiate builds it.</summary>
         internal static GameObject RoomModel(SoftReference<GameObject> prefab, Vector3 position, Quaternion rotation, Transform parent) =>
             Model(prefab, position, rotation, parent, RoomTakeover);
 
         private static GameObject Vanilla(SoftReference<GameObject> prefab, Vector3 position, Quaternion rotation, Transform parent) =>
             parent == null
-                ? SoftReferenceableAssets.Utils.Instantiate(prefab, position, rotation)
-                : SoftReferenceableAssets.Utils.Instantiate(prefab, position, rotation, parent);
+                ? prefab.Instantiate(position, rotation)
+                : prefab.Instantiate(position, rotation, parent);
 
         private static GameObject Model(SoftReference<GameObject> prefab, Vector3 position, Quaternion rotation, Transform parent, TakeoverCheck takeover) {
             // The callers loaded the prefab just before.
